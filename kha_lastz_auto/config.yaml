@@ -1,11 +1,24 @@
-# Key binding: phim -> ten function (ten file yaml trong functions/)
-key_bindings:
-  m: CheckMail
-  t: ClickTreasure
-  b: FightBoomer
+# Function list: key, cron, priority (lower = higher priority), enabled
+# https://crontab.guru/ for cron syntax
+functions:
+  - name: PinLoggin
+    cron: "*/30 * * * *"
+    priority: 1
+    enabled: true
+    key: l
 
-# Tu dong chay function theo cron (dinh dang Linux cron: phut gio ngay thang thu)
-# https://crontab.guru/  - vi du: "*/5 * * * *" = moi 5 phut
-schedules:
-  - function: CheckMail
+  - name: FightBoomer
+    key: b
+    priority: 2
+    enabled: true
+
+  - name: ClickTreasure
+    key: t
+    priority: 4
+    enabled: true
+
+  - name: CheckMail
+    key: m
     cron: "0 */5 * * *"
+    priority: 50
+    enabled: true

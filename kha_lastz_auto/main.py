@@ -20,16 +20,31 @@ from bot_engine import (
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# Log: ngay gio phut giay, vua ra console vua ra file, moi lan chay 1 file rieng
+from dotenv import load_dotenv
+
+def _load_dotenv(path=".env"):
+    """Load .env file into os.environ. Returns list of keys found."""
+    if not os.path.isfile(path):
+        return []
+    load_dotenv(dotenv_path=path, override=False)
+    keys = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                keys.append(line.split("=", 1)[0].strip())
+    return keys
+
+_dotenv_keys = _load_dotenv(".env")
+
+# Logging: timestamp on every line, write to console + per-run file
 LOG_NAME = "kha_lastz"
-_log_file_path = None
 
 def setup_logging():
-    global _log_file_path
     log_dir = "logs"
     os.makedirs(log_dir, exist_ok=True)
     ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    _log_file_path = os.path.join(log_dir, "kha_lastz_{}.log".format(ts))
+    log_path = os.path.join(log_dir, "kha_lastz_{}.log".format(ts))
     fmt = "%(asctime)s %(message)s"
     datefmt = "%Y-%m-%d %H:%M:%S"
     formatter = logging.Formatter(fmt, datefmt=datefmt)
@@ -37,7 +52,7 @@ def setup_logging():
     logger.setLevel(logging.DEBUG)
     for h in list(logger.handlers):
         logger.removeHandler(h)
-    fh = logging.FileHandler(_log_file_path, encoding="utf-8")
+    fh = logging.FileHandler(log_path, encoding="utf-8")
     fh.setFormatter(formatter)
     logger.addHandler(fh)
     ch = logging.StreamHandler()
@@ -48,25 +63,44 @@ def setup_logging():
 
 log = setup_logging()
 
-# Load config va functions
-config = load_config("config.yaml")
-key_bindings = config.get("key_bindings") or {}
-# schedules: list of { function: "CheckMail", cron: "*/5 * * * *" } (dinh dang cron Linux)
-schedules = config.get("schedules") or []
-functions = load_functions("functions")
-templates = collect_templates(functions)
-vision_cache = build_vision_cache(templates)
+if _dotenv_keys:
+    log.info("[Env] Loaded from .env: {}".format(", ".join(_dotenv_keys)))
+else:
+    log.info("[Env] .env not found or empty — set secrets as environment variables")
 
-# Log danh sach cua so
-# print("=== Cac cua so dang chay (handle, ten) ===")
-# WindowCapture.list_window_names()
-# print("==========================================")
+# ── Load config ──────────────────────────────────────────────────────────────
+config = load_config("config.yaml")
+fn_configs = config.get("functions") or []
+
+key_bindings   = {}   # key_char -> fn_name
+fn_priority    = {}   # fn_name  -> int  (lower = higher priority)
+fn_enabled     = {}   # fn_name  -> bool
+schedules      = []   # [{ "function": ..., "cron": ... }]
+
+for fc in fn_configs:
+    name    = fc.get("name")
+    key     = fc.get("key")
+    cron    = fc.get("cron")
+    prio    = fc.get("priority", 99)
+    enabled = fc.get("enabled", True)
+    if not name:
+        continue
+    fn_priority[name] = prio
+    fn_enabled[name]  = enabled
+    if key and enabled:
+        key_bindings[key] = name
+    if cron and enabled:
+        schedules.append({"function": name, "cron": cron})
+
+functions    = load_functions("functions")
+templates    = collect_templates(functions)
+vision_cache = build_vision_cache(templates)
 
 wincap = WindowCapture("LastZ")
 runner = FunctionRunner(vision_cache)
 runner.load(functions)
 
-# Ctrl+C trong terminal -> SIGINT; pynput co the khong nhan duoc. Dang ky signal de thoat.
+# ── Ctrl+C / SIGINT ──────────────────────────────────────────────────────────
 exit_requested = False
 
 def _on_sigint(signum, frame):
@@ -75,23 +109,22 @@ def _on_sigint(signum, frame):
 
 signal.signal(signal.SIGINT, _on_sigint)
 
-# Global hotkey: listen m/t/... va Ctrl+Esc de thoat
-key_queue = queue.Queue()
-pressed_keys = set()
+# ── Global hotkey listener ────────────────────────────────────────────────────
+key_queue_msg = queue.Queue()
+pressed_keys  = set()
 
 def on_press(key):
     try:
         if hasattr(key, "char") and key.char:
             pressed_keys.add(key.char)
             if key.char in key_bindings:
-                key_queue.put(("hotkey", key.char))
+                key_queue_msg.put(("hotkey", key.char))
         else:
             pressed_keys.add(key)
-            # Ctrl+Esc = thoat (bat ky cua so nao)
             if key == keyboard.Key.esc and (keyboard.Key.ctrl_l in pressed_keys or keyboard.Key.ctrl_r in pressed_keys):
-                key_queue.put("quit")
+                key_queue_msg.put("quit")
             elif key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r) and keyboard.Key.esc in pressed_keys:
-                key_queue.put("quit")
+                key_queue_msg.put("quit")
     except Exception:
         pass
 
@@ -108,28 +141,97 @@ listener = keyboard.Listener(on_press=on_press, on_release=on_release)
 listener.daemon = True
 listener.start()
 
-# Tinh lan chay tiep theo cho moi schedule (cron) - dung gio local (tranh croniter naive = UTC)
+# ── Cron schedule ─────────────────────────────────────────────────────────────
 next_run_at = {}
 for item in schedules:
-    fn_name = item.get("function")
+    fn_name   = item.get("function")
     cron_expr = item.get("cron")
     if not fn_name or not cron_expr or fn_name not in functions:
         continue
-    local_now = datetime.now().astimezone()
-    it = croniter(cron_expr, local_now)
+    it = croniter(cron_expr, datetime.now().astimezone())
     next_run_at[fn_name] = it.get_next(float)
 
-# Main loop: global hotkey (m/t), Ctrl+Esc = thoat, tu dong theo cron
-log.info("Global hotkey: {} = run function. Press same key again (e.g. t) to stop. Ctrl+Esc = quit".format(key_bindings))
-if schedules:
-    log.info("Auto cron: {}".format([(s.get("function"), s.get("cron")) for s in schedules]))
-    for fn_name, ts in next_run_at.items():
-        log.info("Cron next run: {} at {}".format(fn_name, datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")))
+# ── Priority queue (cron-triggered functions waiting to run) ──────────────────
+pending_queue = []   # list of fn_name, sorted by priority then arrival order
 
+def _queue_add(fn_name, reason="cron"):
+    """Add fn_name to pending_queue if not already queued."""
+    if fn_name in pending_queue:
+        log.info("[Scheduler] {} already in queue, skip duplicate ({})".format(fn_name, reason))
+        return
+    pending_queue.append(fn_name)
+    # sort by priority (stable sort preserves FIFO for equal priority)
+    pending_queue.sort(key=lambda n: fn_priority.get(n, 99))
+    log.info("[Scheduler] {} queued (priority={}, reason={})".format(
+        fn_name, fn_priority.get(fn_name, 99), reason))
+
+def _try_start(fn_name, trigger="hotkey"):
+    """Try to start fn_name. Preempt lower priority. Queue if lower priority than running."""
+    if not fn_enabled.get(fn_name, True):
+        log.info("[Scheduler] {} is disabled, skipping ({})".format(fn_name, trigger))
+        return
+    if fn_name not in functions:
+        log.info("[Scheduler] {} not found in functions".format(fn_name))
+        return
+
+    new_prio = fn_priority.get(fn_name, 99)
+
+    if runner.state == "running":
+        cur_name = runner.function_name
+        cur_prio = fn_priority.get(cur_name, 99)
+
+        if new_prio < cur_prio:
+            # Higher priority preempts running function
+            log.info("[Scheduler] {} (priority={}) preempts {} (priority={}) [{}]".format(
+                fn_name, new_prio, cur_name, cur_prio, trigger))
+            runner.stop()
+            runner.start(fn_name, wincap)
+        elif new_prio > cur_prio:
+            # Lower priority: always queue (hotkey or cron)
+            log.info("[Scheduler] {} (priority={}) blocked by {} (priority={}) [{}] -> queued".format(
+                fn_name, new_prio, cur_name, cur_prio, trigger))
+            _queue_add(fn_name, reason=trigger)
+        else:
+            # Same priority: toggle or restart
+            if cur_name == fn_name:
+                runner.stop()
+                log.info("[Scheduler] {} stopped (same key toggle)".format(fn_name))
+            else:
+                runner.stop()
+                runner.start(fn_name, wincap)
+    else:
+        runner.start(fn_name, wincap)
+
+def _process_queue():
+    """Pop highest priority item from queue and start it."""
+    while pending_queue:
+        fn_name = pending_queue.pop(0)
+        if not fn_enabled.get(fn_name, True):
+            log.info("[Scheduler] {} dequeued but disabled, skipping".format(fn_name))
+            continue
+        if fn_name not in functions:
+            continue
+        log.info("[Scheduler] {} dequeued and starting (priority={})".format(
+            fn_name, fn_priority.get(fn_name, 99)))
+        runner.start(fn_name, wincap)
+        return
+
+# ── Startup log ───────────────────────────────────────────────────────────────
+log.info("Global hotkey: {} | Press same key to stop | Ctrl+Esc = quit".format(key_bindings))
+log.info("Function priorities: {}".format({n: fn_priority[n] for n in fn_priority}))
+log.info("Function enabled: {}".format({n: fn_enabled[n] for n in fn_enabled}))
+if schedules:
+    log.info("Auto cron: {}".format([(s["function"], s["cron"]) for s in schedules]))
+    for fn_name, ts in next_run_at.items():
+        log.info("Cron next run: {} at {}".format(
+            fn_name, datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")))
+if pending_queue:
+    log.info("Pending queue: {}".format(pending_queue))
+
+# ── Focus thread ──────────────────────────────────────────────────────────────
 running = True
 
 def focus_loop():
-    """Thread phu: lien tuc dua LastZ len truoc moi ~200ms (de khi user click cua so khac van bi keo lai)."""
     while running and not exit_requested:
         wincap.focus_window()
         time.sleep(0.2)
@@ -137,57 +239,66 @@ def focus_loop():
 focus_thread = threading.Thread(target=focus_loop, daemon=True)
 focus_thread.start()
 
-# Focus ngay khi vao main loop
 wincap.focus_window()
 time.sleep(0.2)
 
+# ── Main loop ─────────────────────────────────────────────────────────────────
+last_stopped_key = None
+
 while running and not exit_requested:
-    # Xu ly thoat + hotkey + cron truoc get_screenshot (chay moi vong lap, tranh cron bi bo qua khi screenshot = None)
     if exit_requested:
         break
+
+    # Process hotkey messages
     try:
-        last_stopped_key = None  # tranh key repeat: vua stop bang "t" thi khong start lai ngay
         while True:
-            msg = key_queue.get_nowait()
+            msg = key_queue_msg.get_nowait()
             if msg == "quit":
                 running = False
                 break
             if isinstance(msg, tuple) and msg[0] == "hotkey":
                 key_char = msg[1]
-                fn_name = key_bindings.get(key_char)
+                fn_name  = key_bindings.get(key_char)
                 if not fn_name:
                     continue
+                # Toggle: press same key while running same function -> stop
                 if runner.state == "running" and runner.function_name == fn_name:
                     runner.stop()
                     last_stopped_key = key_char
-                    log.info("[Runner] Stopped function: {} (press same key to stop)".format(fn_name))
+                    log.info("[Runner] Stopped function: {} (hotkey toggle)".format(fn_name))
                 else:
                     if key_char != last_stopped_key:
-                        runner.start(fn_name, wincap)
+                        _try_start(fn_name, trigger="hotkey")
                     last_stopped_key = None
     except queue.Empty:
         pass
     if not running:
         break
 
+    # Process cron triggers
     now = time.time()
-    if runner.state == "idle" and next_run_at:
-        for fn_name, next_ts in list(next_run_at.items()):
-            if now >= next_ts:
-                runner.start(fn_name, wincap)
-                cron_expr = next((s.get("cron") for s in schedules if s.get("function") == fn_name), None)
-                if cron_expr:
-                    local_now = datetime.fromtimestamp(now).astimezone()
-                    it = croniter(cron_expr, local_now)
-                    next_run_at[fn_name] = it.get_next(float)
-                log.info("[Auto] Running function: {} (cron)".format(fn_name))
-                break
+    for fn_name, next_ts in list(next_run_at.items()):
+        if now >= next_ts:
+            # Advance next cron time regardless of whether we run now
+            cron_expr = next((s["cron"] for s in schedules if s["function"] == fn_name), None)
+            if cron_expr:
+                it = croniter(cron_expr, datetime.fromtimestamp(now).astimezone())
+                next_run_at[fn_name] = it.get_next(float)
+                log.info("Cron next run: {} at {}".format(
+                    fn_name, datetime.fromtimestamp(next_run_at[fn_name]).strftime("%Y-%m-%d %H:%M:%S")))
+            _try_start(fn_name, trigger="cron")
 
+    # Get screenshot and update runner
     screenshot = wincap.get_screenshot()
     if screenshot is None:
         continue
 
+    was_running = runner.state == "running"
     runner.update(screenshot, wincap)
+
+    # After function finishes, process pending queue
+    if was_running and runner.state == "idle":
+        _process_queue()
 
     cv.imshow("LastZ Capture", screenshot)
     if cv.waitKey(1) == ord("q"):

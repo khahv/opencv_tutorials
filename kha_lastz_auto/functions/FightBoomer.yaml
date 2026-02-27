@@ -19,7 +19,7 @@ steps:
   # Anchor: find Slider.png, then crop the region above its center.
   # level_anchor_offset: [dx, dy, w, h] px from Slider center
   - type: set_level
-    target_level: 10
+    target_level: 9
     level_anchor_template: buttons_template/Slider.png
     level_anchor_offset: [-45, -65, 110, 35]
     plus_template: buttons_template/PlusButton.png

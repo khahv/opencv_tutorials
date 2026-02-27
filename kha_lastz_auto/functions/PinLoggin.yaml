@@ -1,0 +1,47 @@
+# Function: PinLoggin
+# Auto-login when the password screen appears.
+# Password is read from .env file: PIN_PASSWORD=your_pin
+description: "Auto login: detect PasswordSlotArray -> click slot -> type PIN -> Confirm"
+
+steps:
+  # Wait for the password screen to appear (if not visible within 8s, skip whole function)
+  - type: wait_until_match
+    template: buttons_template/PasswordSlotArray.png
+    threshold: 0.75
+    timeout_sec: 8
+
+  # Click the first visible password slot to focus the input
+  - type: match_click
+    template: buttons_template/PasswordSlot.png
+    threshold: 0.75
+    one_shot: true
+    timeout_sec: 5
+
+  # Small pause to let the UI register the click
+  - type: sleep
+    duration_sec: 0.3
+
+  # Type the PIN - value is read from PIN_PASSWORD in .env
+  - type: type_text
+    text: "${PIN_PASSWORD}"
+    interval_sec: 0.1
+
+  # Small pause before confirming
+  - type: sleep
+    duration_sec: 0.3
+
+  # Click the Confirm button
+  - type: match_click
+    template: buttons_template/ConfirmButton.png
+    threshold: 0.75
+    one_shot: true
+    timeout_sec: 10
+
+  # Wait for game to finish loading after login
+  - type: sleep
+    duration_sec: 10
+
+  # Click top-left corner to dismiss post-login banners/ads
+  - type: click_position
+    offset_x: 0.15
+    offset_y: 0.15

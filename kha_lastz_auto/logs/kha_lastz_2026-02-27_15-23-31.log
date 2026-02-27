@@ -1,0 +1,15 @@
+2026-02-27 15:23:31 === Start ===
+2026-02-27 15:23:31 WindowCapture: client size = 2518x1725, screen offset = (2088, 437)
+2026-02-27 15:23:31 Global hotkey: {'l': 'PinLoggin', 'b': 'FightBoomer', 't': 'ClickTreasure', 'm': 'CheckMail'} | Press same key to stop | Ctrl+Esc = quit
+2026-02-27 15:23:31 Function priorities: {'PinLoggin': 1, 'FightBoomer': 2, 'ClickTreasure': 4, 'CheckMail': 50}
+2026-02-27 15:23:31 Function enabled: {'PinLoggin': True, 'FightBoomer': True, 'ClickTreasure': True, 'CheckMail': True}
+2026-02-27 15:23:31 Auto cron: [('PinLoggin', '*/30 * * * *'), ('CheckMail', '0 */5 * * *')]
+2026-02-27 15:23:31 Cron next run: PinLoggin at 2026-02-27 15:30:00
+2026-02-27 15:23:31 Cron next run: CheckMail at 2026-02-27 20:00:00
+2026-02-27 15:23:45 [Runner] Started function: PinLoggin
+2026-02-27 15:23:47 [Runner] match_click buttons_template/PasswordSlot.png (count 1)
+2026-02-27 15:23:47 [Runner] type_text: text is empty (check .env / ${} var name)
+2026-02-27 15:23:48 [Runner] match_click buttons_template/ConfirmButton.png (count 1)
+2026-02-27 15:23:48 [Runner] Finished function: PinLoggin
+2026-02-27 15:23:52 === End ===
+2026-02-27 15:23:52 Done.

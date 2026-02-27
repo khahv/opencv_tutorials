@@ -1,6 +1,6 @@
 """
 Engine chay Function (YAML): load functions, thuc thi tung step.
-Step types: match_click, sleep, click_position, wait_until_match, key_press, set_level.
+Step types: match_click, sleep, click_position, wait_until_match, key_press, set_level, type_text.
 """
 import os
 import re
@@ -377,6 +377,23 @@ class FunctionRunner:
             key = step.get("key", "")
             if key:
                 pyautogui.press(key)
+            self._advance_step()
+            return "running"
+
+        if step_type == "type_text":
+            text = str(step.get("text", ""))
+            # Resolve ${ENV_VAR} placeholders from environment
+            text = re.sub(
+                r"\$\{([^}]+)\}",
+                lambda m: os.environ.get(m.group(1), ""),
+                text,
+            )
+            interval = step.get("interval_sec", 0.1)
+            if text:
+                pyautogui.write(text, interval=interval)
+                log.info("[Runner] type_text: typed {} chars".format(len(text)))
+            else:
+                log.info("[Runner] type_text: text is empty (check .env / ${} var name)")
             self._advance_step()
             return "running"
 

@@ -1,0 +1,15 @@
+2026-02-27 15:21:04 === Start ===
+2026-02-27 15:21:04 WindowCapture: client size = 2518x1725, screen offset = (2088, 437)
+2026-02-27 15:21:04 Global hotkey: {'l': 'Loggin', 'b': 'FightBoomer', 't': 'ClickTreasure', 'm': 'CheckMail'} | Press same key to stop | Ctrl+Esc = quit
+2026-02-27 15:21:04 Function priorities: {'Loggin': 1, 'FightBoomer': 2, 'ClickTreasure': 4, 'CheckMail': 50}
+2026-02-27 15:21:04 Function enabled: {'Loggin': True, 'FightBoomer': True, 'ClickTreasure': True, 'CheckMail': True}
+2026-02-27 15:21:04 Auto cron: [('Loggin', '*/30 * * * *'), ('CheckMail', '0 */5 * * *')]
+2026-02-27 15:21:04 Cron next run: Loggin at 2026-02-27 15:30:00
+2026-02-27 15:21:04 Cron next run: CheckMail at 2026-02-27 20:00:00
+2026-02-27 15:21:09 [Runner] Started function: Loggin
+2026-02-27 15:21:11 [Runner] match_click buttons_template/PasswordSlot.png (count 1)
+2026-02-27 15:21:12 [Runner] type_text: typed 6 chars
+2026-02-27 15:21:13 [Runner] match_click buttons_template/ConfirmButton.png (count 1)
+2026-02-27 15:21:13 [Runner] Finished function: Loggin
+2026-02-27 15:21:17 === End ===
+2026-02-27 15:21:17 Done.
