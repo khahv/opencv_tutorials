@@ -1,3 +1,10 @@
+# Kich thuoc client area cua so game luc chup template images.
+# Bot se tu dong resize window ve dung kich thuoc nay khi khoi dong
+# -> scale = 1.0, khong can normalize, match nhanh nhat co the.
+# Neu resize that bai (fullscreen/bi khoa), bot fallback normalize theo scale.
+reference_width: 2400
+reference_height: 1600
+
 # Function list: key, cron, priority (lower = higher priority), enabled
 # https://crontab.guru/ for cron syntax
 functions:

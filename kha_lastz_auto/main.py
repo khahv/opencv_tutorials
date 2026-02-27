@@ -17,6 +17,7 @@ from bot_engine import (
     build_vision_cache,
     FunctionRunner,
 )
+import vision as vision_module
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
@@ -97,6 +98,20 @@ templates    = collect_templates(functions)
 vision_cache = build_vision_cache(templates)
 
 wincap = WindowCapture("LastZ")
+
+_ref_w = config.get("reference_width")
+_ref_h = config.get("reference_height")
+
+# Resize window ve dung kich thuoc ngay khi khoi dong.
+# focus_loop se tiep tuc giu kich thuoc nay trong suot qua trinh chay.
+if _ref_w and _ref_h:
+    wincap.resize_to_client(_ref_w, _ref_h)
+    log.info("Vision scale: 1.0 (window {}x{})".format(wincap.w, wincap.h))
+else:
+    log.info("Vision scale: 1.0 (reference_width/height not set — using current window size)")
+
+vision_module.set_global_scale(1.0)
+
 runner = FunctionRunner(vision_cache)
 runner.load(functions)
 
@@ -234,6 +249,9 @@ running = True
 def focus_loop():
     while running and not exit_requested:
         wincap.focus_window()
+        if _ref_w and _ref_h and (wincap.w != _ref_w or wincap.h != _ref_h):
+            wincap.resize_to_client(_ref_w, _ref_h)
+            log.info("[focus_loop] Window resized back to {}x{}".format(wincap.w, wincap.h))
         time.sleep(0.2)
 
 focus_thread = threading.Thread(target=focus_loop, daemon=True)

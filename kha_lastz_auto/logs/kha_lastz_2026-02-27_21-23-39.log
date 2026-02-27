@@ -1,0 +1,43 @@
+2026-02-27 21:23:39 === Start ===
+2026-02-27 21:23:39 [Env] Loaded from .env: PIN_PASSWORD
+2026-02-27 21:23:39 [bot_engine] Failed to load template buttons_template/SoliderBackButton.png: Khong tim thay anh: buttons_template/SoliderBackButton.png
+2026-02-27 21:23:39 WindowCapture: client size = 2400x1600, screen offset = (1122, 170)
+2026-02-27 21:23:39 Vision scale: 1.0 (window 2400x1600)
+2026-02-27 21:23:39 Global hotkey: {'l': 'PinLoggin', 'b': 'FightBoomer', 't': 'ClickTreasure', 'c': 'CollectExplorationReward', 's': 'SoliderTrain', 'h': 'HelpAlliance', 'm': 'CheckMail'} | Press same key to stop | Ctrl+Esc = quit
+2026-02-27 21:23:39 Function priorities: {'PinLoggin': 1, 'FightBoomer': 2, 'ClickTreasure': 4, 'CollectExplorationReward': 98, 'SoliderTrain': 99, 'HelpAlliance': 100, 'CheckMail': 50}
+2026-02-27 21:23:39 Function enabled: {'PinLoggin': True, 'FightBoomer': True, 'ClickTreasure': True, 'CollectExplorationReward': True, 'SoliderTrain': True, 'HelpAlliance': True, 'CheckMail': True}
+2026-02-27 21:23:39 Auto cron: [('PinLoggin', '*/30 * * * *'), ('CollectExplorationReward', '0 */8 * * *'), ('SoliderTrain', '0 */6 * * *'), ('HelpAlliance', '*/15 * * * *'), ('CheckMail', '0 */5 * * *')]
+2026-02-27 21:23:39 Cron next run: PinLoggin at 2026-02-27 21:30:00
+2026-02-27 21:23:39 Cron next run: CollectExplorationReward at 2026-02-28 00:00:00
+2026-02-27 21:23:39 Cron next run: SoliderTrain at 2026-02-28 00:00:00
+2026-02-27 21:23:39 Cron next run: HelpAlliance at 2026-02-27 21:30:00
+2026-02-27 21:23:39 Cron next run: CheckMail at 2026-02-28 00:00:00
+2026-02-27 21:23:42 [Runner] Started function: PinLoggin
+2026-02-27 21:23:43 [Runner] match_count buttons_template/PasswordSlot.png: found 6 >= 6 — true
+2026-02-27 21:23:44 [Runner] match_click buttons_template/PasswordSlot.png (count 1)
+2026-02-27 21:23:45 [Runner] type_text: typed 6 chars
+2026-02-27 21:23:46 [Runner] match_click buttons_template/ConfirmButton.png (count 1)
+2026-02-27 21:23:57 [Runner] click_position (1482, 410)
+2026-02-27 21:23:57 [Runner] Finished function: PinLoggin
+2026-02-27 21:30:00 Cron next run: PinLoggin at 2026-02-27 22:00:00
+2026-02-27 21:30:00 [Runner] Started function: PinLoggin
+2026-02-27 21:30:00 Cron next run: HelpAlliance at 2026-02-27 21:45:00
+2026-02-27 21:30:00 [Scheduler] HelpAlliance (priority=100) blocked by PinLoggin (priority=1) [cron] -> queued
+2026-02-27 21:30:00 [Scheduler] HelpAlliance queued (priority=100, reason=cron)
+2026-02-27 21:30:09 [Runner] match_count buttons_template/PasswordSlot.png: timeout — found 0 < 6 — false
+2026-02-27 21:30:09 [Runner] Aborting function 'PinLoggin' — step 'match_click' blocked (previous step returned false)
+2026-02-27 21:30:09 [Runner] Finished function: PinLoggin (aborted)
+2026-02-27 21:30:09 [Scheduler] HelpAlliance dequeued and starting (priority=100)
+2026-02-27 21:30:09 [Runner] Started function: HelpAlliance
+2026-02-27 21:30:15 [Runner] match_click buttons_template/HelpAlliance.png timeout (not found in 5s)
+2026-02-27 21:30:15 [Runner] Finished function: HelpAlliance
+2026-02-27 21:31:08 [Runner] Started function: CheckMail
+2026-02-27 21:31:08 [Runner] match_click buttons_template/Mail.png (count 1)
+2026-02-27 21:31:10 [Runner] match_click buttons_template/AllianceButton.png (count 1)
+2026-02-27 21:31:12 [Runner] match_click buttons_template/ClaimAll.png (count 1)
+2026-02-27 21:31:13 [Runner] match_click buttons_template/SystemButton.png (count 1)
+2026-02-27 21:31:15 [Runner] match_click buttons_template/ClaimAll.png (count 1)
+2026-02-27 21:31:17 [Runner] click_position (1482, 410)
+2026-02-27 21:31:17 [Runner] Finished function: CheckMail
+2026-02-27 21:32:58 === End ===
+2026-02-27 21:32:58 Done.

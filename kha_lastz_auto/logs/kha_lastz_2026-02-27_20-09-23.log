@@ -1,0 +1,18 @@
+2026-02-27 20:09:23 === Start ===
+2026-02-27 20:09:23 [Env] Loaded from .env: PIN_PASSWORD
+2026-02-27 20:09:23 [bot_engine] Failed to load template buttons_template/SoliderBackButton.png: Khong tim thay anh: buttons_template/SoliderBackButton.png
+2026-02-27 20:09:23 WindowCapture: client size = 1564x1170, screen offset = (1119, 409)
+2026-02-27 20:09:23 Vision scale: 1.0 (window 1564x1170)
+2026-02-27 20:09:23 Global hotkey: {'l': 'PinLoggin', 'b': 'FightBoomer', 't': 'ClickTreasure', 'c': 'CollectExplorationReward', 's': 'SoliderTrain', 'h': 'HelpAlliance', 'm': 'CheckMail'} | Press same key to stop | Ctrl+Esc = quit
+2026-02-27 20:09:23 Function priorities: {'PinLoggin': 1, 'FightBoomer': 2, 'ClickTreasure': 4, 'CollectExplorationReward': 98, 'SoliderTrain': 99, 'HelpAlliance': 100, 'CheckMail': 50}
+2026-02-27 20:09:23 Function enabled: {'PinLoggin': True, 'FightBoomer': True, 'ClickTreasure': True, 'CollectExplorationReward': True, 'SoliderTrain': True, 'HelpAlliance': True, 'CheckMail': True}
+2026-02-27 20:09:23 Auto cron: [('PinLoggin', '*/30 * * * *'), ('CollectExplorationReward', '0 */8 * * *'), ('SoliderTrain', '0 */6 * * *'), ('HelpAlliance', '*/15 * * * *'), ('CheckMail', '0 */5 * * *')]
+2026-02-27 20:09:23 Cron next run: PinLoggin at 2026-02-27 20:30:00
+2026-02-27 20:09:23 Cron next run: CollectExplorationReward at 2026-02-28 00:00:00
+2026-02-27 20:09:23 Cron next run: SoliderTrain at 2026-02-28 00:00:00
+2026-02-27 20:09:23 Cron next run: HelpAlliance at 2026-02-27 20:15:00
+2026-02-27 20:09:23 Cron next run: CheckMail at 2026-02-28 00:00:00
+2026-02-27 20:09:25 [focus_loop] Window resized back to 2508x1530
+2026-02-27 20:09:26 [focus_loop] Window resized back to 1564x1170
+2026-02-27 20:09:29 === End ===
+2026-02-27 20:09:29 Done.

@@ -1,0 +1,36 @@
+2026-02-27 19:51:12 === Start ===
+2026-02-27 19:51:12 [Env] Loaded from .env: PIN_PASSWORD
+2026-02-27 19:51:12 [bot_engine] Failed to load template buttons_template/SoliderBackButton.png: Khong tim thay anh: buttons_template/SoliderBackButton.png
+2026-02-27 19:51:12 WindowCapture: client size = 3643x2020, screen offset = (938, 92)
+2026-02-27 19:51:12 Vision scale: 2.3293 (window 3643px / reference 1564px)
+2026-02-27 19:51:12 Global hotkey: {'l': 'PinLoggin', 'b': 'FightBoomer', 't': 'ClickTreasure', 'c': 'CollectExplorationReward', 's': 'SoliderTrain', 'h': 'HelpAlliance', 'm': 'CheckMail'} | Press same key to stop | Ctrl+Esc = quit
+2026-02-27 19:51:12 Function priorities: {'PinLoggin': 1, 'FightBoomer': 2, 'ClickTreasure': 4, 'CollectExplorationReward': 98, 'SoliderTrain': 99, 'HelpAlliance': 100, 'CheckMail': 50}
+2026-02-27 19:51:12 Function enabled: {'PinLoggin': True, 'FightBoomer': True, 'ClickTreasure': True, 'CollectExplorationReward': True, 'SoliderTrain': True, 'HelpAlliance': True, 'CheckMail': True}
+2026-02-27 19:51:12 Auto cron: [('PinLoggin', '*/30 * * * *'), ('CollectExplorationReward', '0 */8 * * *'), ('SoliderTrain', '0 */6 * * *'), ('HelpAlliance', '*/15 * * * *'), ('CheckMail', '0 */5 * * *')]
+2026-02-27 19:51:12 Cron next run: PinLoggin at 2026-02-27 20:00:00
+2026-02-27 19:51:12 Cron next run: CollectExplorationReward at 2026-02-28 00:00:00
+2026-02-27 19:51:12 Cron next run: SoliderTrain at 2026-02-28 00:00:00
+2026-02-27 19:51:12 Cron next run: HelpAlliance at 2026-02-27 20:00:00
+2026-02-27 19:51:12 Cron next run: CheckMail at 2026-02-27 20:00:00
+2026-02-27 19:51:16 [Runner] Started function: FightBoomer
+2026-02-27 19:51:19 [Runner] click_unless_visible: buttons_template/MagnifierButton.png not found and buttons_template/WorldButton.png not visible either
+2026-02-27 19:51:31 [Runner] match_click buttons_template/MagnifierButton.png timeout (not found in 10s)
+2026-02-27 19:51:32 [Runner] Aborting function 'FightBoomer' — step 'sleep' blocked (previous step returned false)
+2026-02-27 19:51:32 [Runner] Finished function: FightBoomer (aborted)
+2026-02-27 19:51:39 [Runner] Started function: FightBoomer
+2026-02-27 19:51:43 [Runner] click_unless_visible: buttons_template/MagnifierButton.png not found and buttons_template/WorldButton.png not visible either
+2026-02-27 19:51:53 [Runner] match_click buttons_template/MagnifierButton.png timeout (not found in 10s)
+2026-02-27 19:51:54 [Runner] Aborting function 'FightBoomer' — step 'sleep' blocked (previous step returned false)
+2026-02-27 19:51:54 [Runner] Finished function: FightBoomer (aborted)
+2026-02-27 19:51:59 [Runner] Started function: FightBoomer
+2026-02-27 19:52:03 [Runner] click_unless_visible: buttons_template/MagnifierButton.png not found and buttons_template/WorldButton.png not visible either
+2026-02-27 19:52:14 [Runner] match_click buttons_template/MagnifierButton.png timeout (not found in 10s)
+2026-02-27 19:52:14 [Runner] Aborting function 'FightBoomer' — step 'sleep' blocked (previous step returned false)
+2026-02-27 19:52:14 [Runner] Finished function: FightBoomer (aborted)
+2026-02-27 19:52:27 [Runner] Started function: FightBoomer
+2026-02-27 19:52:31 [Runner] click_unless_visible: buttons_template/MagnifierButton.png not found and buttons_template/WorldButton.png not visible either
+2026-02-27 19:52:41 [Runner] match_click buttons_template/MagnifierButton.png timeout (not found in 10s)
+2026-02-27 19:52:41 [Runner] Aborting function 'FightBoomer' — step 'sleep' blocked (previous step returned false)
+2026-02-27 19:52:41 [Runner] Finished function: FightBoomer (aborted)
+2026-02-27 19:53:37 === End ===
+2026-02-27 19:53:37 Done.

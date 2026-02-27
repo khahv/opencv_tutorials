@@ -17,6 +17,13 @@ steps:
     one_shot: true
     timeout_sec: 10
 
+  - type: match_click
+    template: buttons_template/ClaimButton.png
+    run_always: true
+    threshold: 0.75
+    one_shot: true
+    timeout_sec: 10
+
   # Click the Collect button
   - type: match_click
     template: buttons_template/CollectButton.png

@@ -78,6 +78,37 @@ class WindowCapture:
         except Exception:
             pass
 
+    def resize_to_client(self, target_w, target_h):
+        """
+        Resize cua so sao cho CLIENT AREA (phan game, khong tinh title bar / border)
+        dung bang target_w x target_h.
+        Goi 1 lan luc khoi dong de dam bao window luon o dung kich thuoc.
+        Tra ve True neu thanh cong, False neu khong the resize (fullscreen / bi khoa).
+        """
+        if self._is_desktop or not self.hwnd or not win32gui.IsWindow(self.hwnd):
+            return False
+        try:
+            # Tinh kich thuoc border tu window_rect - client_rect
+            window_rect = win32gui.GetWindowRect(self.hwnd)
+            client_rect = win32gui.GetClientRect(self.hwnd)
+            border_w = (window_rect[2] - window_rect[0]) - client_rect[2]
+            border_h = (window_rect[3] - window_rect[1]) - client_rect[3]
+
+            total_w = target_w + border_w
+            total_h = target_h + border_h
+
+            win32gui.SetWindowPos(
+                self.hwnd, None,
+                window_rect[0], window_rect[1],  # giu nguyen vi tri
+                total_w, total_h,
+                win32con.SWP_NOZORDER,
+            )
+            time.sleep(0.1)
+            self.refresh_geometry()
+            return abs(self.w - target_w) <= 2 and abs(self.h - target_h) <= 2
+        except Exception:
+            return False
+
     def focus_window(self):
         """Dua cua so len truoc va phuc hoi neu dang minimize. Goi truoc get_screenshot de ket qua chuan hon."""
         if self._is_desktop or not self.hwnd or not win32gui.IsWindow(self.hwnd):
