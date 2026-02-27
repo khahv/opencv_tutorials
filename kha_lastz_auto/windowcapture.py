@@ -1,7 +1,11 @@
 import ctypes
+import time
+import logging
 import numpy as np
 import win32gui, win32ui, win32con
 import mss
+
+log = logging.getLogger("kha_lastz")
 
 # Bat DPI awareness de toa do tra ve la pixel vat ly thuc te,
 # khong bi Windows scale theo DPI (125%, 150%...).
@@ -33,7 +37,8 @@ class WindowCapture:
             if not self.hwnd:
                 raise Exception('Window not found: {}'.format(window_name))
 
-        if window_name is None:
+        self._is_desktop = window_name is None
+        if self._is_desktop:
             # desktop: dung toan man hinh
             window_rect = win32gui.GetWindowRect(self.hwnd)
             self.w = window_rect[2] - window_rect[0]
@@ -54,25 +59,64 @@ class WindowCapture:
             self.offset_x = client_left
             self.offset_y = client_top
 
-        print(f'WindowCapture: client size = {self.w}x{self.h}, screen offset = ({self.offset_x}, {self.offset_y})')
+        log.info('WindowCapture: client size = {}x{}, screen offset = ({}, {})'.format(self.w, self.h, self.offset_x, self.offset_y))
+
+    def refresh_geometry(self):
+        """Cap nhat lai kich thuoc va offset cua cua so (can thiet sau khi restore tu minimize)."""
+        if self._is_desktop or not self.hwnd or not win32gui.IsWindow(self.hwnd):
+            return
+        try:
+            client_rect = win32gui.GetClientRect(self.hwnd)
+            self.w = client_rect[2] - client_rect[0]
+            self.h = client_rect[3] - client_rect[1]
+            (client_left, client_top) = win32gui.ClientToScreen(self.hwnd, (0, 0))
+            window_rect = win32gui.GetWindowRect(self.hwnd)
+            self.cropped_x = client_left - window_rect[0]
+            self.cropped_y = client_top - window_rect[1]
+            self.offset_x = client_left
+            self.offset_y = client_top
+        except Exception:
+            pass
+
+    def focus_window(self):
+        """Dua cua so len truoc va phuc hoi neu dang minimize. Goi truoc get_screenshot de ket qua chuan hon."""
+        if self._is_desktop or not self.hwnd or not win32gui.IsWindow(self.hwnd):
+            return
+        try:
+            was_minimized = win32gui.IsIconic(self.hwnd)
+            if was_minimized:
+                win32gui.ShowWindow(self.hwnd, win32con.SW_RESTORE)
+            # Windows chi cho SetForegroundWindow khi process da nhan input gan day. Trick: nhan Alt truoc
+            # thi Windows "mo khoa" (LockSetForegroundWindow) -> focus hoat dong ngay ca luc chua chay function.
+            user32 = ctypes.windll.user32
+            KEYEVENTF_KEYUP = 0x0002
+            user32.keybd_event(win32con.VK_MENU, 0, 0, 0)  # Alt down
+            try:
+                win32gui.SetForegroundWindow(self.hwnd)
+            finally:
+                user32.keybd_event(win32con.VK_MENU, 0, KEYEVENTF_KEYUP, 0)  # Alt up
+            # Chi sleep + refresh geometry khi vua restore tu minimize (tranh size 0, offset -32000)
+            if was_minimized:
+                time.sleep(0.15)
+                self.refresh_geometry()
+        except Exception:
+            pass
 
     def get_screenshot(self):
-        # Lay toa do client area hien tai (cap nhat moi frame phong truong hop cua so di chuyen)
+        if not self._is_desktop:
+            self.refresh_geometry()
+        if self.w <= 0 or self.h <= 0:
+            return None
+
         (left, top) = win32gui.ClientToScreen(self.hwnd, (0, 0))
 
-        # mss chup theo toa do man hinh -> lay duoc ca noi dung GPU (Unity, DX, GL)
         with mss.mss() as sct:
             monitor = {'left': left, 'top': top, 'width': self.w, 'height': self.h}
             raw = sct.grab(monitor)
 
         img = np.array(raw)          # BGRA uint8
-
-        # drop alpha channel
         img = img[..., :3]
-
-        # make C_CONTIGUOUS
         img = np.ascontiguousarray(img)
-
         return img
 
     # find the name of the window you're interested in.
@@ -82,7 +126,7 @@ class WindowCapture:
     def list_window_names():
         def winEnumHandler(hwnd, ctx):
             if win32gui.IsWindowVisible(hwnd):
-                print(hex(hwnd), win32gui.GetWindowText(hwnd))
+                log.info("{} {}".format(hex(hwnd), win32gui.GetWindowText(hwnd)))
         win32gui.EnumWindows(winEnumHandler, None)
 
     # translate a pixel position on a screenshot image to a pixel position on the screen.

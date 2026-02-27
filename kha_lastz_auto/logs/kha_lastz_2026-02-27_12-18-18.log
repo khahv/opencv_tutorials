@@ -1,0 +1,7 @@
+2026-02-27 12:18:18 === Start ===
+2026-02-27 12:18:18 WindowCapture: client size = 2518x1725, screen offset = (2002, 478)
+2026-02-27 12:18:18 Global hotkey: {'m': 'CheckMail', 't': 'ClickTreasure'} = chay function. Nhan lai cung phim (vd. t) de dung function dang chay. Ctrl+Esc = thoat
+2026-02-27 12:18:18 Tu dong theo cron: [('CheckMail', '*/1 * * * *')]
+2026-02-27 12:18:18 Cron lan chay tiep theo: CheckMail luc 2026-02-27 19:19:00
+2026-02-27 12:18:25 === End ===
+2026-02-27 12:18:25 Done.

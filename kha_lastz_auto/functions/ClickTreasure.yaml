@@ -1,0 +1,11 @@
+# Function: ClickTreasure (click lien tuc vao Treasure Helicopter)
+description: "Click lien tuc vao Treasure Helicopter khi match"
+steps:
+  - type: match_click
+    template: buttons_template/TreasureHellicopter.png
+    threshold: 0.7
+    one_shot: false
+    timeout_sec: 60
+    max_clicks: 500
+    click_interval_sec: 0.05   # 0.05s giua moi click (~20 click/s)
+    click_random_offset: 20    # pixel ngau nhien ±20 quanh tam template
