@@ -1,0 +1,22 @@
+2026-02-27 19:30:35 === Start ===
+2026-02-27 19:30:35 [Env] Loaded from .env: PIN_PASSWORD
+2026-02-27 19:30:35 [bot_engine] Failed to load template buttons_template/SoliderBackButton.png: Khong tim thay anh: buttons_template/SoliderBackButton.png
+2026-02-27 19:30:35 WindowCapture: client size = 2033x1519, screen offset = (2372, 626)
+2026-02-27 19:30:35 Global hotkey: {'l': 'PinLoggin', 'b': 'FightBoomer', 't': 'ClickTreasure', 'c': 'CollectExplorationReward', 's': 'SoliderTrain', 'h': 'HelpAlliance', 'm': 'CheckMail'} | Press same key to stop | Ctrl+Esc = quit
+2026-02-27 19:30:35 Function priorities: {'PinLoggin': 1, 'FightBoomer': 2, 'ClickTreasure': 4, 'CollectExplorationReward': 98, 'SoliderTrain': 99, 'HelpAlliance': 100, 'CheckMail': 50}
+2026-02-27 19:30:35 Function enabled: {'PinLoggin': True, 'FightBoomer': True, 'ClickTreasure': True, 'CollectExplorationReward': True, 'SoliderTrain': True, 'HelpAlliance': True, 'CheckMail': True}
+2026-02-27 19:30:35 Auto cron: [('PinLoggin', '*/30 * * * *'), ('CollectExplorationReward', '0 */8 * * *'), ('SoliderTrain', '0 */6 * * *'), ('HelpAlliance', '*/15 * * * *'), ('CheckMail', '0 */5 * * *')]
+2026-02-27 19:30:35 Cron next run: PinLoggin at 2026-02-27 20:00:00
+2026-02-27 19:30:35 Cron next run: CollectExplorationReward at 2026-02-28 00:00:00
+2026-02-27 19:30:35 Cron next run: SoliderTrain at 2026-02-28 00:00:00
+2026-02-27 19:30:35 Cron next run: HelpAlliance at 2026-02-27 19:45:00
+2026-02-27 19:30:35 Cron next run: CheckMail at 2026-02-27 20:00:00
+2026-02-27 19:30:37 [Runner] Started function: PinLoggin
+2026-02-27 19:30:43 [Runner] match_count buttons_template/PasswordSlot.png: found 6 >= 6 — true
+2026-02-27 19:30:48 [Runner] match_click buttons_template/PasswordSlot.png (count 1)
+2026-02-27 19:30:49 [Runner] type_text: typed 6 chars
+2026-02-27 19:31:00 [Runner] match_click buttons_template/ConfirmButton.png timeout (not found in 10s)
+2026-02-27 19:31:01 [Runner] Aborting function 'PinLoggin' — step 'sleep' blocked (previous step returned false)
+2026-02-27 19:31:01 [Runner] Finished function: PinLoggin (aborted)
+2026-02-27 19:31:07 === End ===
+2026-02-27 19:31:07 Done.

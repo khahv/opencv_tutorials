@@ -1,0 +1,37 @@
+2026-02-27 19:34:48 === Start ===
+2026-02-27 19:34:48 [Env] Loaded from .env: PIN_PASSWORD
+2026-02-27 19:34:48 [bot_engine] Failed to load template buttons_template/SoliderBackButton.png: Khong tim thay anh: buttons_template/SoliderBackButton.png
+2026-02-27 19:34:49 WindowCapture: client size = 2033x1519, screen offset = (2372, 626)
+2026-02-27 19:34:49 Global hotkey: {'l': 'PinLoggin', 'b': 'FightBoomer', 't': 'ClickTreasure', 'c': 'CollectExplorationReward', 's': 'SoliderTrain', 'h': 'HelpAlliance', 'm': 'CheckMail'} | Press same key to stop | Ctrl+Esc = quit
+2026-02-27 19:34:49 Function priorities: {'PinLoggin': 1, 'FightBoomer': 2, 'ClickTreasure': 4, 'CollectExplorationReward': 98, 'SoliderTrain': 99, 'HelpAlliance': 100, 'CheckMail': 50}
+2026-02-27 19:34:49 Function enabled: {'PinLoggin': True, 'FightBoomer': True, 'ClickTreasure': True, 'CollectExplorationReward': True, 'SoliderTrain': True, 'HelpAlliance': True, 'CheckMail': True}
+2026-02-27 19:34:49 Auto cron: [('PinLoggin', '*/30 * * * *'), ('CollectExplorationReward', '0 */8 * * *'), ('SoliderTrain', '0 */6 * * *'), ('HelpAlliance', '*/15 * * * *'), ('CheckMail', '0 */5 * * *')]
+2026-02-27 19:34:49 Cron next run: PinLoggin at 2026-02-27 20:00:00
+2026-02-27 19:34:49 Cron next run: CollectExplorationReward at 2026-02-28 00:00:00
+2026-02-27 19:34:49 Cron next run: SoliderTrain at 2026-02-28 00:00:00
+2026-02-27 19:34:49 Cron next run: HelpAlliance at 2026-02-27 19:45:00
+2026-02-27 19:34:49 Cron next run: CheckMail at 2026-02-27 20:00:00
+2026-02-27 19:34:54 [Runner] Started function: PinLoggin
+2026-02-27 19:35:01 [Runner] match_count buttons_template/PasswordSlot.png: found 6 >= 6 — true
+2026-02-27 19:35:02 [Runner] match_click buttons_template/PasswordSlot.png (count 1)
+2026-02-27 19:35:03 [Runner] type_text: typed 6 chars
+2026-02-27 19:35:11 [Runner] match_click buttons_template/ConfirmButton.png (count 1)
+2026-02-27 19:35:20 [Scheduler] FightBoomer (priority=2) blocked by PinLoggin (priority=1) [hotkey] -> queued
+2026-02-27 19:35:20 [Scheduler] FightBoomer queued (priority=2, reason=hotkey)
+2026-02-27 19:35:21 [Runner] click_position (2676, 853)
+2026-02-27 19:35:21 [Runner] Finished function: PinLoggin
+2026-02-27 19:35:21 [Scheduler] FightBoomer dequeued and starting (priority=2)
+2026-02-27 19:35:21 [Runner] Started function: FightBoomer
+2026-02-27 19:35:47 [Runner] click_unless_visible: buttons_template/MagnifierButton.png not found — clicked buttons_template/WorldButton.png
+2026-02-27 19:36:00 [Runner] match_click buttons_template/MagnifierButton.png (count 1)
+2026-02-27 19:36:08 [Runner] match_click buttons_template/BoomerButton.png (count 1)
+2026-02-27 19:36:16 [OCR] psm=7 raw='Lv.9'
+2026-02-27 19:36:16 [OCR] psm=7 -> Lv.9 from 'Lv.9'
+2026-02-27 19:36:16 [Runner] set_level: ROI saved to debug_set_level_roi.png
+2026-02-27 19:36:16 [Runner] set_level: already at Lv.9, done
+2026-02-27 19:36:24 [Runner] match_click buttons_template/SearchButton.png (count 1)
+2026-02-27 19:36:39 [Runner] match_click buttons_template/TeamUp.png (count 1)
+2026-02-27 19:36:47 [Runner] match_click buttons_template/March.png (count 1)
+2026-02-27 19:36:47 [Runner] Finished function: FightBoomer
+2026-02-27 19:36:50 === End ===
+2026-02-27 19:36:50 Done.

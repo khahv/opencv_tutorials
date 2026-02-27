@@ -1,0 +1,67 @@
+# Function: SoliderTrain
+description: "Train soldiers: Headquarters -> collect Shooter -> train all Soldiers -> collect Assault -> train all Soldiers"
+
+steps:
+  # Navigate to Headquarters if visible
+  - type: match_click
+    template: buttons_template/HeadquartersButton.png
+    threshold: 0.75
+    one_shot: true
+    timeout_sec: 5
+
+  # All subsequent steps run regardless — each UI element may or may not be present
+  - type: match_click
+    template: buttons_template/ShooterCollect.png
+    threshold: 0.75
+    one_shot: true
+    timeout_sec: 3
+    run_always: true
+
+  - type: match_click
+    template: buttons_template/SoliderTrain.png
+    threshold: 0.75
+    timeout_sec: 3
+    click_interval_sec: 0.15
+    run_always: true
+
+  - type: match_click
+    template: buttons_template/SoliderTrainButton.png
+    threshold: 0.75
+    timeout_sec: 3
+    click_interval_sec: 0.15
+    run_always: true
+
+  - type: match_click
+    template: buttons_template/SoliderBackButton.png
+    threshold: 0.75
+    timeout_sec: 3
+    click_interval_sec: 0.15
+    run_always: true
+
+  - type: match_click
+    template: buttons_template/AssaultCollect.png
+    threshold: 0.75
+    one_shot: true
+    timeout_sec: 5
+    run_always: true
+
+  - type: match_click
+    template: buttons_template/SoliderTrain.png
+    threshold: 0.75
+    timeout_sec: 3
+    click_interval_sec: 0.15
+    run_always: true
+
+  - type: match_click
+    template: buttons_template/SoliderTrainButton.png
+    threshold: 0.75
+    timeout_sec: 3
+    click_interval_sec: 0.15
+    run_always: true
+
+  - type: match_click
+    template: buttons_template/SoliderBackButton.png
+    threshold: 0.75
+    timeout_sec: 3
+    click_interval_sec: 0.15
+    run_always: true

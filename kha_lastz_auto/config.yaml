@@ -17,6 +17,24 @@ functions:
     priority: 4
     enabled: true
 
+  - name: CollectExplorationReward
+    cron: "0 */8 * * *"
+    priority: 98
+    enabled: true
+    key: c
+
+  - name: SoliderTrain
+    cron: "0 */6 * * *"
+    priority: 99
+    enabled: true
+    key: s
+
+  - name: HelpAlliance
+    cron: "*/15 * * * *"
+    priority: 100
+    enabled: true
+    key: h
+
   - name: CheckMail
     key: m
     cron: "0 */5 * * *"

@@ -4,9 +4,11 @@
 description: "Auto login: detect PasswordSlotArray -> click slot -> type PIN -> Confirm"
 
 steps:
-  # Wait for the password screen to appear (if not visible within 8s, skip whole function)
-  - type: wait_until_match
-    template: buttons_template/PasswordSlotArray.png
+  # Confirm login screen is visible: 6 PasswordSlot.png must be present.
+  # Returns false (abort) if fewer than 6 found within 8s.
+  - type: match_count
+    template: buttons_template/PasswordSlot.png
+    count: 6
     threshold: 0.75
     timeout_sec: 8
 

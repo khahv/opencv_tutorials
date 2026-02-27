@@ -1,0 +1,33 @@
+# Function: CollectExplorationReward
+description: "Collect exploration reward: Headquarters -> ExplorationReward -> Collect -> close"
+
+steps:
+  # Click Headquarters if visible (optional navigation — skip if already on right screen)
+  - type: match_click
+    template: buttons_template/HeadquartersButton.png
+    threshold: 0.75
+    one_shot: true
+    timeout_sec: 5
+
+  # ExplorationReward must be clicked regardless of whether HQ nav succeeded
+  - type: match_click
+    template: buttons_template/ExplorationReward.png
+    run_always: true
+    threshold: 0.75
+    one_shot: true
+    timeout_sec: 10
+
+  # Click the Collect button
+  - type: match_click
+    template: buttons_template/CollectButton.png
+    threshold: 0.75
+    one_shot: true
+    timeout_sec: 10
+
+  # Click corner to close any remaining dialog
+  - type: sleep
+    duration_sec: 2
+
+  - type: click_position
+    offset_x: 0.15
+    offset_y: 0.15

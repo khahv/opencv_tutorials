@@ -1,6 +1,7 @@
 """
 Engine chay Function (YAML): load functions, thuc thi tung step.
-Step types: match_click, sleep, click_position, wait_until_match, key_press, set_level, type_text.
+Step types: match_click, match_multi_click, match_count, sleep, click_position, wait_until_match, key_press, set_level, type_text, click_unless_visible.
+Each step returns true/false. Next step is blocked (function aborted) if previous returned false, unless run_always: true is set.
 """
 import os
 import re
@@ -62,7 +63,7 @@ def _preprocess_for_ocr(gray, debug_save_path=None):
     return [padded, inverted]
 
 
-def _read_level_from_roi(screenshot, roi_ratios, wincap, anchor_center=None, anchor_offset=None, debug_save_path=None):
+def _read_level_from_roi(screenshot, roi_ratios, wincap, anchor_center=None, anchor_offset=None, debug_save_path=None, level_range=(1, 99)):
     """Crop screenshot and OCR. Use anchor_center+(offset) if provided, else roi_ratios [x,y,w,h] (0-1)."""
     if pytesseract is None:
         return None
@@ -115,7 +116,7 @@ def _read_level_from_roi(screenshot, roi_ratios, wincap, anchor_center=None, anc
                 m = re.search(r"\b(\d{1,2})\b", text_s)
             if m:
                 num = int(m.group(1))
-                if 1 <= num <= 10:
+                if level_range[0] <= num <= level_range[1]:
                     log.info("[OCR] psm={} -> Lv.{} from {!r}".format(psm, num, text_s))
                     return num
     log.info("[OCR] no level match from any psm/variant")
@@ -146,10 +147,15 @@ def collect_templates(functions_dict):
     templates = set()
     for fn in functions_dict.values():
         for step in fn["steps"]:
-            if step.get("type") == "match_click" and step.get("template"):
+            if step.get("type") in ("match_click", "match_multi_click", "match_count") and step.get("template"):
                 templates.add(step["template"])
             if step.get("type") == "wait_until_match" and step.get("template"):
                 templates.add(step["template"])
+            if step.get("type") == "click_unless_visible":
+                if step.get("visible_template"):
+                    templates.add(step["visible_template"])
+                if step.get("click_template"):
+                    templates.add(step["click_template"])
             if step.get("type") == "set_level":
                 if step.get("plus_template"):
                     templates.add(step["plus_template"])
@@ -184,6 +190,7 @@ class FunctionRunner:
         self.step_start_time = None
         self.step_click_count = 0
         self.wincap = None
+        self.last_step_result = True  # True = previous step matched/succeeded
 
     def load(self, functions_dict):
         self.functions = functions_dict
@@ -199,6 +206,7 @@ class FunctionRunner:
         self.step_click_count = 0
         self.wincap = wincap
         self.state = "running"
+        self.last_step_result = True
         for attr in ("_set_level_debug_saved", "_set_level_warned"):
             if hasattr(self, attr):
                 delattr(self, attr)
@@ -222,6 +230,16 @@ class FunctionRunner:
         step = self.steps[self.step_index]
         step_type = step.get("type", "")
 
+        # Step result gate: abort function if previous step returned False
+        # unless this step sets run_always: true
+        run_always = step.get("run_always", False)
+        if not run_always and not self.last_step_result:
+            log.info("[Runner] Aborting function '{}' — step '{}' blocked (previous step returned false)".format(
+                self.function_name, step_type))
+            self.state = "idle"
+            log.info("[Runner] Finished function: {} (aborted)".format(self.function_name))
+            return "done"
+
         now = time.time()
         if self.step_start_time is None:
             self.step_start_time = now
@@ -233,11 +251,11 @@ class FunctionRunner:
             timeout_sec = step.get("timeout_sec") or 999
             max_clicks = step.get("max_clicks") or 999999
             click_interval_sec = step.get("click_interval_sec") or 0
-            click_random_offset = step.get("click_random_offset") or 0  # pixel, ± xung quanh tam
+            click_random_offset = step.get("click_random_offset") or 0
 
             vision = self.vision_cache.get(template)
             if not vision:
-                self._advance_step()
+                self._advance_step(True)  # config skip, not a match failure
                 return "running"
             points = vision.find(screenshot, threshold=threshold, debug_mode=None)
             if points:
@@ -248,28 +266,53 @@ class FunctionRunner:
                 sx, sy = wincap.get_screen_position(tuple(center))
                 pyautogui.click(sx, sy)
                 self.step_click_count += 1
-                # Log de thay auto click (moi 10 lan hoac lan dau hoac one_shot)
                 if one_shot or self.step_click_count <= 1 or self.step_click_count % 10 == 0:
                     log.info("[Runner] match_click {} (count {})".format(template, self.step_click_count))
                 if not one_shot and click_interval_sec > 0:
                     time.sleep(click_interval_sec)
                 if one_shot:
-                    self._advance_step()
+                    self._advance_step(True)
                     return "running"
                 if self.step_click_count >= max_clicks:
                     log.info("[Runner] match_click {} reached max_clicks={}".format(template, max_clicks))
-                    self._advance_step()
+                    self._advance_step(True)
                     return "running"
-            # timeout for this step
             if now - self.step_start_time >= timeout_sec:
-                log.info("[Runner] match_click {} timeout (template not found in {}s)".format(template, timeout_sec))
-                self._advance_step()
+                log.info("[Runner] match_click {} timeout (not found in {}s)".format(template, timeout_sec))
+                self._advance_step(False)
+            return "running"
+
+        if step_type == "match_multi_click":
+            # Find ALL visible instances of template and click each one, then advance.
+            # If none found within timeout_sec, advance anyway.
+            template           = step.get("template")
+            threshold          = step.get("threshold", 0.75)
+            timeout_sec        = step.get("timeout_sec") or 10
+            click_interval_sec = step.get("click_interval_sec", 0.15)
+
+            vision = self.vision_cache.get(template)
+            if not vision:
+                self._advance_step(True)
+                return "running"
+            points = vision.find(screenshot, threshold=threshold, debug_mode=None)
+            if points:
+                log.info("[Runner] match_multi_click {}: found {} match(es)".format(template, len(points)))
+                for pt in points:
+                    sx, sy = wincap.get_screen_position(tuple(pt))
+                    pyautogui.click(sx, sy)
+                    if click_interval_sec > 0:
+                        time.sleep(click_interval_sec)
+                self._advance_step(True)
+                return "running"
+            if now - self.step_start_time >= timeout_sec:
+                log.info("[Runner] match_multi_click {}: timeout (not found in {}s)".format(template, timeout_sec))
+                self._advance_step(False)
             return "running"
 
         if step_type == "sleep":
             duration = step.get("duration_sec", 0)
             if now - self.step_start_time >= duration:
-                self._advance_step()
+                self._advance_step(True)
             return "running"
 
         if step_type == "click_position":
@@ -280,7 +323,7 @@ class FunctionRunner:
             sx, sy = wincap.get_screen_position((px, py))
             pyautogui.click(sx, sy)
             log.info("[Runner] click_position ({}, {})".format(sx, sy))
-            self._advance_step()
+            self._advance_step(True)
             return "running"
 
         if step_type == "wait_until_match":
@@ -289,14 +332,17 @@ class FunctionRunner:
             timeout_sec = step.get("timeout_sec") or 30
             vision = self.vision_cache.get(template)
             if not vision:
-                self._advance_step()
+                self._advance_step(True)
                 return "running"
             points = vision.find(screenshot, threshold=threshold, debug_mode=None)
             if points:
-                self._advance_step()
+                log.info("[Runner] wait_until_match: found {}".format(template))
+                self._advance_step(True)
                 return "running"
             if now - self.step_start_time >= timeout_sec:
-                self._advance_step()
+                log.info("[Runner] wait_until_match: timeout ({}s) — {} not found".format(
+                    timeout_sec, template))
+                self._advance_step(False)
             return "running"
 
         if step_type == "set_level":
@@ -310,17 +356,19 @@ class FunctionRunner:
             threshold = step.get("threshold", 0.75)
             timeout_sec = step.get("timeout_sec") or 30
             click_interval = step.get("click_interval_sec", 0.3)
+            min_level      = step.get("min_level", 1)
+            max_level      = step.get("max_level", 99)
             if not plus_template or not minus_template:
-                self._advance_step()
+                self._advance_step(True)
                 return "running"
             if now - self.step_start_time >= timeout_sec:
                 log.info("[Runner] set_level: timeout before reaching Lv.{}".format(target_level))
-                self._advance_step()
+                self._advance_step(False)
                 return "running"
             vision_plus = self.vision_cache.get(plus_template)
             vision_minus = self.vision_cache.get(minus_template)
             if not vision_plus or not vision_minus:
-                self._advance_step()
+                self._advance_step(True)
                 return "running"
             # Resolve anchor center from template if specified
             anchor_center = None
@@ -335,7 +383,8 @@ class FunctionRunner:
             current = _read_level_from_roi(
                 screenshot, level_roi or [0, 0, 0.3, 0.1], wincap,
                 anchor_center, level_anchor_offset,
-                debug_save_path="debug_set_level_roi.png" if debug_save else None
+                debug_save_path="debug_set_level_roi.png" if debug_save else None,
+                level_range=(min_level, max_level),
             )
             if debug_save:
                 self._set_level_debug_saved = True
@@ -348,7 +397,7 @@ class FunctionRunner:
             self._set_level_warned = False
             if current == target_level:
                 log.info("[Runner] set_level: already at Lv.{}, done".format(target_level))
-                self._advance_step()
+                self._advance_step(True)
                 return "running"
             if current < target_level:
                 pts = vision_plus.find(screenshot, threshold=threshold, debug_mode=None)
@@ -359,7 +408,7 @@ class FunctionRunner:
                     time.sleep(click_interval)
                 else:
                     log.info("[Runner] set_level: Plus greyed at Lv.{} (max reached), proceeding".format(current))
-                    self._advance_step()
+                    self._advance_step(True)
                 return "running"
             if current > target_level:
                 pts = vision_minus.find(screenshot, threshold=threshold, debug_mode=None)
@@ -370,14 +419,42 @@ class FunctionRunner:
                     time.sleep(click_interval)
                 else:
                     log.info("[Runner] set_level: Minus greyed at Lv.{} (min reached), proceeding".format(current))
-                    self._advance_step()
+                    self._advance_step(True)
                 return "running"
+
+        if step_type == "click_unless_visible":
+            # If visible_template is found on screen -> skip (already on right screen).
+            # If NOT found -> click click_template to navigate there, then advance.
+            visible_template = step.get("visible_template")
+            click_template   = step.get("click_template")
+            threshold        = step.get("threshold", 0.75)
+            timeout_sec      = step.get("timeout_sec", 3)
+            v_check = self.vision_cache.get(visible_template) if visible_template else None
+            if v_check and v_check.find(screenshot, threshold=threshold, debug_mode=None):
+                log.info("[Runner] click_unless_visible: {} found, skip clicking {}".format(
+                    visible_template, click_template))
+                self._advance_step(True)
+                return "running"
+            if now - self.step_start_time >= timeout_sec:
+                v_nav = self.vision_cache.get(click_template) if click_template else None
+                if v_nav:
+                    pts = v_nav.find(screenshot, threshold=threshold, debug_mode=None)
+                    if pts:
+                        sx, sy = wincap.get_screen_position(tuple(pts[0]))
+                        pyautogui.click(sx, sy)
+                        log.info("[Runner] click_unless_visible: {} not found — clicked {}".format(
+                            visible_template, click_template))
+                    else:
+                        log.info("[Runner] click_unless_visible: {} not found and {} not visible either".format(
+                            visible_template, click_template))
+                self._advance_step(True)  # navigation step always succeeds
+            return "running"
 
         if step_type == "key_press":
             key = step.get("key", "")
             if key:
                 pyautogui.press(key)
-            self._advance_step()
+            self._advance_step(True)
             return "running"
 
         if step_type == "type_text":
@@ -394,17 +471,59 @@ class FunctionRunner:
                 log.info("[Runner] type_text: typed {} chars".format(len(text)))
             else:
                 log.info("[Runner] type_text: text is empty (check .env / ${} var name)")
-            self._advance_step()
+            self._advance_step(True)
             return "running"
 
-        # unknown type -> skip
-        self._advance_step()
+        if step_type == "match_count":
+            # Returns true if template appears >= count times within timeout_sec, false otherwise.
+            # Does NOT click anything.
+            template    = step.get("template")
+            count       = step.get("count", 1)
+            threshold   = step.get("threshold", 0.75)
+            timeout_sec = step.get("timeout_sec") or 10
+            debug_save  = step.get("debug_save", False)
+            vision = self.vision_cache.get(template)
+            if not vision:
+                self._advance_step(True)
+                return "running"
+            points = vision.find(screenshot, threshold=threshold, debug_mode=None)
+            found = len(points) if points else 0
+            if found >= count:
+                log.info("[Runner] match_count {}: found {} >= {} — true".format(template, found, count))
+                self._advance_step(True)
+                return "running"
+            if now - self.step_start_time >= timeout_sec:
+                log.info("[Runner] match_count {}: timeout — found {} < {} — false".format(
+                    template, found, count))
+                if debug_save:
+                    try:
+                        os.makedirs("debug", exist_ok=True)
+                        ts_str = time.strftime("%Y%m%d_%H%M%S")
+                        tpl_name = os.path.splitext(os.path.basename(template))[0]
+                        # Save screenshot
+                        shot_path = os.path.join("debug", "match_count_{}_{}_screenshot.png".format(tpl_name, ts_str))
+                        cv.imwrite(shot_path, screenshot)
+                        # Save template for comparison
+                        tpl_path = os.path.join("debug", "match_count_{}_{}_template.png".format(tpl_name, ts_str))
+                        cv.imwrite(tpl_path, vision.needle_img)
+                        log.info("[Runner] match_count debug saved: screenshot={}x{} template={}x{} -> {}".format(
+                            screenshot.shape[1], screenshot.shape[0],
+                            vision.needle_w, vision.needle_h,
+                            shot_path))
+                    except Exception as e:
+                        log.info("[Runner] match_count debug save failed: {}".format(e))
+                self._advance_step(False)
+            return "running"
+
+        # unknown type -> skip (true so next step still runs)
+        self._advance_step(True)
         return "running"
 
-    def _advance_step(self):
+    def _advance_step(self, result=True):
         self.step_index += 1
         self.step_start_time = time.time()
         self.step_click_count = 0
+        self.last_step_result = result
 
 
 def load_config(config_path="config.yaml"):

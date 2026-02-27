@@ -1,6 +1,14 @@
 # Function: FightBoomer
 description: "Magnifier -> Boomer -> set level (OCR) -> Search -> Team Up -> March"
 steps:
+  # If MagnifierButton is not visible within 3s, click WorldButton to navigate there
+  - type: click_unless_visible
+    visible_template: buttons_template/MagnifierButton.png
+    click_template: buttons_template/WorldButton.png
+    threshold: 0.75
+    timeout_sec: 3
+
+  # Now click MagnifierButton (visible after navigation)
   - type: match_click
     template: buttons_template/MagnifierButton.png
     threshold: 0.75
