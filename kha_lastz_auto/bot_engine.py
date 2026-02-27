@@ -1,8 +1,9 @@
 """
 Engine chay Function (YAML): load functions, thuc thi tung step.
-Step types: match_click, sleep, click_position, wait_until_match, key_press.
+Step types: match_click, sleep, click_position, wait_until_match, key_press, set_level.
 """
 import os
+import re
 import time
 import logging
 import random
@@ -11,7 +12,114 @@ import pyautogui
 import cv2 as cv
 from vision import Vision
 
+try:
+    import pytesseract
+    _tesseract_configured = False
+
+    def _configure_tesseract():
+        global _tesseract_configured
+        if _tesseract_configured:
+            return
+        if os.name == "nt":
+            for path in [
+                r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+                r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+            ]:
+                if os.path.isfile(path):
+                    pytesseract.pytesseract.tesseract_cmd = path
+                    break
+        _tesseract_configured = True
+except ImportError:
+    pytesseract = None
+    _configure_tesseract = lambda: None
+
 log = logging.getLogger("kha_lastz")
+_tesseract_warned = False
+
+
+def _preprocess_for_ocr(gray, debug_save_path=None):
+    """Scale up 4x, threshold, add white padding. Returns list of candidate images to try."""
+    # Scale up to make text big enough for OCR (Tesseract struggles with small text)
+    gray = cv.resize(gray, None, fx=4, fy=4, interpolation=cv.INTER_CUBIC)
+
+    # Otsu: works well when contrast is clear
+    _, thresh = cv.threshold(gray, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU)
+
+    # Ensure dark text on white (Tesseract default)
+    if thresh.mean() < 128:
+        thresh = 255 - thresh
+
+    # Add white border so characters at edges aren't clipped
+    padded = cv.copyMakeBorder(thresh, 20, 20, 20, 20, cv.BORDER_CONSTANT, value=255)
+    inverted = 255 - padded
+
+    if debug_save_path:
+        # Save raw gray (before threshold) for easier visual inspection
+        raw_big = cv.resize(gray, None, fx=1, fy=1)
+        cv.imwrite(debug_save_path.replace(".png", "_raw.png"), raw_big)
+        cv.imwrite(debug_save_path, padded)
+
+    return [padded, inverted]
+
+
+def _read_level_from_roi(screenshot, roi_ratios, wincap, anchor_center=None, anchor_offset=None, debug_save_path=None):
+    """Crop screenshot and OCR. Use anchor_center+(offset) if provided, else roi_ratios [x,y,w,h] (0-1)."""
+    if pytesseract is None:
+        return None
+    _configure_tesseract()
+    h_img, w_img = screenshot.shape[:2]
+    if anchor_center is not None and anchor_offset is not None and len(anchor_offset) == 4:
+        cx, cy = anchor_center
+        ox, oy, rw, rh = anchor_offset
+        x = max(0, int(cx + ox))
+        y = max(0, int(cy + oy))
+        w = max(1, int(rw))
+        h = max(1, int(rh))
+    else:
+        x = int(roi_ratios[0] * w_img)
+        y = int(roi_ratios[1] * h_img)
+        w = max(1, int(roi_ratios[2] * w_img))
+        h = max(1, int(roi_ratios[3] * h_img))
+    x = max(0, min(x, w_img - 1))
+    y = max(0, min(y, h_img - 1))
+    w = min(w, w_img - x)
+    h = min(h, h_img - y)
+    roi = screenshot[y:y + h, x:x + w]
+    if roi.size == 0:
+        return None
+    gray = cv.cvtColor(roi, cv.COLOR_BGR2GRAY) if len(roi.shape) == 3 else roi
+
+    candidates = _preprocess_for_ocr(gray, debug_save_path=debug_save_path)
+
+    # psm 7 = single text line, psm 8 = single word — best for "Lv.1" label
+    for psm in (7, 8, 6):
+        for img in candidates:
+            try:
+                text = pytesseract.image_to_string(img, config="--oem 3 --psm {}".format(psm))
+            except Exception as e:
+                global _tesseract_warned
+                if not _tesseract_warned and ("tesseract" in str(e).lower() or "TesseractNotFound" in type(e).__name__):
+                    _tesseract_warned = True
+                    log.info("[bot_engine] Tesseract OCR not found. Install from https://github.com/UB-Mannheim/tesseract/wiki")
+                return None
+            text_s = text.strip()
+            if text_s:
+                log.info("[OCR] psm={} raw={!r}".format(psm, text_s))
+            # Strict: "Lv.3", "LV.3", etc.
+            m = re.search(r"[Ll][Vv]\.?\s*(\d{1,2})", text_s)
+            if not m:
+                # Fallback: ".digit" — the dot separator is reliable
+                m = re.search(r"[.,]\s*(\d{1,2})\b", text_s)
+            if not m:
+                # Last resort: any standalone 1-2 digit number
+                m = re.search(r"\b(\d{1,2})\b", text_s)
+            if m:
+                num = int(m.group(1))
+                if 1 <= num <= 10:
+                    log.info("[OCR] psm={} -> Lv.{} from {!r}".format(psm, num, text_s))
+                    return num
+    log.info("[OCR] no level match from any psm/variant")
+    return None
 
 
 def load_functions(functions_dir="functions"):
@@ -42,6 +150,13 @@ def collect_templates(functions_dict):
                 templates.add(step["template"])
             if step.get("type") == "wait_until_match" and step.get("template"):
                 templates.add(step["template"])
+            if step.get("type") == "set_level":
+                if step.get("plus_template"):
+                    templates.add(step["plus_template"])
+                if step.get("minus_template"):
+                    templates.add(step["minus_template"])
+                if step.get("level_anchor_template"):
+                    templates.add(step["level_anchor_template"])
     return list(templates)
 
 
@@ -84,6 +199,9 @@ class FunctionRunner:
         self.step_click_count = 0
         self.wincap = wincap
         self.state = "running"
+        for attr in ("_set_level_debug_saved", "_set_level_warned"):
+            if hasattr(self, attr):
+                delattr(self, attr)
         log.info("[Runner] Started function: {}".format(function_name))
         return True
 
@@ -180,6 +298,80 @@ class FunctionRunner:
             if now - self.step_start_time >= timeout_sec:
                 self._advance_step()
             return "running"
+
+        if step_type == "set_level":
+            # OCR-based: read "Lv.X" from screen, click Plus/Minus to reach target_level.
+            target_level = step.get("target_level", 10)
+            level_roi = step.get("level_roi")
+            level_anchor_template = step.get("level_anchor_template")
+            level_anchor_offset = step.get("level_anchor_offset")
+            plus_template = step.get("plus_template")
+            minus_template = step.get("minus_template")
+            threshold = step.get("threshold", 0.75)
+            timeout_sec = step.get("timeout_sec") or 30
+            click_interval = step.get("click_interval_sec", 0.3)
+            if not plus_template or not minus_template:
+                self._advance_step()
+                return "running"
+            if now - self.step_start_time >= timeout_sec:
+                log.info("[Runner] set_level: timeout before reaching Lv.{}".format(target_level))
+                self._advance_step()
+                return "running"
+            vision_plus = self.vision_cache.get(plus_template)
+            vision_minus = self.vision_cache.get(minus_template)
+            if not vision_plus or not vision_minus:
+                self._advance_step()
+                return "running"
+            # Resolve anchor center from template if specified
+            anchor_center = None
+            if level_anchor_template:
+                v_anchor = self.vision_cache.get(level_anchor_template)
+                if v_anchor:
+                    pts = v_anchor.find(screenshot, threshold=threshold, debug_mode=None)
+                    if pts:
+                        anchor_center = (int(pts[0][0]), int(pts[0][1]))
+            # OCR: read current level
+            debug_save = step.get("debug_save_roi") and not getattr(self, "_set_level_debug_saved", False)
+            current = _read_level_from_roi(
+                screenshot, level_roi or [0, 0, 0.3, 0.1], wincap,
+                anchor_center, level_anchor_offset,
+                debug_save_path="debug_set_level_roi.png" if debug_save else None
+            )
+            if debug_save:
+                self._set_level_debug_saved = True
+                log.info("[Runner] set_level: ROI saved to debug_set_level_roi.png")
+            if current is None:
+                if not getattr(self, "_set_level_warned", False):
+                    self._set_level_warned = True
+                    log.info("[Runner] set_level: OCR cannot read level — check level_anchor_offset in YAML")
+                return "running"
+            self._set_level_warned = False
+            if current == target_level:
+                log.info("[Runner] set_level: already at Lv.{}, done".format(target_level))
+                self._advance_step()
+                return "running"
+            if current < target_level:
+                pts = vision_plus.find(screenshot, threshold=threshold, debug_mode=None)
+                if pts:
+                    sx, sy = wincap.get_screen_position(tuple(pts[0]))
+                    pyautogui.click(sx, sy)
+                    log.info("[Runner] set_level: Lv.{} -> click Plus (target Lv.{})".format(current, target_level))
+                    time.sleep(click_interval)
+                else:
+                    log.info("[Runner] set_level: Plus greyed at Lv.{} (max reached), proceeding".format(current))
+                    self._advance_step()
+                return "running"
+            if current > target_level:
+                pts = vision_minus.find(screenshot, threshold=threshold, debug_mode=None)
+                if pts:
+                    sx, sy = wincap.get_screen_position(tuple(pts[0]))
+                    pyautogui.click(sx, sy)
+                    log.info("[Runner] set_level: Lv.{} -> click Minus (target Lv.{})".format(current, target_level))
+                    time.sleep(click_interval)
+                else:
+                    log.info("[Runner] set_level: Minus greyed at Lv.{} (min reached), proceeding".format(current))
+                    self._advance_step()
+                return "running"
 
         if step_type == "key_press":
             key = step.get("key", "")

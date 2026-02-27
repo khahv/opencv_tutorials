@@ -1,0 +1,23 @@
+2026-02-27 13:03:44 === Start ===
+2026-02-27 13:03:44 WindowCapture: client size = 2518x1725, screen offset = (1464, 202)
+2026-02-27 13:03:44 Global hotkey: {'m': 'CheckMail', 't': 'ClickTreasure', 'b': 'FightBoomer'} = run function. Press same key again (e.g. t) to stop. Ctrl+Esc = quit
+2026-02-27 13:03:44 Auto cron: [('CheckMail', '0 */5 * * *')]
+2026-02-27 13:03:44 Cron next run: CheckMail at 2026-02-27 15:00:00
+2026-02-27 13:03:47 [Runner] Started function: FightBoomer
+2026-02-27 13:03:48 [Runner] match_click buttons_template/MagnifierButton.png (count 1)
+2026-02-27 13:03:50 [Runner] match_click buttons_template/BoomerButton.png (count 1)
+2026-02-27 13:03:52 [OCR] raw text: ''
+2026-02-27 13:03:52 [Runner] set_level: saved ROI to debug_set_level_roi.png (check if Lv.X is visible)
+2026-02-27 13:03:52 [Runner] set_level: OCR cannot read level (check level_roi in YAML)
+2026-02-27 13:03:53 [OCR] raw text: ''
+2026-02-27 13:03:54 [OCR] raw text: ''
+2026-02-27 13:03:54 [Runner] set_level: OCR cannot read level (check level_roi in YAML)
+2026-02-27 13:03:56 [OCR] raw text: ''
+2026-02-27 13:03:57 [OCR] raw text: ''
+2026-02-27 13:03:57 [Runner] set_level: OCR cannot read level (check level_roi in YAML)
+2026-02-27 13:03:58 [OCR] raw text: ''
+2026-02-27 13:03:59 [OCR] raw text: ''
+2026-02-27 13:03:59 [Runner] set_level: OCR cannot read level (check level_roi in YAML)
+2026-02-27 13:04:01 [OCR] raw text: ''
+2026-02-27 13:04:01 === End ===
+2026-02-27 13:04:01 Done.

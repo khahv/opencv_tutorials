@@ -1,0 +1,50 @@
+# Function: FightBoomer
+description: "Magnifier -> Boomer -> set level (OCR) -> Search -> Team Up -> March"
+steps:
+  - type: match_click
+    template: buttons_template/MagnifierButton.png
+    threshold: 0.75
+    one_shot: true
+    timeout_sec: 10
+  - type: sleep
+    duration_sec: 1
+  - type: match_click
+    template: buttons_template/BoomerButton.png
+    threshold: 0.75
+    one_shot: true
+    timeout_sec: 10
+  - type: sleep
+    duration_sec: 0.5
+  # "Lv.X" text sits directly above the slider thumb (|| icon) and moves with it.
+  # Anchor: find Slider.png, then crop the region above its center.
+  # level_anchor_offset: [dx, dy, w, h] px from Slider center
+  - type: set_level
+    target_level: 10
+    level_anchor_template: buttons_template/Slider.png
+    level_anchor_offset: [-45, -65, 110, 35]
+    plus_template: buttons_template/PlusButton.png
+    minus_template: buttons_template/MinusButton.png
+    threshold: 0.75
+    timeout_sec: 20
+    debug_save_roi: true
+  - type: sleep
+    duration_sec: 0.5
+  - type: match_click
+    template: buttons_template/SearchButton.png
+    threshold: 0.75
+    one_shot: true
+    timeout_sec: 10
+  - type: sleep
+    duration_sec: 0.5
+  - type: match_click
+    template: buttons_template/TeamUp.png
+    threshold: 0.75
+    one_shot: true
+    timeout_sec: 10
+  - type: sleep
+    duration_sec: 0.5
+  - type: match_click
+    template: buttons_template/March.png
+    threshold: 0.75
+    one_shot: true
+    timeout_sec: 10

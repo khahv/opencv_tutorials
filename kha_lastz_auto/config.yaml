@@ -2,9 +2,10 @@
 key_bindings:
   m: CheckMail
   t: ClickTreasure
+  b: FightBoomer
 
 # Tu dong chay function theo cron (dinh dang Linux cron: phut gio ngay thang thu)
 # https://crontab.guru/  - vi du: "*/5 * * * *" = moi 5 phut
 schedules:
   - function: CheckMail
-    cron: "*/1 * * * *"
+    cron: "0 */5 * * *"

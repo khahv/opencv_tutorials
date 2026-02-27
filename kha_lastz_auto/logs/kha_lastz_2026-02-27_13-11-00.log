@@ -1,0 +1,18 @@
+2026-02-27 13:11:00 === Start ===
+2026-02-27 13:11:00 WindowCapture: client size = 2518x1725, screen offset = (1464, 202)
+2026-02-27 13:11:00 Global hotkey: {'m': 'CheckMail', 't': 'ClickTreasure', 'b': 'FightBoomer'} = run function. Press same key again (e.g. t) to stop. Ctrl+Esc = quit
+2026-02-27 13:11:00 Auto cron: [('CheckMail', '0 */5 * * *')]
+2026-02-27 13:11:00 Cron next run: CheckMail at 2026-02-27 15:00:00
+2026-02-27 13:11:06 [Runner] Started function: FightBoomer
+2026-02-27 13:11:07 [Runner] match_click buttons_template/MagnifierButton.png (count 1)
+2026-02-27 13:11:09 [Runner] match_click buttons_template/BoomerButton.png (count 1)
+2026-02-27 13:11:14 [OCR] no level match from any psm/variant
+2026-02-27 13:11:14 [Runner] set_level: ROI saved to debug_set_level_roi.png
+2026-02-27 13:11:14 [Runner] set_level: OCR cannot read level — check level_anchor_offset in YAML
+2026-02-27 13:11:18 [OCR] no level match from any psm/variant
+2026-02-27 13:11:22 [OCR] no level match from any psm/variant
+2026-02-27 13:11:26 [OCR] no level match from any psm/variant
+2026-02-27 13:11:29 [OCR] no level match from any psm/variant
+2026-02-27 13:11:35 [OCR] no level match from any psm/variant
+2026-02-27 13:11:35 === End ===
+2026-02-27 13:11:35 Done.

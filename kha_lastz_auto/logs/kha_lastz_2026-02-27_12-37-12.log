@@ -1,0 +1,15 @@
+2026-02-27 12:37:12 === Start ===
+2026-02-27 12:37:12 WindowCapture: client size = 2518x1725, screen offset = (2002, 478)
+2026-02-27 12:37:12 Global hotkey: {'m': 'CheckMail', 't': 'ClickTreasure', 'b': 'FightBoomer'} = run function. Press same key again (e.g. t) to stop. Ctrl+Esc = quit
+2026-02-27 12:37:12 Auto cron: [('CheckMail', '0 */5 * * *')]
+2026-02-27 12:37:12 Cron next run: CheckMail at 2026-02-27 15:00:00
+2026-02-27 12:37:15 [Runner] Started function: FightBoomer
+2026-02-27 12:37:15 [Runner] match_click buttons_template/MagnifierButton.png (count 1)
+2026-02-27 12:37:18 [Runner] match_click buttons_template/BoomerButton.png (count 1)
+2026-02-27 12:37:34 [Runner] match_click buttons_template/PlusButton.png timeout (template not found in 15s)
+2026-02-27 12:37:35 [Runner] match_click buttons_template/SearchButton.png (count 1)
+2026-02-27 12:37:38 [Runner] match_click buttons_template/TeamUp.png (count 1)
+2026-02-27 12:37:39 [Runner] match_click buttons_template/March.png (count 1)
+2026-02-27 12:37:39 [Runner] Finished function: FightBoomer
+2026-02-27 12:37:44 === End ===
+2026-02-27 12:37:44 Done.

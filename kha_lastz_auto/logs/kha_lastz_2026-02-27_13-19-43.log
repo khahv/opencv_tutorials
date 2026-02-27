@@ -1,0 +1,22 @@
+2026-02-27 13:19:43 === Start ===
+2026-02-27 13:19:43 WindowCapture: client size = 2518x1725, screen offset = (1464, 202)
+2026-02-27 13:19:43 Global hotkey: {'m': 'CheckMail', 't': 'ClickTreasure', 'b': 'FightBoomer'} = run function. Press same key again (e.g. t) to stop. Ctrl+Esc = quit
+2026-02-27 13:19:43 Auto cron: [('CheckMail', '0 */5 * * *')]
+2026-02-27 13:19:43 Cron next run: CheckMail at 2026-02-27 15:00:00
+2026-02-27 13:19:45 [Runner] Started function: FightBoomer
+2026-02-27 13:19:45 [Runner] match_click buttons_template/MagnifierButton.png (count 1)
+2026-02-27 13:19:48 [Runner] match_click buttons_template/BoomerButton.png (count 1)
+2026-02-27 13:19:50 [OCR] psm=7 fallback .digit matched Lv.1 from '_V.1'
+2026-02-27 13:19:50 [Runner] set_level: ROI saved to debug_set_level_roi.png
+2026-02-27 13:19:51 [Runner] set_level: Lv.1 -> click Plus (target Lv.10)
+2026-02-27 13:19:52 [OCR] psm=7 matched Lv.2 from 'Lv.2'
+2026-02-27 13:19:53 [Runner] set_level: Lv.2 -> click Plus (target Lv.10)
+2026-02-27 13:19:56 [OCR] no level match from any psm/variant
+2026-02-27 13:19:56 [Runner] set_level: OCR cannot read level — check level_anchor_offset in YAML
+2026-02-27 13:19:58 [OCR] no level match from any psm/variant
+2026-02-27 13:20:01 [OCR] no level match from any psm/variant
+2026-02-27 13:20:03 [OCR] no level match from any psm/variant
+2026-02-27 13:20:06 [OCR] no level match from any psm/variant
+2026-02-27 13:20:10 [OCR] no level match from any psm/variant
+2026-02-27 13:20:10 === End ===
+2026-02-27 13:20:10 Done.
