@@ -117,9 +117,28 @@ Find a template on screen and click it.
   click_offset_y: 0.0     # shift click down  by N × template_height (negative = up)
   click_random_offset: 20  # randomize click position ±N pixels (anti-bot detection)
   run_always: false        # true = run even if a previous step returned false
+  debug_click: false       # true = save a debug PNG showing match area and click position
 ```
 
 Returns `true` on successful click, `false` when `timeout_sec` expires without a match.
+
+#### `debug_click`
+
+When `debug_click: true`, saves a debug PNG to the `kha_lastz_auto/` folder after the step runs:
+
+- **Green rectangle** — the matched template area on screen
+- **Red circle** — the exact position the cursor will click / move to (after applying offsets)
+
+File name format: `debug_<event_type>_<template_name>.png`
+
+| Example | Output file |
+|---|---|
+| `match_click` + `buttons_template/Use8HoursPeaceShield.png` | `debug_match_click_Use8HoursPeaceShield.png` |
+| `match_move` + `buttons_template/PeaceShield.png` | `debug_match_move_PeaceShield.png` |
+
+Useful when calibrating `click_offset_x` / `click_offset_y` values to verify the click lands exactly where intended.
+
+---
 
 #### `click_offset_x` / `click_offset_y`
 
@@ -150,6 +169,7 @@ Find a template on screen and move the mouse to it — no click.
   timeout_sec: 10
   click_offset_x: 0.0   # same offset rules as match_click
   click_offset_y: 0.0
+  debug_click: false     # true = save a debug PNG showing match area and move target
 ```
 
 Returns `true` when the mouse is moved successfully, `false` on timeout.

@@ -14,6 +14,12 @@ functions:
     enabled: true
     key: l
 
+  - name: TurnOnShield
+    trigger: attacked
+    key: o
+    priority: 2
+    enabled: true
+
   - name: FightBoomer
     key: b
     cron: "*/2 * * * *"
@@ -54,8 +60,4 @@ functions:
     priority: 60
     enabled: true
 
-  - name: TurnOnShield
-    trigger: attacked
-    key: o
-    priority: 1
-    enabled: true
+ 

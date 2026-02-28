@@ -77,8 +77,9 @@ class Vision:
         for x, y, w, h in rects:
             cx = int((x + w // 2) * scale)
             cy = int((y + h // 2) * scale)
-            _log.info("[Vision.find] groupRect=({},{},{},{}) needle=({}x{}) scale={} → center=({},{})".format(
-                x, y, w, h, self.needle_w, self.needle_h, scale, cx, cy))
+            if debug_mode:
+                _log.info("[Vision.find] groupRect=({},{},{},{}) needle=({}x{}) scale={} → center=({},{})".format(
+                    x, y, w, h, self.needle_w, self.needle_h, scale, cx, cy))
             points.append((cx, cy))
 
             if debug_mode == 'rectangles':

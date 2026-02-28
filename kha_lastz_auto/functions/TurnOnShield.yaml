@@ -3,11 +3,18 @@
 description: "Activate shield when under attack: HQ -> World -> center click -> CityWall -> PeaceShield arrow"
 
 steps:
+
+  - event_type: sleep
+    duration_sec: 10
+
   - event_type: match_click
     template: buttons_template/HeadquartersButton.png
     threshold: 0.75
     one_shot: true
     timeout_sec: 3
+
+  - event_type: sleep
+    duration_sec: 1
 
   - event_type: match_click
     template: buttons_template/WorldButton.png
@@ -17,14 +24,14 @@ steps:
     run_always: true
 
   - event_type: sleep
-    duration_sec: 0.5
+    duration_sec: 1
 
   - event_type: click_position
     offset_x: 0.5
     offset_y: 0.5
 
   - event_type: sleep
-    duration_sec: 0.5
+    duration_sec: 1
 
   - event_type: match_click
     template: buttons_template/CityWallIcon.png
@@ -33,7 +40,7 @@ steps:
     timeout_sec: 10
 
   - event_type: sleep
-    duration_sec: 0.5
+    duration_sec: 1
 
   # Click the ► arrow on the right edge of the PeaceShield card
   # click_offset_x: 0.48 = shift right by 48% of template width (from center to right edge)
@@ -46,14 +53,14 @@ steps:
     click_offset_y: 0.0
 
   - event_type: sleep
-    duration_sec: 0.5
+    duration_sec: 1
 
   # Click the Use button (right side of card, ~33% right of center)
   - event_type: match_move
-    template: buttons_template/test.png
+    template: buttons_template/Use8HoursPeaceShield.png
     threshold: 0.75
     one_shot: true
     timeout_sec: 10
-    click_offset_x: 0
-    click_offset_y: 0
-    debug_click: true
+    click_offset_x: 0.33
+    click_offset_y: -0.5
+    debug_click: false
