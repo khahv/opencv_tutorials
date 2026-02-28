@@ -4,4 +4,5 @@ __pycache__
 /pydirectinput.egg-info
 /build
 /dist
+/logs
 **/.env
