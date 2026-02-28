@@ -53,3 +53,9 @@ functions:
     key: d
     priority: 60
     enabled: true
+
+  - name: TurnOnShield
+    trigger: attacked
+    key: o
+    priority: 1
+    enabled: true

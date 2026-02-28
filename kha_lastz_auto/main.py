@@ -74,15 +74,17 @@ else:
 config = load_config("config.yaml")
 fn_configs = config.get("functions") or []
 
-key_bindings   = {}   # key_char -> fn_name
-fn_priority    = {}   # fn_name  -> int  (lower = higher priority)
-fn_enabled     = {}   # fn_name  -> bool
-schedules      = []   # [{ "function": ..., "cron": ... }]
+key_bindings      = {}   # key_char -> fn_name
+fn_priority       = {}   # fn_name  -> int  (lower = higher priority)
+fn_enabled        = {}   # fn_name  -> bool
+schedules         = []   # [{ "function": ..., "cron": ... }]
+attacked_triggers = []   # fn_names triggered when attack starts
 
 for fc in fn_configs:
     name    = fc.get("name")
     key     = fc.get("key")
     cron    = fc.get("cron")
+    trigger = fc.get("trigger")
     prio    = fc.get("priority", 99)
     enabled = fc.get("enabled", True)
     if not name:
@@ -93,6 +95,8 @@ for fc in fn_configs:
         key_bindings[key] = name
     if cron and enabled:
         schedules.append({"function": name, "cron": cron})
+    if trigger == "attacked" and enabled:
+        attacked_triggers.append(name)
 
 functions    = load_functions("functions")
 templates    = collect_templates(functions)
@@ -238,6 +242,8 @@ log.info("Function priorities: {}".format({n: fn_priority[n] for n in fn_priorit
 log.info("Function enabled: {}".format({n: fn_enabled[n] for n in fn_enabled}))
 if schedules:
     log.info("Auto cron: {}".format([(s["function"], s["cron"]) for s in schedules]))
+if attacked_triggers:
+    log.info("Attack triggers: {}".format(attacked_triggers))
     for fn_name, ts in sorted(next_run_at.items(), key=lambda x: x[1]):
         log.info("Cron next run: {} at {}".format(
             fn_name, datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")))
@@ -327,7 +333,10 @@ while running and not exit_requested:
         continue
 
     # Being-attacked detection
-    attack_detector.update(screenshot, log)
+    attack_event = attack_detector.update(screenshot, log)
+    if attack_event == "started":
+        for fn_name in attacked_triggers:
+            _try_start(fn_name, trigger="attacked")
 
     was_running = runner.state == "running"
     runner.update(screenshot, wincap)

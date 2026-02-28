@@ -42,6 +42,7 @@ functions:
 | `key` | Hotkey to toggle the function on/off. Press the same key while running to stop. |
 | `cron` | Cron expression for automatic scheduling. See [crontab.guru](https://crontab.guru/). |
 | `priority` | Lower number = higher priority. A higher-priority function can preempt a running one. |
+| `trigger` | Special event trigger. Currently supports `attacked` — fires the function when attack is detected. Cannot be combined with `cron`. |
 | `enabled` | `true/false` — disables the function from both cron and hotkey when `false`. |
 
 ### Priority & Scheduler
@@ -61,6 +62,19 @@ After any function finishes, the queue is drained in priority order.
 | Hotkey (e.g. `b`) | Start function / press again to stop |
 | `Ctrl + Esc` | Quit the bot cleanly |
 | `q` on preview window | Quit the bot |
+
+### Trigger: attacked
+
+A function with `trigger: attacked` starts automatically the moment an attack is detected — no hotkey or cron needed.
+
+```yaml
+  - name: TurnOnShield
+    trigger: attacked
+    priority: 1        # high priority so it preempts other running functions
+    enabled: true
+```
+
+Multiple functions can use `trigger: attacked`. They are all queued/started using the same priority rules as cron and hotkey triggers.
 
 ---
 
@@ -99,11 +113,46 @@ Find a template on screen and click it.
   timeout_sec: 10          # seconds to wait before giving up
   max_clicks: 20           # (one_shot: false) maximum number of clicks
   click_interval_sec: 0.15 # (one_shot: false) pause between clicks
+  click_offset_x: 0.5     # shift click right by N × template_width  (e.g. 0.5 = half width)
+  click_offset_y: 0.0     # shift click down  by N × template_height (negative = up)
   click_random_offset: 20  # randomize click position ±N pixels (anti-bot detection)
   run_always: false        # true = run even if a previous step returned false
 ```
 
 Returns `true` on successful click, `false` when `timeout_sec` expires without a match.
+
+#### `click_offset_x` / `click_offset_y`
+
+Shift the click position relative to the center of the matched template, expressed as a **ratio of the template size**.
+
+```yaml
+click_offset_x: 0.5    # shift right  by 50% of template width
+click_offset_y: -0.5   # shift up     by 50% of template height
+```
+
+| Value | Effect |
+|---|---|
+| `0.0` (default) | click the template center |
+| `0.5` | shift right / down by half the template dimension |
+| `-0.5` | shift left / up by half the template dimension |
+
+Applied before `click_random_offset`.
+
+---
+
+### `match_move`
+Find a template on screen and move the mouse to it — no click.
+
+```yaml
+- event_type: match_move
+  template: buttons_template/MyTarget.png
+  threshold: 0.75
+  timeout_sec: 10
+  click_offset_x: 0.0   # same offset rules as match_click
+  click_offset_y: 0.0
+```
+
+Returns `true` when the mouse is moved successfully, `false` on timeout.
 
 ---
 

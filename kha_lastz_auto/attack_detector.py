@@ -17,8 +17,14 @@ class AttackDetector:
         self._attacked = False
         self._clear_since = None
 
-    def update(self, screenshot, log) -> None:
-        """Call once per captured frame. Logs state changes only."""
+    def update(self, screenshot, log):
+        """Call once per captured frame.
+
+        Returns:
+            "started"  — attack just began this frame
+            "ended"    — attack just ended this frame
+            None       — no state change
+        """
         icon = bool(self._vision.find(screenshot, threshold=self._threshold))
         now = time.time()
 
@@ -27,6 +33,7 @@ class AttackDetector:
                 self._attacked = True
                 self._clear_since = None
                 log.info("[Alert] House is being attacked!")
+                return "started"
         else:
             if icon:
                 self._clear_since = None          # still attacked → reset countdown
@@ -37,3 +44,5 @@ class AttackDetector:
                     self._attacked = False
                     self._clear_since = None
                     log.info("[Alert] Attack has ended.")
+                    return "ended"
+        return None

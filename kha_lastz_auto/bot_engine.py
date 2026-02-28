@@ -147,7 +147,7 @@ def collect_templates(functions_dict):
     templates = set()
     for fn in functions_dict.values():
         for step in fn["steps"]:
-            if step.get("event_type") in ("match_click", "match_multi_click", "match_count") and step.get("template"):
+            if step.get("event_type") in ("match_click", "match_multi_click", "match_count", "match_move") and step.get("template"):
                 templates.add(step["template"])
             if step.get("event_type") == "wait_until_match" and step.get("template"):
                 templates.add(step["template"])
@@ -257,19 +257,46 @@ class FunctionRunner:
             max_clicks = step.get("max_clicks") or 999999
             click_interval_sec = step.get("click_interval_sec") or 0
             click_random_offset = step.get("click_random_offset") or 0
+            click_offset_x = step.get("click_offset_x") or 0.0
+            click_offset_y = step.get("click_offset_y") or 0.0
 
             vision = self.vision_cache.get(template)
             if not vision:
                 self._advance_step(True)  # config skip, not a match failure
                 return "running"
+            debug_click = step.get("debug_click", False)
             points = vision.find(screenshot, threshold=threshold, debug_mode=None)
             if points:
                 center = list(points[0])
+                # click_offset_x/y are ratios of template size: 0.5 = half template width/height
+                center[0] += int(click_offset_x * vision.needle_w)
+                center[1] += int(click_offset_y * vision.needle_h)
                 if click_random_offset > 0:
                     center[0] += random.randint(-click_random_offset, click_random_offset)
                     center[1] += random.randint(-click_random_offset, click_random_offset)
                 sx, sy = wincap.get_screen_position(tuple(center))
+                raw_center = points[0]
+                log.info("[Runner] {} | raw_center=({},{}) needle=({}x{}) offset=({},{}) after_offset=({},{}) screen=({},{})".format(
+                    self._step_label(step), raw_center[0], raw_center[1],
+                    vision.needle_w, vision.needle_h,
+                    click_offset_x, click_offset_y,
+                    center[0], center[1], sx, sy))
+                if debug_click:
+                    import cv2 as _cv2, os as _os
+                    dbg = screenshot.copy()
+                    rx = raw_center[0] - vision.needle_w // 2
+                    ry = raw_center[1] - vision.needle_h // 2
+                    _cv2.rectangle(dbg, (rx, ry), (rx + vision.needle_w, ry + vision.needle_h), (0, 255, 0), 2)
+                    _cv2.circle(dbg, (center[0], center[1]), 12, (0, 0, 255), -1)
+                    tname = _os.path.splitext(_os.path.basename(template))[0]
+                    out_path = "debug_click_{}.png".format(tname)
+                    _cv2.imwrite(out_path, dbg)
+                    log.info("[Runner] debug_click saved → {}".format(out_path))
                 pyautogui.click(sx, sy)
+                actual = pyautogui.position()
+                log.info("[Runner] {} | intended=({},{}) actual=({},{}) diff=({},{})".format(
+                    self._step_label(step), sx, sy, actual.x, actual.y,
+                    actual.x - sx, actual.y - sy))
                 self.step_click_count += 1
                 if not one_shot and click_interval_sec > 0:
                     time.sleep(click_interval_sec)
@@ -283,6 +310,41 @@ class FunctionRunner:
                     log.info("[Runner] {} → true (clicked {})".format(self._step_label(step), self.step_click_count))
                     self._advance_step(True)
                     return "running"
+            if now - self.step_start_time >= timeout_sec:
+                log.info("[Runner] {} → false (not found in {}s)".format(self._step_label(step), timeout_sec))
+                self._advance_step(False)
+            return "running"
+
+        if step_type == "match_move":
+            template     = step.get("template")
+            threshold    = step.get("threshold", 0.75)
+            timeout_sec  = step.get("timeout_sec") or 999
+            click_offset_x = step.get("click_offset_x") or 0.0
+            click_offset_y = step.get("click_offset_y") or 0.0
+
+            vision = self.vision_cache.get(template)
+            if not vision:
+                self._advance_step(True)
+                return "running"
+            points = vision.find(screenshot, threshold=threshold, debug_mode=None)
+            if points:
+                center = list(points[0])
+                log.info("[Runner] match_move raw_center={} needle=({}x{}) offset=({},{})".format(
+                    tuple(center), vision.needle_w, vision.needle_h,
+                    click_offset_x, click_offset_y))
+                center[0] += int(click_offset_x * vision.needle_w)
+                center[1] += int(click_offset_y * vision.needle_h)
+                log.info("[Runner] match_move after_offset={}".format(tuple(center)))
+                sx, sy = wincap.get_screen_position(tuple(center))
+                log.info("[Runner] match_move screen_pos=({},{}) win_offset=({},{})".format(
+                    sx, sy, wincap.offset_x, wincap.offset_y))
+                pyautogui.moveTo(sx, sy)
+                actual = pyautogui.position()
+                log.info("[Runner] {} → true | intended=({},{}) actual=({},{}) diff=({},{})".format(
+                    self._step_label(step), sx, sy, actual.x, actual.y,
+                    actual.x - sx, actual.y - sy))
+                self._advance_step(True)
+                return "running"
             if now - self.step_start_time >= timeout_sec:
                 log.info("[Runner] {} → false (not found in {}s)".format(self._step_label(step), timeout_sec))
                 self._advance_step(False)

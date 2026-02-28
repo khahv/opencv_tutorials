@@ -1,5 +1,7 @@
 import cv2 as cv
 import numpy as np
+import logging
+_log = logging.getLogger("kha_lastz")
 
 # Scale toan cuc: duoc set 1 lan duy nhat tu main.py dua tren
 # ty le current_window_width / reference_width tu config.yaml.
@@ -75,6 +77,8 @@ class Vision:
         for x, y, w, h in rects:
             cx = int((x + w // 2) * scale)
             cy = int((y + h // 2) * scale)
+            _log.info("[Vision.find] groupRect=({},{},{},{}) needle=({}x{}) scale={} → center=({},{})".format(
+                x, y, w, h, self.needle_w, self.needle_h, scale, cx, cy))
             points.append((cx, cy))
 
             if debug_mode == 'rectangles':

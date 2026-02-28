@@ -1,9 +1,0 @@
-2026-02-27 12:10:25 === Start ===
-2026-02-27 12:10:25 WindowCapture: client size = 2518x1725, screen offset = (816, 452)
-2026-02-27 12:10:25 Global hotkey (bat ky cua so nao): {'m': 'CheckMail', 't': 'ClickTreasure'} = chay function, Ctrl+Esc = thoat
-2026-02-27 12:10:25 Tu dong theo cron: [('CheckMail', '*/1 * * * *')]
-2026-02-27 12:10:25 Cron lan chay tiep theo: CheckMail luc 2026-02-27 19:11:00
-2026-02-27 12:11:11 [Runner] Bat dau function: ClickTreasure
-2026-02-27 12:11:12 [Runner] match_click buttons_template/TreasureHellicopter.png (lan 1)
-2026-02-27 12:11:39 === End ===
-2026-02-27 12:11:39 Done.
