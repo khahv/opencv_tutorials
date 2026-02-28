@@ -4,7 +4,7 @@ description: "Collect exploration reward: Headquarters -> ExplorationReward -> C
 steps:
 
   # Zoom out ve world map truoc khi navigate
-  - type: base_zoomout
+  - event_type: base_zoomout
     template: buttons_template/HeadquartersButton.png
     threshold: 0.75
     scroll_times: 5
@@ -12,37 +12,37 @@ steps:
 
 
   # ExplorationReward must be clicked regardless of whether HQ nav succeeded
-  - type: match_click
+  - event_type: match_click
     template: buttons_template/ExplorationReward.png
     threshold: 0.75
     one_shot: true
     timeout_sec: 10
 
-  - type: match_click
+  - event_type: match_click
     template: buttons_template/ClaimButton.png
     threshold: 0.75
     one_shot: true
     timeout_sec: 10
 
   # Click the Collect button
-  - type: match_click
+  - event_type: match_click
     template: buttons_template/CollectButton.png
     threshold: 0.75
     one_shot: true
     timeout_sec: 10
 
   # Click corner to close any remaining dialog
-  - type: sleep
+  - event_type: sleep
     duration_sec: 2
 
-  - type: click_position
+  - event_type: click_position
     offset_x: 0.15
     offset_y: 0.15
 
     
-  - type: sleep
+  - event_type: sleep
     duration_sec: 2
 
-  - type: click_position
+  - event_type: click_position
     offset_x: 0.15
     offset_y: 0.15

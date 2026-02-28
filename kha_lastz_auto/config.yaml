@@ -16,8 +16,9 @@ functions:
 
   - name: FightBoomer
     key: b
+    cron: "*/2 * * * *"
     priority: 2
-    enabled: true
+    enabled: false
 
   - name: ClickTreasure
     key: t
@@ -37,7 +38,7 @@ functions:
     key: s
 
   - name: HelpAlliance
-    cron: "*/15 * * * *"
+    cron: "*/2 * * * *"
     priority: 100
     enabled: true
     key: h

@@ -18,6 +18,7 @@ from bot_engine import (
     FunctionRunner,
 )
 import vision as vision_module
+from attack_detector import AttackDetector
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
@@ -237,7 +238,7 @@ log.info("Function priorities: {}".format({n: fn_priority[n] for n in fn_priorit
 log.info("Function enabled: {}".format({n: fn_enabled[n] for n in fn_enabled}))
 if schedules:
     log.info("Auto cron: {}".format([(s["function"], s["cron"]) for s in schedules]))
-    for fn_name, ts in next_run_at.items():
+    for fn_name, ts in sorted(next_run_at.items(), key=lambda x: x[1]):
         log.info("Cron next run: {} at {}".format(
             fn_name, datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")))
 if pending_queue:
@@ -260,7 +261,14 @@ focus_thread.start()
 wincap.focus_window()
 time.sleep(0.2)
 
+attack_detector = AttackDetector(
+    warning_template_path="buttons_template/BeingAttackedWarning.png",
+    clear_sec=10.0,
+)
+
 # ── Main loop ─────────────────────────────────────────────────────────────────
+_CAPTURE_INTERVAL = 0.1   # 10 FPS cap
+_last_capture_time = 0.0
 last_stopped_key = None
 
 while running and not exit_requested:
@@ -306,10 +314,20 @@ while running and not exit_requested:
                     fn_name, datetime.fromtimestamp(next_run_at[fn_name]).strftime("%Y-%m-%d %H:%M:%S")))
             _try_start(fn_name, trigger="cron")
 
+    # Throttle to 10 FPS — hotkey/cron above still run every iteration
+    _now = time.time()
+    if _now - _last_capture_time < _CAPTURE_INTERVAL:
+        cv.waitKey(1)
+        continue
+    _last_capture_time = _now
+
     # Get screenshot and update runner
     screenshot = wincap.get_screenshot()
     if screenshot is None:
         continue
+
+    # Being-attacked detection
+    attack_detector.update(screenshot, log)
 
     was_running = runner.state == "running"
     runner.update(screenshot, wincap)

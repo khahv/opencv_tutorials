@@ -1,41 +1,41 @@
 # Function: CheckMail (ten = ten file)
 description: "Mo Mail -> Alliance -> Claim All -> System -> Claim All -> dong popup"
 steps:
-  - type: match_click
+  - event_type: match_click
     template: buttons_template/Mail.png
     threshold: 0.75
     one_shot: true
     timeout_sec: 5
-  - type: sleep
+  - event_type: sleep
     duration_sec: 1
-  - type: match_click
+  - event_type: match_click
     template: buttons_template/AllianceButton.png
     threshold: 0.75
     one_shot: true
     timeout_sec: 5
-  - type: sleep
+  - event_type: sleep
     duration_sec: 0.5
-  - type: match_click
+  - event_type: match_click
     template: buttons_template/ClaimAll.png
     threshold: 0.75
     one_shot: true
     timeout_sec: 5
-  - type: sleep
+  - event_type: sleep
     duration_sec: 0.5
-  - type: match_click
+  - event_type: match_click
     template: buttons_template/SystemButton.png
     threshold: 0.75
     one_shot: true
     timeout_sec: 5
-  - type: sleep
+  - event_type: sleep
     duration_sec: 0.5
-  - type: match_click
+  - event_type: match_click
     template: buttons_template/ClaimAll.png
     threshold: 0.75
     one_shot: true
     timeout_sec: 5
-  - type: sleep
+  - event_type: sleep
     duration_sec: 2
-  - type: click_position
+  - event_type: click_position
     offset_x: 0.15
     offset_y: 0.15

@@ -147,23 +147,23 @@ def collect_templates(functions_dict):
     templates = set()
     for fn in functions_dict.values():
         for step in fn["steps"]:
-            if step.get("type") in ("match_click", "match_multi_click", "match_count") and step.get("template"):
+            if step.get("event_type") in ("match_click", "match_multi_click", "match_count") and step.get("template"):
                 templates.add(step["template"])
-            if step.get("type") == "wait_until_match" and step.get("template"):
+            if step.get("event_type") == "wait_until_match" and step.get("template"):
                 templates.add(step["template"])
-            if step.get("type") == "click_unless_visible":
+            if step.get("event_type") == "click_unless_visible":
                 if step.get("visible_template"):
                     templates.add(step["visible_template"])
                 if step.get("click_template"):
                     templates.add(step["click_template"])
-            if step.get("type") == "set_level":
+            if step.get("event_type") == "set_level":
                 if step.get("plus_template"):
                     templates.add(step["plus_template"])
                 if step.get("minus_template"):
                     templates.add(step["minus_template"])
                 if step.get("level_anchor_template"):
                     templates.add(step["level_anchor_template"])
-            if step.get("type") == "base_zoomout" and step.get("template"):
+            if step.get("event_type") == "base_zoomout" and step.get("template"):
                 templates.add(step["template"])
     return list(templates)
 
@@ -230,7 +230,7 @@ class FunctionRunner:
 
         self.wincap = wincap
         step = self.steps[self.step_index]
-        step_type = step.get("type", "")
+        step_type = step.get("event_type", "")
 
         # Step result gate: abort function if previous step returned False
         # unless this step sets run_always: true
@@ -559,7 +559,7 @@ class FunctionRunner:
 
     def _step_label(self, step):
         """Tra ve chuoi mo ta ngan gon cho step, dung trong log."""
-        stype = step.get("type", "?")
+        stype = step.get("event_type", "?")
         tpl = step.get("template") or step.get("click_template") or ""
         tpl_name = os.path.splitext(os.path.basename(tpl))[0] if tpl else ""
         if stype == "sleep":

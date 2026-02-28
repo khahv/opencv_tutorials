@@ -6,44 +6,44 @@ description: "Auto login: detect PasswordSlotArray -> click slot -> type PIN -> 
 steps:
   # Confirm login screen is visible: 6 PasswordSlot.png must be present.
   # Returns false (abort) if fewer than 6 found within 8s.
-  - type: match_count
+  - event_type: match_count
     template: buttons_template/PasswordSlot.png
     count: 6
     threshold: 0.75
     timeout_sec: 8
 
   # Click the first visible password slot to focus the input
-  - type: match_click
+  - event_type: match_click
     template: buttons_template/PasswordSlot.png
     threshold: 0.75
     one_shot: true
     timeout_sec: 5
 
   # Small pause to let the UI register the click
-  - type: sleep
+  - event_type: sleep
     duration_sec: 0.3
 
   # Type the PIN - value is read from PIN_PASSWORD in .env
-  - type: type_text
+  - event_type: type_text
     text: "${PIN_PASSWORD}"
     interval_sec: 0.1
 
   # Small pause before confirming
-  - type: sleep
+  - event_type: sleep
     duration_sec: 0.3
 
   # Click the Confirm button
-  - type: match_click
+  - event_type: match_click
     template: buttons_template/ConfirmButton.png
     threshold: 0.75
     one_shot: true
     timeout_sec: 10
 
   # Wait for game to finish loading after login
-  - type: sleep
+  - event_type: sleep
     duration_sec: 10
 
   # Click top-left corner to dismiss post-login banners/ads
-  - type: click_position
+  - event_type: click_position
     offset_x: 0.15
     offset_y: 0.15

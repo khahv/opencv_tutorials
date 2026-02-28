@@ -1,0 +1,37 @@
+2026-02-28 11:54:20 === Start ===
+2026-02-28 11:54:20 [Env] Loaded from .env: PIN_PASSWORD
+2026-02-28 11:54:20 WindowCapture: client size = 2400x1600, screen offset = (1130, 376)
+2026-02-28 11:54:20 Vision scale: 1.0 (window 2400x1600)
+2026-02-28 11:54:20 Global hotkey: {'l': 'PinLoggin', 't': 'ClickTreasure', 'c': 'CollectExplorationReward', 's': 'SoliderTrain', 'h': 'HelpAlliance', 'm': 'CheckMail', 'd': 'DonateAllianceTech'} | Press same key to stop | Ctrl+Esc = quit
+2026-02-28 11:54:20 Function priorities: {'PinLoggin': 1, 'FightBoomer': 2, 'ClickTreasure': 4, 'CollectExplorationReward': 98, 'SoliderTrain': 99, 'HelpAlliance': 100, 'CheckMail': 50, 'DonateAllianceTech': 60}
+2026-02-28 11:54:20 Function enabled: {'PinLoggin': True, 'FightBoomer': False, 'ClickTreasure': True, 'CollectExplorationReward': True, 'SoliderTrain': True, 'HelpAlliance': True, 'CheckMail': True, 'DonateAllianceTech': True}
+2026-02-28 11:54:20 Auto cron: [('PinLoggin', '*/30 * * * *'), ('CollectExplorationReward', '0 */8 * * *'), ('SoliderTrain', '0 */6 * * *'), ('HelpAlliance', '*/2 * * * *'), ('CheckMail', '0 */5 * * *')]
+2026-02-28 11:54:20 Cron next run: HelpAlliance at 2026-02-28 11:56:00
+2026-02-28 11:54:20 Cron next run: PinLoggin at 2026-02-28 12:00:00
+2026-02-28 11:54:20 Cron next run: SoliderTrain at 2026-02-28 12:00:00
+2026-02-28 11:54:20 Cron next run: CheckMail at 2026-02-28 15:00:00
+2026-02-28 11:54:20 Cron next run: CollectExplorationReward at 2026-02-28 16:00:00
+2026-02-28 11:54:21 [AttackDetector] red_ratio=0.218 icon=False attacked=False clear_countdown=0.0s
+2026-02-28 11:54:24 [AttackDetector] red_ratio=0.218 icon=False attacked=False clear_countdown=0.0s
+2026-02-28 11:54:27 [AttackDetector] red_ratio=0.218 icon=False attacked=False clear_countdown=0.0s
+2026-02-28 11:54:29 [AttackDetector] red_ratio=0.218 icon=False attacked=False clear_countdown=0.0s
+2026-02-28 11:54:32 [AttackDetector] red_ratio=0.238 icon=True attacked=False clear_countdown=0.0s
+2026-02-28 11:54:32 [Alert] House is being attacked! (red_ratio=0.238)
+2026-02-28 11:54:34 [AttackDetector] red_ratio=0.266 icon=True attacked=True clear_countdown=0.0s
+2026-02-28 11:54:37 [AttackDetector] red_ratio=0.302 icon=True attacked=True clear_countdown=0.0s
+2026-02-28 11:54:39 [AttackDetector] red_ratio=0.225 icon=True attacked=True clear_countdown=0.0s
+2026-02-28 11:54:41 [AttackDetector] red_ratio=0.250 icon=True attacked=True clear_countdown=0.0s
+2026-02-28 11:54:44 [AttackDetector] red_ratio=0.240 icon=True attacked=True clear_countdown=0.0s
+2026-02-28 11:54:46 [AttackDetector] red_ratio=0.326 icon=True attacked=True clear_countdown=0.0s
+2026-02-28 11:54:48 [AttackDetector] red_ratio=0.237 icon=True attacked=True clear_countdown=0.0s
+2026-02-28 11:54:51 [AttackDetector] red_ratio=0.218 icon=False attacked=True clear_countdown=1.6s
+2026-02-28 11:54:54 [AttackDetector] red_ratio=0.218 icon=False attacked=True clear_countdown=4.1s
+2026-02-28 11:54:56 [AttackDetector] red_ratio=0.218 icon=False attacked=True clear_countdown=6.7s
+2026-02-28 11:54:59 [AttackDetector] red_ratio=0.218 icon=False attacked=True clear_countdown=9.3s
+2026-02-28 11:55:00 [Alert] Attack has ended. (red_ratio=0.218)
+2026-02-28 11:55:02 [AttackDetector] red_ratio=0.219 icon=False attacked=False clear_countdown=0.0s
+2026-02-28 11:55:04 [AttackDetector] red_ratio=0.218 icon=False attacked=False clear_countdown=0.0s
+2026-02-28 11:55:07 [AttackDetector] red_ratio=0.219 icon=False attacked=False clear_countdown=0.0s
+2026-02-28 11:55:09 [AttackDetector] red_ratio=0.218 icon=False attacked=False clear_countdown=0.0s
+2026-02-28 11:55:09 === End ===
+2026-02-28 11:55:09 Done.
