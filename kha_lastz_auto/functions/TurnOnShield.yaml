@@ -40,12 +40,27 @@ steps:
     timeout_sec: 10
 
   - event_type: sleep
-    duration_sec: 1
+    duration_sec: 3
+
+  # Read remaining time on the PeaceShield timer bar (e.g. "23:32:13")
+  # anchor_template: PeaceShieldActivated.png làm anchor (template mới chụp lúc shield đang bật)
+  # anchor_offset: [ox, oy, w, h] px từ tâm template đến góc trên-trái vùng OCR
+  # Timer bar nằm gần đáy card: oy dương = dịch xuống từ tâm card
+  # debug_save: true -> lưu debug_ocr_PeaceShield_remaining.png để tinh chỉnh anchor_offset
+  - event_type: ocr_log
+    anchor_template: buttons_template/PeaceShieldActivated.png
+    threshold: 0.75
+    timeout_sec: 5
+    anchor_offset: [-200, 55, 420, 28]
+    char_whitelist: "0123456789:"
+    label: "PeaceShield remaining"
+    debug_save: false
+    abort_if_found: true
 
   # Click the ► arrow on the right edge of the PeaceShield card
   # click_offset_x: 0.48 = shift right by 48% of template width (from center to right edge)
   - event_type: match_click
-    template: buttons_template/PeaceShield.png
+    template: buttons_template/PeaceShieldActivated.png
     threshold: 0.75
     one_shot: true
     timeout_sec: 10
@@ -62,5 +77,5 @@ steps:
     one_shot: true
     timeout_sec: 10
     click_offset_x: 0.33
-    click_offset_y: -0.5
+    click_offset_y: -0.4
     debug_click: false

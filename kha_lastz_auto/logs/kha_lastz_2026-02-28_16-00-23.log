@@ -1,0 +1,27 @@
+2026-02-28 16:00:23 === Start ===
+2026-02-28 16:00:23 [Env] Loaded from .env: PIN_PASSWORD
+2026-02-28 16:00:23 WindowCapture: client size = 2400x1600, screen offset = (1304, 279)
+2026-02-28 16:00:23 Vision scale: 1.0 (window 2400x1600)
+2026-02-28 16:00:23 Global hotkey: {'l': 'PinLoggin', 'o': 'TurnOnShield', 't': 'ClickTreasure', 'c': 'CollectExplorationReward', 's': 'SoliderTrain', 'h': 'HelpAlliance', 'm': 'CheckMail', 'd': 'DonateAllianceTech'} | Press same key to stop | Ctrl+Esc = quit
+2026-02-28 16:00:23 Function enabled: {'PinLoggin': True, 'TurnOnShield': True, 'FightBoomer': False, 'ClickTreasure': True, 'CollectExplorationReward': True, 'SoliderTrain': True, 'HelpAlliance': True, 'CheckMail': True, 'DonateAllianceTech': True}
+2026-02-28 16:00:23 Auto cron: [('CollectExplorationReward', '0 */8 * * *'), ('SoliderTrain', '0 */6 * * *'), ('HelpAlliance', '*/2 * * * *'), ('CheckMail', '0 */5 * * *')]
+2026-02-28 16:00:23 Attack triggers: ['TurnOnShield']
+2026-02-28 16:00:23 Logout triggers: ['PinLoggin']
+2026-02-28 16:00:23 Cron next run: HelpAlliance at 2026-02-28 16:02:00
+2026-02-28 16:00:23 Cron next run: SoliderTrain at 2026-02-28 18:00:00
+2026-02-28 16:00:23 Cron next run: CheckMail at 2026-02-28 20:00:00
+2026-02-28 16:00:23 Cron next run: CollectExplorationReward at 2026-03-01 00:00:00
+2026-02-28 16:00:36 [Runner] Started function: TurnOnShield
+2026-02-28 16:00:46 [Runner] sleep 10s → true
+2026-02-28 16:00:48 [Runner] match_click HeadquartersButton → true (clicked)
+2026-02-28 16:00:49 [Runner] sleep 1s → true
+2026-02-28 16:00:52 [Runner] match_click WorldButton → true (clicked)
+2026-02-28 16:00:53 [Runner] sleep 1s → true
+2026-02-28 16:00:54 [Runner] click_position (0.5, 0.5) → true
+2026-02-28 16:00:56 [Runner] sleep 1s → true
+2026-02-28 16:00:58 [Runner] match_click CityWallIcon → true (clicked)
+2026-02-28 16:01:01 [Runner] sleep 3s → true
+2026-02-28 16:01:08 [Runner] ocr_log → skip (anchor not found in 5s)
+2026-02-28 16:01:08 [Runner] ocr_log: anchor not found — screen saved to debug_ocr_PeaceShield_remaining_screen.png
+2026-02-28 16:01:18 === End ===
+2026-02-28 16:01:18 Done.

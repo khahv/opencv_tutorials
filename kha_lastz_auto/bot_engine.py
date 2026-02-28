@@ -136,6 +136,60 @@ def _read_level_from_roi(screenshot, roi_ratios, wincap, anchor_center=None, anc
     return None
 
 
+def _read_raw_text_from_roi(screenshot, anchor_center, anchor_offset,
+                             char_whitelist=None, debug_save_path=None):
+    """Crop a ROI relative to anchor_center and return OCR'd raw text.
+
+    anchor_offset: [ox, oy, w, h] in pixels.
+        ox, oy = offset from anchor_center to the TOP-LEFT corner of the ROI.
+        w, h   = size of the ROI in pixels.
+
+    char_whitelist: optional string passed to Tesseract (e.g. "0123456789:")
+    Returns stripped text, or None if OCR is unavailable or ROI is empty.
+    """
+    if pytesseract is None:
+        return None
+    _configure_tesseract()
+
+    h_img, w_img = screenshot.shape[:2]
+    cx, cy = anchor_center
+    ox, oy, rw, rh = anchor_offset
+
+    x = max(0, int(cx + ox))
+    y = max(0, int(cy + oy))
+    w = max(1, int(rw))
+    h = max(1, int(rh))
+    x = max(0, min(x, w_img - 1))
+    y = max(0, min(y, h_img - 1))
+    w = min(w, w_img - x)
+    h = min(h, h_img - y)
+
+    roi = screenshot[y:y + h, x:x + w]
+    if roi.size == 0:
+        return None
+
+    gray = cv.cvtColor(roi, cv.COLOR_BGR2GRAY) if len(roi.shape) == 3 else roi
+    candidates = _preprocess_for_ocr(gray, debug_save_path=debug_save_path)
+
+    config = "--oem 3 --psm 7"
+    if char_whitelist:
+        config += " -c tessedit_char_whitelist={}".format(char_whitelist)
+
+    for img in candidates:
+        try:
+            text = pytesseract.image_to_string(img, config=config).strip()
+        except Exception as e:
+            global _tesseract_warned
+            if not _tesseract_warned and ("tesseract" in str(e).lower() or "TesseractNotFound" in type(e).__name__):
+                _tesseract_warned = True
+                log.info("[bot_engine] Tesseract OCR not found. Install from https://github.com/UB-Mannheim/tesseract/wiki")
+            return None
+        if text:
+            return text
+
+    return None
+
+
 def load_functions(functions_dir="functions"):
     """Load tat ca file YAML trong functions_dir. Tra ve dict: ten_function -> { description, steps }."""
     result = {}
@@ -624,6 +678,124 @@ class FunctionRunner:
             else:
                 log.info("[Runner] {} → true (HQ not found, scrolled x{})".format(self._step_label(step), scroll_times))
             self._advance_step(True)
+            return "running"
+
+        if step_type == "ocr_log":
+            # OCR text from a region, then log the result. Always advances — never blocks the flow.
+            #
+            # Two modes (mirror of set_level in FightBoomer):
+            #
+            # Mode A — anchor template (like level_anchor_template):
+            #   anchor_template: template to find for position
+            #   anchor_offset:   [ox, oy, w, h] px from anchor center to OCR region
+            #
+            # Mode B — absolute ROI (no template needed, most robust):
+            #   roi_ratios: [x, y, w, h] as fractions of screen size (0.0–1.0)
+            #
+            # debug_save: true → save ROI crop (and screenshot if anchor not found)
+            # abort_if_found: true → advance(False)/abort if anchor IS found; advance(True)/continue if NOT found
+            #   Use case: check if a condition is already met, skip remaining steps if so
+            anchor_template = step.get("anchor_template") or step.get("template")
+            roi_ratios      = step.get("roi_ratios")       # [x, y, w, h] 0-1 fractions
+            threshold       = step.get("threshold", 0.75)
+            anchor_offset   = step.get("anchor_offset")   # [ox, oy, w, h] px from anchor center
+            char_whitelist  = step.get("char_whitelist")
+            label           = step.get("label", "ocr_log")
+            debug_save      = step.get("debug_save", False)
+            timeout_sec     = step.get("timeout_sec", 5)
+            abort_if_found  = step.get("abort_if_found", False)
+            _debug_key      = "_ocr_log_debug_{}".format(label.replace(" ", "_"))
+
+            # ── Mode B: roi_ratios — run immediately, no template needed ──────
+            if roi_ratios and len(roi_ratios) == 4:
+                h_img, w_img = screenshot.shape[:2]
+                rx, ry, rw, rh = roi_ratios
+                x = max(0, int(rx * w_img))
+                y = max(0, int(ry * h_img))
+                w = max(1, int(rw * w_img))
+                h = max(1, int(rh * h_img))
+                w = min(w, w_img - x)
+                h = min(h, h_img - y)
+                roi = screenshot[y:y + h, x:x + w]
+                debug_path = None
+                if debug_save and not getattr(self, _debug_key, False):
+                    debug_path = "debug_ocr_{}.png".format(label.replace(" ", "_"))
+                    setattr(self, _debug_key, True)
+                gray = cv.cvtColor(roi, cv.COLOR_BGR2GRAY) if len(roi.shape) == 3 else roi
+                candidates = _preprocess_for_ocr(gray, debug_save_path=debug_path)
+                config = "--oem 3 --psm 7"
+                if char_whitelist:
+                    config += " -c tessedit_char_whitelist={}".format(char_whitelist)
+                text = None
+                for img in candidates:
+                    try:
+                        t = pytesseract.image_to_string(img, config=config).strip() if pytesseract else ""
+                    except Exception:
+                        t = ""
+                    if t:
+                        text = t
+                        break
+                if text:
+                    log.info("[Runner] {} [{}]: {}".format(self._step_label(step), label, text))
+                else:
+                    log.info("[Runner] {} [{}]: (no text read)".format(self._step_label(step), label))
+                if debug_path:
+                    log.info("[Runner] ocr_log: ROI saved to {}".format(debug_path))
+                self._advance_step(True)
+                return "running"
+
+            # ── Mode A: anchor template ───────────────────────────────────────
+            if not anchor_template or not anchor_offset or len(anchor_offset) != 4:
+                log.info("[Runner] {} → skip (set roi_ratios or anchor_template+anchor_offset)".format(self._step_label(step)))
+                self._advance_step(True)
+                return "running"
+
+            vision = self.vision_cache.get(anchor_template)
+            if not vision:
+                log.info("[Runner] {} → skip (anchor_template not loaded)".format(self._step_label(step)))
+                self._advance_step(True)
+                return "running"
+
+            points = vision.find(screenshot, threshold=threshold, debug_mode=None)
+            if points:
+                anchor_center = (int(points[0][0]), int(points[0][1]))
+                debug_path = None
+                if debug_save and not getattr(self, _debug_key, False):
+                    debug_path = "debug_ocr_{}.png".format(label.replace(" ", "_"))
+                    setattr(self, _debug_key, True)
+                text = _read_raw_text_from_roi(
+                    screenshot, anchor_center, anchor_offset,
+                    char_whitelist=char_whitelist,
+                    debug_save_path=debug_path,
+                )
+                if text:
+                    log.info("[Runner] {} [{}]: {}".format(self._step_label(step), label, text))
+                else:
+                    log.info("[Runner] {} [{}]: (no text read)".format(self._step_label(step), label))
+                if debug_path:
+                    log.info("[Runner] ocr_log: ROI saved to {}".format(debug_path))
+                if abort_if_found:
+                    log.info("[Runner] {} → abort (abort_if_found, anchor matched)".format(self._step_label(step)))
+                    self._advance_step(False)
+                else:
+                    self._advance_step(True)
+                return "running"
+
+            if now - self.step_start_time >= timeout_sec:
+                if abort_if_found:
+                    # anchor NOT found → condition not met → continue with next steps
+                    log.info("[Runner] {} → continue (abort_if_found but anchor not found in {}s)".format(self._step_label(step), timeout_sec))
+                else:
+                    log.info("[Runner] {} → skip (anchor not found in {}s)".format(self._step_label(step), timeout_sec))
+                if debug_save and not getattr(self, _debug_key + "_shot", False):
+                    setattr(self, _debug_key + "_shot", True)
+                    try:
+                        shot_path = "debug_ocr_{}_screen.png".format(label.replace(" ", "_"))
+                        cv.imwrite(shot_path, screenshot)
+                        log.info("[Runner] ocr_log: anchor not found — screen saved to {}".format(shot_path))
+                    except Exception as e:
+                        log.info("[Runner] ocr_log: failed to save debug screen: {}".format(e))
+                self._advance_step(True)
             return "running"
 
         # unknown type -> skip (true so next step still runs)

@@ -5,59 +5,52 @@
 reference_width: 2400
 reference_height: 1600
 
-# Function list: key, cron, priority (lower = higher priority), enabled
+# Function list: key, cron, enabled
 # https://crontab.guru/ for cron syntax
+# Functions run in FIFO order: whoever triggers first runs first.
+# If a function triggers while another is running, it is queued and runs after.
 functions:
   - name: PinLoggin
-    cron: "*/30 * * * *"
-    priority: 1
+    trigger: logged_out
     enabled: true
     key: l
 
   - name: TurnOnShield
     trigger: attacked
     key: o
-    priority: 2
     enabled: true
 
   - name: FightBoomer
     key: b
     cron: "*/2 * * * *"
-    priority: 2
     enabled: false
 
   - name: ClickTreasure
     key: t
-    priority: 4
     enabled: true
 
   - name: CollectExplorationReward
     cron: "0 */8 * * *"
-    priority: 98
     enabled: true
     key: c
 
   - name: SoliderTrain
     cron: "0 */6 * * *"
-    priority: 99
     enabled: true
     key: s
 
   - name: HelpAlliance
     cron: "*/2 * * * *"
-    priority: 100
     enabled: true
     key: h
 
   - name: CheckMail
     key: m
     cron: "0 */5 * * *"
-    priority: 50
     enabled: true
 
   - name: DonateAllianceTech
     key: d
-    priority: 60
     enabled: true
 
  

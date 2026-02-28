@@ -1,0 +1,36 @@
+2026-02-28 16:05:06 === Start ===
+2026-02-28 16:05:06 [Env] Loaded from .env: PIN_PASSWORD
+2026-02-28 16:05:06 WindowCapture: client size = 2400x1600, screen offset = (1304, 279)
+2026-02-28 16:05:06 Vision scale: 1.0 (window 2400x1600)
+2026-02-28 16:05:06 Global hotkey: {'l': 'PinLoggin', 'o': 'TurnOnShield', 't': 'ClickTreasure', 'c': 'CollectExplorationReward', 's': 'SoliderTrain', 'h': 'HelpAlliance', 'm': 'CheckMail', 'd': 'DonateAllianceTech'} | Press same key to stop | Ctrl+Esc = quit
+2026-02-28 16:05:06 Function enabled: {'PinLoggin': True, 'TurnOnShield': True, 'FightBoomer': False, 'ClickTreasure': True, 'CollectExplorationReward': True, 'SoliderTrain': True, 'HelpAlliance': True, 'CheckMail': True, 'DonateAllianceTech': True}
+2026-02-28 16:05:06 Auto cron: [('CollectExplorationReward', '0 */8 * * *'), ('SoliderTrain', '0 */6 * * *'), ('HelpAlliance', '*/2 * * * *'), ('CheckMail', '0 */5 * * *')]
+2026-02-28 16:05:06 Attack triggers: ['TurnOnShield']
+2026-02-28 16:05:06 Logout triggers: ['PinLoggin']
+2026-02-28 16:05:06 Cron next run: HelpAlliance at 2026-02-28 16:06:00
+2026-02-28 16:05:06 Cron next run: SoliderTrain at 2026-02-28 18:00:00
+2026-02-28 16:05:06 Cron next run: CheckMail at 2026-02-28 20:00:00
+2026-02-28 16:05:06 Cron next run: CollectExplorationReward at 2026-03-01 00:00:00
+2026-02-28 16:05:36 [Runner] Started function: TurnOnShield
+2026-02-28 16:05:47 [Runner] sleep 10s → true
+2026-02-28 16:05:49 [Runner] match_click HeadquartersButton → true (clicked)
+2026-02-28 16:05:51 [Runner] sleep 1s → true
+2026-02-28 16:05:53 [Runner] match_click WorldButton → true (clicked)
+2026-02-28 16:05:54 [Runner] sleep 1s → true
+2026-02-28 16:05:56 [Runner] click_position (0.5, 0.5) → true
+2026-02-28 16:05:57 [Runner] sleep 1s → true
+2026-02-28 16:06:00 [Runner] match_click CityWallIcon → true (clicked)
+2026-02-28 16:06:00 Cron next run: HelpAlliance at 2026-02-28 16:08:00
+2026-02-28 16:06:00 [Scheduler] HelpAlliance blocked by TurnOnShield [cron] -> queued
+2026-02-28 16:06:00 [Scheduler] HelpAlliance queued (reason=cron)
+2026-02-28 16:06:04 [Runner] sleep 3s → true
+2026-02-28 16:06:05 [Runner] ocr_log [PeaceShield remaining]: (no text read)
+2026-02-28 16:06:05 [Runner] ocr_log: ROI saved to debug_ocr_PeaceShield_remaining.png
+2026-02-28 16:06:17 [Runner] match_click PeaceShield → false (not found in 10s)
+2026-02-28 16:06:18 [Runner] [skip] sleep 1s
+2026-02-28 16:06:18 [Runner] [skip] match_move Use8HoursPeaceShield
+2026-02-28 16:06:18 [Runner] Finished function: TurnOnShield (aborted)
+2026-02-28 16:06:18 [Scheduler] HelpAlliance dequeued and starting
+2026-02-28 16:06:18 [Runner] Started function: HelpAlliance
+2026-02-28 16:06:23 === End ===
+2026-02-28 16:06:23 Done.

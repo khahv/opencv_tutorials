@@ -1,0 +1,26 @@
+2026-02-28 15:41:33 === Start ===
+2026-02-28 15:41:33 [Env] Loaded from .env: PIN_PASSWORD
+2026-02-28 15:41:33 WindowCapture: client size = 2372x1600, screen offset = (1994, 243)
+2026-02-28 15:41:33 Vision scale: 1.0 (window 2400x1600)
+2026-02-28 15:41:33 Global hotkey: {'l': 'PinLoggin', 'o': 'TurnOnShield', 't': 'ClickTreasure', 'c': 'CollectExplorationReward', 's': 'SoliderTrain', 'h': 'HelpAlliance', 'm': 'CheckMail', 'd': 'DonateAllianceTech'} | Press same key to stop | Ctrl+Esc = quit
+2026-02-28 15:41:33 Function enabled: {'PinLoggin': True, 'TurnOnShield': True, 'FightBoomer': False, 'ClickTreasure': True, 'CollectExplorationReward': True, 'SoliderTrain': True, 'HelpAlliance': True, 'CheckMail': True, 'DonateAllianceTech': True}
+2026-02-28 15:41:33 Auto cron: [('CollectExplorationReward', '0 */8 * * *'), ('SoliderTrain', '0 */6 * * *'), ('HelpAlliance', '*/2 * * * *'), ('CheckMail', '0 */5 * * *')]
+2026-02-28 15:41:33 Attack triggers: ['TurnOnShield']
+2026-02-28 15:41:33 Logout triggers: ['PinLoggin']
+2026-02-28 15:41:33 Cron next run: HelpAlliance at 2026-02-28 15:42:00
+2026-02-28 15:41:33 Cron next run: CollectExplorationReward at 2026-02-28 16:00:00
+2026-02-28 15:41:33 Cron next run: SoliderTrain at 2026-02-28 18:00:00
+2026-02-28 15:41:33 Cron next run: CheckMail at 2026-02-28 20:00:00
+2026-02-28 15:41:36 [Alert] Logged out detected! Triggering PinLoggin.
+2026-02-28 15:41:36 [Runner] Started function: PinLoggin
+2026-02-28 15:41:37 [Runner] match_count PasswordSlot → true (found 6/6)
+2026-02-28 15:41:39 [Runner] match_click PasswordSlot → true (clicked)
+2026-02-28 15:41:40 [Runner] sleep 0.3s → true
+2026-02-28 15:41:42 [Runner] type_text → true (6 chars)
+2026-02-28 15:41:43 [Runner] sleep 0.3s → true
+2026-02-28 15:41:45 [Runner] match_click ConfirmButton → true (clicked)
+2026-02-28 15:41:48 [Alert] Login successful, logged-out state cleared.
+2026-02-28 15:41:55 [Runner] sleep 10s → true
+2026-02-28 15:41:59 [Runner] click_position (0.15, 0.15) → true
+2026-02-28 15:42:00 === End ===
+2026-02-28 15:42:00 Done.

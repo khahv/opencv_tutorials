@@ -1,0 +1,32 @@
+2026-02-28 16:15:04 === Start ===
+2026-02-28 16:15:04 [Env] Loaded from .env: PIN_PASSWORD
+2026-02-28 16:15:04 WindowCapture: client size = 2400x1600, screen offset = (1304, 279)
+2026-02-28 16:15:04 Vision scale: 1.0 (window 2400x1600)
+2026-02-28 16:15:04 Global hotkey: {'l': 'PinLoggin', 'o': 'TurnOnShield', 't': 'ClickTreasure', 'c': 'CollectExplorationReward', 's': 'SoliderTrain', 'h': 'HelpAlliance', 'm': 'CheckMail', 'd': 'DonateAllianceTech'} | Press same key to stop | Ctrl+Esc = quit
+2026-02-28 16:15:04 Function enabled: {'PinLoggin': True, 'TurnOnShield': True, 'FightBoomer': False, 'ClickTreasure': True, 'CollectExplorationReward': True, 'SoliderTrain': True, 'HelpAlliance': True, 'CheckMail': True, 'DonateAllianceTech': True}
+2026-02-28 16:15:04 Auto cron: [('CollectExplorationReward', '0 */8 * * *'), ('SoliderTrain', '0 */6 * * *'), ('HelpAlliance', '*/2 * * * *'), ('CheckMail', '0 */5 * * *')]
+2026-02-28 16:15:04 Attack triggers: ['TurnOnShield']
+2026-02-28 16:15:04 Logout triggers: ['PinLoggin']
+2026-02-28 16:15:04 Cron next run: HelpAlliance at 2026-02-28 16:16:00
+2026-02-28 16:15:04 Cron next run: SoliderTrain at 2026-02-28 18:00:00
+2026-02-28 16:15:04 Cron next run: CheckMail at 2026-02-28 20:00:00
+2026-02-28 16:15:04 Cron next run: CollectExplorationReward at 2026-03-01 00:00:00
+2026-02-28 16:15:18 [Runner] Started function: TurnOnShield
+2026-02-28 16:15:28 [Runner] sleep 10s → true
+2026-02-28 16:15:30 [Runner] match_click HeadquartersButton → true (clicked)
+2026-02-28 16:15:31 [Runner] sleep 1s → true
+2026-02-28 16:15:34 [Runner] match_click WorldButton → true (clicked)
+2026-02-28 16:15:35 [Runner] sleep 1s → true
+2026-02-28 16:15:37 [Runner] click_position (0.5, 0.5) → true
+2026-02-28 16:15:38 [Runner] sleep 1s → true
+2026-02-28 16:15:40 [Runner] match_click CityWallIcon → true (clicked)
+2026-02-28 16:15:44 [Runner] sleep 3s → true
+2026-02-28 16:15:46 [Runner] ocr_log [PeaceShield remaining]: 23:23:29
+2026-02-28 16:15:46 [Runner] ocr_log: ROI saved to debug_ocr_PeaceShield_remaining.png
+2026-02-28 16:15:46 [Runner] ocr_log → abort (abort_if_found, anchor matched)
+2026-02-28 16:15:48 [Runner] [skip] match_click PeaceShieldActivated
+2026-02-28 16:15:48 [Runner] [skip] sleep 1s
+2026-02-28 16:15:48 [Runner] [skip] match_move Use8HoursPeaceShield
+2026-02-28 16:15:48 [Runner] Finished function: TurnOnShield (aborted)
+2026-02-28 16:15:54 === End ===
+2026-02-28 16:15:54 Done.

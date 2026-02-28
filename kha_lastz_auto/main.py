@@ -19,6 +19,7 @@ from bot_engine import (
 )
 import vision as vision_module
 from attack_detector import AttackDetector
+from logout_detector import LogoutDetector
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
@@ -75,21 +76,19 @@ config = load_config("config.yaml")
 fn_configs = config.get("functions") or []
 
 key_bindings      = {}   # key_char -> fn_name
-fn_priority       = {}   # fn_name  -> int  (lower = higher priority)
 fn_enabled        = {}   # fn_name  -> bool
 schedules         = []   # [{ "function": ..., "cron": ... }]
-attacked_triggers = []   # fn_names triggered when attack starts
+attacked_triggers    = []   # fn_names triggered when attack starts
+logged_out_triggers  = []   # fn_names triggered when logged out
 
 for fc in fn_configs:
     name    = fc.get("name")
     key     = fc.get("key")
     cron    = fc.get("cron")
     trigger = fc.get("trigger")
-    prio    = fc.get("priority", 99)
     enabled = fc.get("enabled", True)
     if not name:
         continue
-    fn_priority[name] = prio
     fn_enabled[name]  = enabled
     if key and enabled:
         key_bindings[key] = name
@@ -97,6 +96,8 @@ for fc in fn_configs:
         schedules.append({"function": name, "cron": cron})
     if trigger == "attacked" and enabled:
         attacked_triggers.append(name)
+    if trigger == "logged_out" and enabled:
+        logged_out_triggers.append(name)
 
 functions    = load_functions("functions")
 templates    = collect_templates(functions)
@@ -171,8 +172,8 @@ for item in schedules:
     it = croniter(cron_expr, datetime.now().astimezone())
     next_run_at[fn_name] = it.get_next(float)
 
-# ── Priority queue (cron-triggered functions waiting to run) ──────────────────
-pending_queue = []   # list of fn_name, sorted by priority then arrival order
+# ── FIFO queue (functions waiting to run) ─────────────────────────────────────
+pending_queue = []   # list of fn_name, FIFO order
 
 def _queue_add(fn_name, reason="cron"):
     """Add fn_name to pending_queue if not already queued."""
@@ -180,13 +181,10 @@ def _queue_add(fn_name, reason="cron"):
         log.info("[Scheduler] {} already in queue, skip duplicate ({})".format(fn_name, reason))
         return
     pending_queue.append(fn_name)
-    # sort by priority (stable sort preserves FIFO for equal priority)
-    pending_queue.sort(key=lambda n: fn_priority.get(n, 99))
-    log.info("[Scheduler] {} queued (priority={}, reason={})".format(
-        fn_name, fn_priority.get(fn_name, 99), reason))
+    log.info("[Scheduler] {} queued (reason={})".format(fn_name, reason))
 
 def _try_start(fn_name, trigger="hotkey"):
-    """Try to start fn_name. Preempt lower priority. Queue if lower priority than running."""
+    """Start fn_name immediately if idle, otherwise queue it."""
     if not fn_enabled.get(fn_name, True):
         log.info("[Scheduler] {} is disabled, skipping ({})".format(fn_name, trigger))
         return
@@ -194,36 +192,20 @@ def _try_start(fn_name, trigger="hotkey"):
         log.info("[Scheduler] {} not found in functions".format(fn_name))
         return
 
-    new_prio = fn_priority.get(fn_name, 99)
-
     if runner.state == "running":
         cur_name = runner.function_name
-        cur_prio = fn_priority.get(cur_name, 99)
-
-        if new_prio < cur_prio:
-            # Higher priority preempts running function
-            log.info("[Scheduler] {} (priority={}) preempts {} (priority={}) [{}]".format(
-                fn_name, new_prio, cur_name, cur_prio, trigger))
+        if cur_name == fn_name:
+            # Same function: toggle stop
             runner.stop()
-            runner.start(fn_name, wincap)
-        elif new_prio > cur_prio:
-            # Lower priority: always queue (hotkey or cron)
-            log.info("[Scheduler] {} (priority={}) blocked by {} (priority={}) [{}] -> queued".format(
-                fn_name, new_prio, cur_name, cur_prio, trigger))
-            _queue_add(fn_name, reason=trigger)
+            log.info("[Scheduler] {} stopped (same key toggle)".format(fn_name))
         else:
-            # Same priority: toggle or restart
-            if cur_name == fn_name:
-                runner.stop()
-                log.info("[Scheduler] {} stopped (same key toggle)".format(fn_name))
-            else:
-                runner.stop()
-                runner.start(fn_name, wincap)
+            log.info("[Scheduler] {} blocked by {} [{}] -> queued".format(fn_name, cur_name, trigger))
+            _queue_add(fn_name, reason=trigger)
     else:
         runner.start(fn_name, wincap)
 
 def _process_queue():
-    """Pop highest priority item from queue and start it."""
+    """Pop next FIFO item from queue and start it."""
     while pending_queue:
         fn_name = pending_queue.pop(0)
         if not fn_enabled.get(fn_name, True):
@@ -231,19 +213,45 @@ def _process_queue():
             continue
         if fn_name not in functions:
             continue
-        log.info("[Scheduler] {} dequeued and starting (priority={})".format(
-            fn_name, fn_priority.get(fn_name, 99)))
+        log.info("[Scheduler] {} dequeued and starting".format(fn_name))
         runner.start(fn_name, wincap)
         return
 
+def _start_urgent(fn_name, trigger="logged_out"):
+    """Stop whatever is running (re-queue it at the front), then start fn_name immediately.
+
+    Used for high-urgency events like logged_out that must run right now.
+    The interrupted function is inserted at the head of the queue so it
+    resumes (from the beginning) as soon as fn_name finishes.
+    """
+    if not fn_enabled.get(fn_name, True):
+        log.info("[Scheduler] {} is disabled, skipping ({})".format(fn_name, trigger))
+        return
+    if fn_name not in functions:
+        log.info("[Scheduler] {} not found in functions".format(fn_name))
+        return
+
+    if runner.state == "running":
+        interrupted = runner.function_name
+        runner.stop()
+        # Re-insert interrupted function at the front of the queue (skip duplicates)
+        if interrupted and interrupted != fn_name and interrupted not in pending_queue:
+            pending_queue.insert(0, interrupted)
+            log.info("[Scheduler] {} interrupted by {} [{}], re-queued at front".format(
+                interrupted, fn_name, trigger))
+
+    log.info("[Scheduler] {} starting urgently [{}]".format(fn_name, trigger))
+    runner.start(fn_name, wincap)
+
 # ── Startup log ───────────────────────────────────────────────────────────────
 log.info("Global hotkey: {} | Press same key to stop | Ctrl+Esc = quit".format(key_bindings))
-log.info("Function priorities: {}".format({n: fn_priority[n] for n in fn_priority}))
 log.info("Function enabled: {}".format({n: fn_enabled[n] for n in fn_enabled}))
 if schedules:
     log.info("Auto cron: {}".format([(s["function"], s["cron"]) for s in schedules]))
 if attacked_triggers:
     log.info("Attack triggers: {}".format(attacked_triggers))
+if logged_out_triggers:
+    log.info("Logout triggers: {}".format(logged_out_triggers))
     for fn_name, ts in sorted(next_run_at.items(), key=lambda x: x[1]):
         log.info("Cron next run: {} at {}".format(
             fn_name, datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")))
@@ -270,6 +278,13 @@ time.sleep(0.2)
 attack_detector = AttackDetector(
     warning_template_path="buttons_template/BeingAttackedWarning.png",
     clear_sec=10.0,
+)
+
+logout_detector = LogoutDetector(
+    template_path="buttons_template/PasswordSlot.png",
+    threshold=0.75,
+    confirm_sec=1.0,
+    clear_sec=5.0,
 )
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
@@ -337,6 +352,12 @@ while running and not exit_requested:
     if attack_event == "started":
         for fn_name in attacked_triggers:
             _try_start(fn_name, trigger="attacked")
+
+    # Logged-out detection
+    logout_event = logout_detector.update(screenshot, log)
+    if logout_event == "started":
+        for fn_name in logged_out_triggers:
+            _start_urgent(fn_name, trigger="logged_out")
 
     was_running = runner.state == "running"
     runner.update(screenshot, wincap)
