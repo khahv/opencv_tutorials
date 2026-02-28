@@ -47,3 +47,8 @@ functions:
     cron: "0 */5 * * *"
     priority: 50
     enabled: true
+
+  - name: DonateAllianceTech
+    key: d
+    priority: 60
+    enabled: true

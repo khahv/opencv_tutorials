@@ -1,0 +1,61 @@
+# Function: DonateAllianceTech
+description: "Donate Alliance Tech: Alliance icon -> Techs -> Like -> Donate x20 -> close"
+
+steps:
+  # Mo Alliance panel
+  - type: match_click
+    template: buttons_template/AllianceIconButton.png
+    threshold: 0.75
+    one_shot: true
+    timeout_sec: 10
+
+  # Vao tab Alliance Techs
+  - type: match_click
+    template: buttons_template/AllianceTechs.png
+    threshold: 0.8
+    one_shot: true
+    timeout_sec: 10
+
+  # Click Like de chon tech can donate
+  - type: match_click
+    template: buttons_template/AllianceTechLike.png
+    threshold: 0.75
+    one_shot: true
+    timeout_sec: 10
+
+  # Donate 20 lan
+  - type: match_click
+    template: buttons_template/AllianceTechDonate.png
+    threshold: 0.75
+    one_shot: false
+    max_clicks: 20
+    click_interval_sec: 0.03
+    timeout_sec: 30
+
+  # --- Dong panel: luon chay du step truoc false ---
+  - type: sleep
+    run_always: true
+    duration_sec: 2
+
+  - type: click_position
+    run_always: true
+    offset_x: 0.05
+    offset_y: 0.05
+
+  - type: sleep
+    run_always: true
+    duration_sec: 2
+
+  - type: click_position
+    run_always: true
+    offset_x: 0.05
+    offset_y: 0.05
+
+  - type: sleep
+    run_always: true
+    duration_sec: 2
+
+  - type: click_position
+    run_always: true
+    offset_x: 0.05
+    offset_y: 0.05

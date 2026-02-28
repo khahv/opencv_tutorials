@@ -1,0 +1,23 @@
+2026-02-28 09:00:25 === Start ===
+2026-02-28 09:00:25 [Env] Loaded from .env: PIN_PASSWORD
+2026-02-28 09:00:25 WindowCapture: client size = 2400x1600, screen offset = (1288, 386)
+2026-02-28 09:00:25 Vision scale: 1.0 (window 2400x1600)
+2026-02-28 09:00:25 Global hotkey: {'l': 'PinLoggin', 'b': 'FightBoomer', 't': 'ClickTreasure', 'c': 'CollectExplorationReward', 's': 'SoliderTrain', 'h': 'HelpAlliance', 'm': 'CheckMail', 'd': 'DonateAllianceTech'} | Press same key to stop | Ctrl+Esc = quit
+2026-02-28 09:00:25 Function priorities: {'PinLoggin': 1, 'FightBoomer': 2, 'ClickTreasure': 4, 'CollectExplorationReward': 98, 'SoliderTrain': 99, 'HelpAlliance': 100, 'CheckMail': 50, 'DonateAllianceTech': 60}
+2026-02-28 09:00:25 Function enabled: {'PinLoggin': True, 'FightBoomer': True, 'ClickTreasure': True, 'CollectExplorationReward': True, 'SoliderTrain': True, 'HelpAlliance': True, 'CheckMail': True, 'DonateAllianceTech': True}
+2026-02-28 09:00:25 Auto cron: [('PinLoggin', '*/30 * * * *'), ('CollectExplorationReward', '0 */8 * * *'), ('SoliderTrain', '0 */6 * * *'), ('HelpAlliance', '*/15 * * * *'), ('CheckMail', '0 */5 * * *')]
+2026-02-28 09:00:25 Cron next run: PinLoggin at 2026-02-28 09:30:00
+2026-02-28 09:00:25 Cron next run: CollectExplorationReward at 2026-02-28 16:00:00
+2026-02-28 09:00:25 Cron next run: SoliderTrain at 2026-02-28 12:00:00
+2026-02-28 09:00:25 Cron next run: HelpAlliance at 2026-02-28 09:15:00
+2026-02-28 09:00:25 Cron next run: CheckMail at 2026-02-28 10:00:00
+2026-02-28 09:00:29 [Runner] Started function: SoliderTrain
+2026-02-28 09:00:31 [Runner] base_zoomout HeadquartersButton → true (HQ not found, scrolled x5)
+2026-02-28 09:00:35 [Runner] match_click ShooterCollect → false (not found in 3s)
+2026-02-28 09:00:36 [Runner] match_click SoliderTrain → true (clicked)
+2026-02-28 09:00:38 [Runner] match_click SoliderTrainButton → true (clicked)
+2026-02-28 09:00:40 [Runner] match_click ReplenishAll → true (clicked)
+2026-02-28 09:00:42 [Runner] match_click ConfirmYellow → true (clicked)
+2026-02-28 09:00:42 [Runner] match_click SoliderTrainBackButton → true (clicked)
+2026-02-28 09:00:48 === End ===
+2026-02-28 09:00:48 Done.

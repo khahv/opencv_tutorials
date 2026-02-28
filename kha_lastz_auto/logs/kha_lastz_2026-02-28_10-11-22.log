@@ -1,0 +1,23 @@
+2026-02-28 10:11:22 === Start ===
+2026-02-28 10:11:22 [Env] Loaded from .env: PIN_PASSWORD
+2026-02-28 10:11:23 WindowCapture: client size = 2400x1600, screen offset = (1794, 480)
+2026-02-28 10:11:23 Vision scale: 1.0 (window 2400x1600)
+2026-02-28 10:11:23 Global hotkey: {'l': 'PinLoggin', 'b': 'FightBoomer', 't': 'ClickTreasure', 'c': 'CollectExplorationReward', 's': 'SoliderTrain', 'h': 'HelpAlliance', 'm': 'CheckMail', 'd': 'DonateAllianceTech'} | Press same key to stop | Ctrl+Esc = quit
+2026-02-28 10:11:23 Function priorities: {'PinLoggin': 1, 'FightBoomer': 2, 'ClickTreasure': 4, 'CollectExplorationReward': 98, 'SoliderTrain': 99, 'HelpAlliance': 100, 'CheckMail': 50, 'DonateAllianceTech': 60}
+2026-02-28 10:11:23 Function enabled: {'PinLoggin': True, 'FightBoomer': True, 'ClickTreasure': True, 'CollectExplorationReward': True, 'SoliderTrain': True, 'HelpAlliance': True, 'CheckMail': True, 'DonateAllianceTech': True}
+2026-02-28 10:11:23 Auto cron: [('PinLoggin', '*/30 * * * *'), ('CollectExplorationReward', '0 */8 * * *'), ('SoliderTrain', '0 */6 * * *'), ('HelpAlliance', '*/15 * * * *'), ('CheckMail', '0 */5 * * *')]
+2026-02-28 10:11:23 Cron next run: PinLoggin at 2026-02-28 10:30:00
+2026-02-28 10:11:23 Cron next run: CollectExplorationReward at 2026-02-28 16:00:00
+2026-02-28 10:11:23 Cron next run: SoliderTrain at 2026-02-28 12:00:00
+2026-02-28 10:11:23 Cron next run: HelpAlliance at 2026-02-28 10:15:00
+2026-02-28 10:11:23 Cron next run: CheckMail at 2026-02-28 15:00:00
+2026-02-28 10:11:26 [Runner] Started function: CollectExplorationReward
+2026-02-28 10:11:28 [Runner] base_zoomout HeadquartersButton → true (HQ not found, scrolled x5)
+2026-02-28 10:11:29 [Runner] match_click ExplorationReward → true (clicked)
+2026-02-28 10:11:31 [Runner] match_click ClaimButton → true (clicked)
+2026-02-28 10:11:32 [Runner] match_click CollectButton → true (clicked)
+2026-02-28 10:11:34 [Runner] sleep 2s → true
+2026-02-28 10:11:34 [Runner] click_position (0.15, 0.15) → true
+2026-02-28 10:11:35 [Runner] Finished function: CollectExplorationReward
+2026-02-28 10:11:40 === End ===
+2026-02-28 10:11:40 Done.

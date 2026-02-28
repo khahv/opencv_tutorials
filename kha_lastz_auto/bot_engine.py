@@ -163,6 +163,8 @@ def collect_templates(functions_dict):
                     templates.add(step["minus_template"])
                 if step.get("level_anchor_template"):
                     templates.add(step["level_anchor_template"])
+            if step.get("type") == "base_zoomout" and step.get("template"):
+                templates.add(step["template"])
     return list(templates)
 
 
@@ -234,8 +236,11 @@ class FunctionRunner:
         # unless this step sets run_always: true
         run_always = step.get("run_always", False)
         if not run_always and not self.last_step_result:
-            log.info("[Runner] Aborting function '{}' — step '{}' blocked (previous step returned false)".format(
-                self.function_name, step_type))
+            # Log tat ca cac step con lai (tu vi tri hien tai) la [skip]
+            for i in range(self.step_index, len(self.steps)):
+                s = self.steps[i]
+                if not s.get("run_always", False):
+                    log.info("[Runner] [skip] {}".format(self._step_label(s)))
             self.state = "idle"
             log.info("[Runner] Finished function: {} (aborted)".format(self.function_name))
             return "done"
@@ -266,19 +271,20 @@ class FunctionRunner:
                 sx, sy = wincap.get_screen_position(tuple(center))
                 pyautogui.click(sx, sy)
                 self.step_click_count += 1
-                if one_shot or self.step_click_count <= 1 or self.step_click_count % 10 == 0:
-                    log.info("[Runner] match_click {} (count {})".format(template, self.step_click_count))
                 if not one_shot and click_interval_sec > 0:
                     time.sleep(click_interval_sec)
                 if one_shot:
+                    log.info("[Runner] {} → true (clicked)".format(self._step_label(step)))
                     self._advance_step(True)
                     return "running"
+                if self.step_click_count % 10 == 0:
+                    log.info("[Runner] {} clicking... (count {})".format(self._step_label(step), self.step_click_count))
                 if self.step_click_count >= max_clicks:
-                    log.info("[Runner] match_click {} reached max_clicks={}".format(template, max_clicks))
+                    log.info("[Runner] {} → true (clicked {})".format(self._step_label(step), self.step_click_count))
                     self._advance_step(True)
                     return "running"
             if now - self.step_start_time >= timeout_sec:
-                log.info("[Runner] match_click {} timeout (not found in {}s)".format(template, timeout_sec))
+                log.info("[Runner] {} → false (not found in {}s)".format(self._step_label(step), timeout_sec))
                 self._advance_step(False)
             return "running"
 
@@ -296,22 +302,23 @@ class FunctionRunner:
                 return "running"
             points = vision.find(screenshot, threshold=threshold, debug_mode=None)
             if points:
-                log.info("[Runner] match_multi_click {}: found {} match(es)".format(template, len(points)))
                 for pt in points:
                     sx, sy = wincap.get_screen_position(tuple(pt))
                     pyautogui.click(sx, sy)
                     if click_interval_sec > 0:
                         time.sleep(click_interval_sec)
+                log.info("[Runner] {} → true (clicked {} match(es))".format(self._step_label(step), len(points)))
                 self._advance_step(True)
                 return "running"
             if now - self.step_start_time >= timeout_sec:
-                log.info("[Runner] match_multi_click {}: timeout (not found in {}s)".format(template, timeout_sec))
+                log.info("[Runner] {} → false (not found in {}s)".format(self._step_label(step), timeout_sec))
                 self._advance_step(False)
             return "running"
 
         if step_type == "sleep":
             duration = step.get("duration_sec", 0)
             if now - self.step_start_time >= duration:
+                log.info("[Runner] {} → true".format(self._step_label(step)))
                 self._advance_step(True)
             return "running"
 
@@ -322,7 +329,7 @@ class FunctionRunner:
             py = int(wincap.h * oy)
             sx, sy = wincap.get_screen_position((px, py))
             pyautogui.click(sx, sy)
-            log.info("[Runner] click_position ({}, {})".format(sx, sy))
+            log.info("[Runner] {} → true".format(self._step_label(step)))
             self._advance_step(True)
             return "running"
 
@@ -336,12 +343,11 @@ class FunctionRunner:
                 return "running"
             points = vision.find(screenshot, threshold=threshold, debug_mode=None)
             if points:
-                log.info("[Runner] wait_until_match: found {}".format(template))
+                log.info("[Runner] {} → true".format(self._step_label(step)))
                 self._advance_step(True)
                 return "running"
             if now - self.step_start_time >= timeout_sec:
-                log.info("[Runner] wait_until_match: timeout ({}s) — {} not found".format(
-                    timeout_sec, template))
+                log.info("[Runner] {} → false (not found in {}s)".format(self._step_label(step), timeout_sec))
                 self._advance_step(False)
             return "running"
 
@@ -431,8 +437,7 @@ class FunctionRunner:
             timeout_sec      = step.get("timeout_sec", 3)
             v_check = self.vision_cache.get(visible_template) if visible_template else None
             if v_check and v_check.find(screenshot, threshold=threshold, debug_mode=None):
-                log.info("[Runner] click_unless_visible: {} found, skip clicking {}".format(
-                    visible_template, click_template))
+                log.info("[Runner] {} → true (visible, skip nav)".format(self._step_label(step)))
                 self._advance_step(True)
                 return "running"
             if now - self.step_start_time >= timeout_sec:
@@ -442,18 +447,17 @@ class FunctionRunner:
                     if pts:
                         sx, sy = wincap.get_screen_position(tuple(pts[0]))
                         pyautogui.click(sx, sy)
-                        log.info("[Runner] click_unless_visible: {} not found — clicked {}".format(
-                            visible_template, click_template))
+                        log.info("[Runner] {} → true (not visible, clicked nav)".format(self._step_label(step)))
                     else:
-                        log.info("[Runner] click_unless_visible: {} not found and {} not visible either".format(
-                            visible_template, click_template))
-                self._advance_step(True)  # navigation step always succeeds
+                        log.info("[Runner] {} → true (not visible, nav absent too)".format(self._step_label(step)))
+                self._advance_step(True)
             return "running"
 
         if step_type == "key_press":
             key = step.get("key", "")
             if key:
                 pyautogui.press(key)
+            log.info("[Runner] {} → true".format(self._step_label(step)))
             self._advance_step(True)
             return "running"
 
@@ -468,9 +472,9 @@ class FunctionRunner:
             interval = step.get("interval_sec", 0.1)
             if text:
                 pyautogui.write(text, interval=interval)
-                log.info("[Runner] type_text: typed {} chars".format(len(text)))
+                log.info("[Runner] {} → true ({} chars)".format(self._step_label(step), len(text)))
             else:
-                log.info("[Runner] type_text: text is empty (check .env / ${} var name)")
+                log.info("[Runner] {} → true (empty — check .env / ${{}} var name)".format(self._step_label(step)))
             self._advance_step(True)
             return "running"
 
@@ -489,12 +493,12 @@ class FunctionRunner:
             points = vision.find(screenshot, threshold=threshold, debug_mode=None)
             found = len(points) if points else 0
             if found >= count:
-                log.info("[Runner] match_count {}: found {} >= {} — true".format(template, found, count))
+                log.info("[Runner] {} → true (found {}/{})".format(self._step_label(step), found, count))
                 self._advance_step(True)
                 return "running"
             if now - self.step_start_time >= timeout_sec:
-                log.info("[Runner] match_count {}: timeout — found {} < {} — false".format(
-                    template, found, count))
+                log.info("[Runner] {} → false (found {}/{}, timeout {}s)".format(
+                    self._step_label(step), found, count, timeout_sec))
                 if debug_save:
                     try:
                         os.makedirs("debug", exist_ok=True)
@@ -515,9 +519,62 @@ class FunctionRunner:
                 self._advance_step(False)
             return "running"
 
+        if step_type == "base_zoomout":
+            # Neu tim thay template (HeadquartersButton) -> click vao -> scroll zoom out.
+            # Neu khong tim thay -> chi scroll zoom out (co the da o world map roi).
+            template        = step.get("template")
+            threshold       = step.get("threshold", 0.75)
+            scroll_times    = step.get("scroll_times", 5)
+            scroll_interval = step.get("scroll_interval_sec", 0.1)
+            timeout_sec     = step.get("timeout_sec", 5)
+
+            vision = self.vision_cache.get(template) if template else None
+            clicked_hq = False
+            if vision:
+                points = vision.find(screenshot, threshold=threshold, debug_mode=None)
+                if points:
+                    sx, sy = wincap.get_screen_position(tuple(points[0]))
+                    pyautogui.click(sx, sy)
+                    time.sleep(0.3)
+                    clicked_hq = True
+
+            # Scroll zoom out tai tam cua so game
+            cx = wincap.offset_x + wincap.w // 2
+            cy = wincap.offset_y + wincap.h // 2
+            pyautogui.moveTo(cx, cy)
+            for _ in range(scroll_times):
+                pyautogui.scroll(-3)
+                time.sleep(scroll_interval)
+
+            if clicked_hq:
+                log.info("[Runner] {} → true (clicked HQ + scrolled x{})".format(self._step_label(step), scroll_times))
+            else:
+                log.info("[Runner] {} → true (HQ not found, scrolled x{})".format(self._step_label(step), scroll_times))
+            self._advance_step(True)
+            return "running"
+
         # unknown type -> skip (true so next step still runs)
         self._advance_step(True)
         return "running"
+
+    def _step_label(self, step):
+        """Tra ve chuoi mo ta ngan gon cho step, dung trong log."""
+        stype = step.get("type", "?")
+        tpl = step.get("template") or step.get("click_template") or ""
+        tpl_name = os.path.splitext(os.path.basename(tpl))[0] if tpl else ""
+        if stype == "sleep":
+            return "sleep {}s".format(step.get("duration_sec", 0))
+        if stype == "click_position":
+            return "click_position ({}, {})".format(step.get("offset_x", 0), step.get("offset_y", 0))
+        if stype == "type_text":
+            return "type_text"
+        if stype == "key_press":
+            return "key_press {}".format(step.get("key", ""))
+        if stype == "set_level":
+            return "set_level Lv.{}".format(step.get("target_level", "?"))
+        if tpl_name:
+            return "{} {}".format(stype, tpl_name)
+        return stype
 
     def _advance_step(self, result=True):
         self.step_index += 1
