@@ -30,6 +30,8 @@ from bot_engine import (
 )
 import vision as vision_module
 from attack_detector import AttackDetector
+from ui import BotUI
+import config_manager
 from logout_detector import LogoutDetector
 from alliance_attack_detector import AllianceAttackDetector
 
@@ -86,6 +88,7 @@ else:
 # ── Load config ──────────────────────────────────────────────────────────────
 config = load_config("config.yaml")
 fn_configs = config.get("functions") or []
+config_manager.apply_overrides(fn_configs)  # .env_config overrides config.yaml
 
 key_bindings      = {}   # key_char -> fn_name
 fn_enabled        = {}   # fn_name  -> bool
@@ -276,15 +279,57 @@ if alliance_attacked_triggers:
 if pending_queue:
     log.info("Pending queue: {}".format(pending_queue))
 
+# ── UI ────────────────────────────────────────────────────────────────────────
+config_manager.init_if_missing(fn_configs, fn_enabled)
+bot_paused = {"paused": False}
+
+
+def _on_cron_change(fn_name, cron_expr):
+    """Called from UI when user saves or clears a schedule for a function."""
+    # Update fn_configs in-place (UI already did fc['cron'] = ..., but keep in sync)
+    for fc in fn_configs:
+        if fc.get("name") == fn_name:
+            if cron_expr:
+                fc["cron"] = cron_expr
+            else:
+                fc.pop("cron", None)
+            break
+
+    # Rebuild schedules list entry for this function
+    for i, s in enumerate(schedules):
+        if s.get("function") == fn_name:
+            schedules.pop(i)
+            break
+    if cron_expr and fn_enabled.get(fn_name, True):
+        schedules.append({"function": fn_name, "cron": cron_expr})
+        it = croniter(cron_expr, datetime.now().astimezone())
+        next_run_at[fn_name] = it.get_next(float)
+        log.info("Cron updated: {} = {} (next: {})".format(
+            fn_name, cron_expr,
+            datetime.fromtimestamp(next_run_at[fn_name]).strftime("%H:%M:%S")))
+    else:
+        next_run_at.pop(fn_name, None)
+        log.info("Cron cleared: {}".format(fn_name))
+
+    config_manager.save(fn_configs, fn_enabled)
+
+
+BotUI(fn_enabled, fn_configs, runner, next_run_at,
+      key_bindings=key_bindings,
+      save_callback=lambda: config_manager.save(fn_configs, fn_enabled),
+      bot_paused=bot_paused,
+      cron_callback=_on_cron_change).start()
+
 # ── Focus thread ──────────────────────────────────────────────────────────────
 running = True
 
 def focus_loop():
     while running and not exit_requested:
-        wincap.focus_window()
-        if _ref_w and _ref_h and (wincap.w != _ref_w or wincap.h != _ref_h):
-            wincap.resize_to_client(_ref_w, _ref_h)
-            log.info("[focus_loop] Window resized back to {}x{}".format(wincap.w, wincap.h))
+        if not bot_paused["paused"]:
+            wincap.focus_window()
+            if _ref_w and _ref_h and (wincap.w != _ref_w or wincap.h != _ref_h):
+                wincap.resize_to_client(_ref_w, _ref_h)
+                log.info("[focus_loop] Window resized back to {}x{}".format(wincap.w, wincap.h))
         time.sleep(0.2)
 
 focus_thread = threading.Thread(target=focus_loop, daemon=True)
@@ -308,6 +353,13 @@ logout_detector = LogoutDetector(
 alliance_attack_detector = AllianceAttackDetector(
     warning_template_path="buttons_template/AllianceBeingAttackedWarning.png",
     clear_sec=10.0,
+)
+
+from exit_banner_detector import ExitBannerDetector
+exit_banner_detector = ExitBannerDetector(
+    template_path="buttons_template/ExitGameBanner.png",
+    threshold=0.85,
+    check_every=5,   # 5 × 2s = 10s
 )
 
 # ── Detector background thread ─────────────────────────────────────────────────
@@ -359,6 +411,12 @@ def _detector_loop():
             log.info("[Detector] #{} → alliance_attacked, triggers={}".format(_tick, alliance_attacked_triggers))
             _detector_event_queue.put(("alliance_attacked", list(alliance_attacked_triggers)))
 
+        # Check ExitGameBanner every N ticks — click corner to dismiss
+        if exit_banner_detector.update(img, wincap, log):
+            sx, sy = exit_banner_detector.corner_screen_pos(wincap)
+            pyautogui.click(sx, sy)
+            log.info("[Detector] #{} → ExitGameBanner detected, clicked corner ({}, {})".format(_tick, sx, sy))
+
     log.info("[Detector] Background thread exited")
 
 _detector_thread = threading.Thread(target=_detector_loop, daemon=True)
@@ -373,13 +431,15 @@ while running and not exit_requested:
     if exit_requested:
         break
 
-    # Process hotkey messages
+    # Process hotkey messages — quit always works, others blocked when paused
     try:
         while True:
             msg = key_queue_msg.get_nowait()
             if msg == "quit":
                 running = False
                 break
+            if bot_paused["paused"]:
+                continue
             if isinstance(msg, tuple) and msg[0] == "hotkey":
                 key_char = msg[1]
                 fn_name  = key_bindings.get(key_char)
@@ -398,6 +458,10 @@ while running and not exit_requested:
         pass
     if not running:
         break
+
+    if bot_paused["paused"]:
+        cv.waitKey(1)
+        continue
 
     # Process cron triggers
     now = time.time()

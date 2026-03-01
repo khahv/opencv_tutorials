@@ -24,7 +24,7 @@ functions:
   - name: FightBoomer
     key: b
     cron: "*/3 * * * *"
-    enabled: true
+    enabled: false
 
   - name: ClickTreasure
     key: y
@@ -57,6 +57,10 @@ functions:
   - name: DonateAllianceTech
     key: d
     enabled: true
+
+  - name: CollectZGoldFull
+    enabled: true
+    key: z
 
   - name: TestAllianceAttack
     trigger: alliance_attacked
