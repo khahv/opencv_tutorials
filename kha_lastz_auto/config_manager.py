@@ -73,6 +73,27 @@ def save(fn_configs: list, fn_enabled: dict) -> None:
         yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
 
+def load_fn_settings() -> dict:
+    """Return fn_settings dict {fn_name: {key: value}} from .env_config."""
+    if not os.path.isfile(ENV_CONFIG_PATH):
+        return {}
+    with open(ENV_CONFIG_PATH, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    return data.get("fn_settings") or {}
+
+
+def save_fn_settings(fn_settings: dict) -> None:
+    """Persist fn_settings into the fn_settings section of .env_config."""
+    if os.path.isfile(ENV_CONFIG_PATH):
+        with open(ENV_CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    else:
+        data = {}
+    data["fn_settings"] = fn_settings
+    with open(ENV_CONFIG_PATH, "w", encoding="utf-8") as f:
+        yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
 def init_if_missing(fn_configs: list, fn_enabled: dict) -> None:
     """Create .env_config if missing, or add any absent cron_overrides from fn_configs."""
     if not os.path.isfile(ENV_CONFIG_PATH):

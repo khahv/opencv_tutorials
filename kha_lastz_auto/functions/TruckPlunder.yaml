@@ -1,0 +1,74 @@
+# Function: TruckPlunder
+description: "Plunder trucks: open panel -> filter -> click truck -> OCR check server+power -> plunder if conditions met"
+
+steps:
+
+  - event_type: match_click
+    template: buttons_template/TruckIcon.png
+    threshold: 0.75
+    one_shot: true
+    timeout_sec: 10
+
+  - event_type: match_click
+    template: buttons_template/HideTruckFromThisStateUnchecked.png
+    threshold: 0.99
+    one_shot: true
+    timeout_sec: 2
+
+  - event_type: match_click
+    template: buttons_template/YellowTruckSmall.png
+    threshold: 0.8   # wrong-color truck ~0.924, yellow ~0.95 → 0.93 rejects wrong
+    match_color: true
+    color_match_tolerance: 50   # YellowTruckSmall BGR vs grey~99 purple~105 — tighten
+    color_min_saturation: 140   # YellowTruckSmall S≈199 (yellow) — reject grey S≈30
+    color_hue_range: [5, 35]    # YellowTruckSmall H median=17 peak 4-22 — reject purple H≈120
+    color_hue_min_fraction: 0.5 # ≥50% saturated pixels in hue_range
+    log_match_score: true       # log template_score when match+click
+    one_shot: true
+    timeout_sec: 10
+    run_always: true
+    track_tried: true
+    debug_click: false
+    refresh_template: buttons_template/TruckRefresh.png
+
+  # Read server number and combat power from the plunder banner
+  # If assertions fail → retry by jumping back to step 2 (click YellowTruck again)
+  - event_type: ocr_log
+    anchor_template: buttons_template/SPlunderTruckSmallBanner.png
+    threshold: 0.70
+    timeout_sec: 0.5
+    run_always: true
+    debug_save: false
+    on_fail_goto: 2   # step index of match_click YellowTruck (0-based)
+    max_retries: 50   # total OCR assertion failures before giving up (across refreshes)
+    ocr_regions:
+      - name: player_name
+        x: -2.3   # right of server "#NNN" (which ends at ~-2.45)
+        y: 0.0
+        w: 2.2    # wide enough to capture [Alliance] PlayerName
+        h: 0.40
+        digits_only: false
+
+      - name: server
+        x: -3.0   # start at "#NNN" text
+        y: 0.0
+        w: 0.55   # narrow: capture "#NNN" only, cut "L" from "Lv." to avoid misread as "0"
+        h: 0.40   # cut before shield icon (bottom ~30%)
+        digits_only: false    # keep false: allowlist maps "#" to "4", use pattern to extract
+        pattern: "(\\d{3,4})"
+        assert_in: ["600", "601"]   # plunder trucks from these servers only
+
+      - name: power
+        x: -2.7   # shifted left to include leading digit (e.g. "1,127,749")
+        y: 0.45
+        w: 2.7
+        h: 0.55
+        digits_only: true
+        assert_max: 10000000
+
+  # Reached only if server == "549" AND power < 10,000,000
+  - event_type: match_click
+    template: buttons_template/TruckLootButton.png
+    threshold: 0.75
+    one_shot: true
+    timeout_sec: 5

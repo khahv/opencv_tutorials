@@ -57,10 +57,11 @@ steps:
     debug_save: false
     abort_if_found: true
 
-  # Click the ► arrow on the right edge of the PeaceShield card
-  # click_offset_x: 0.48 = shift right by 48% of template width (from center to right edge)
+  # Click the ► arrow on the right edge of the PeaceShield card.
+  # Use PeaceShieldCard.png — captured without the timer (matches BOTH active/inactive states).
+  # If you don't have PeaceShieldCard.png yet, capture it when shield is OFF (icon+title area only).
   - event_type: match_click
-    template: buttons_template/PeaceShieldActivated.png
+    template: buttons_template/PeaceShield.png
     threshold: 0.75
     one_shot: true
     timeout_sec: 10
@@ -69,6 +70,7 @@ steps:
 
   - event_type: sleep
     duration_sec: 1
+    run_always: true   # run even if match_click above failed (shield card not matched)
 
   # Click the Use button (right side of card, ~33% right of center)
   - event_type: match_move

@@ -62,6 +62,10 @@ functions:
     enabled: true
     key: z
 
+  - name: TruckPlunder
+    enabled: true
+    key: x
+
   - name: TestAllianceAttack
     trigger: alliance_attacked
     enabled: true

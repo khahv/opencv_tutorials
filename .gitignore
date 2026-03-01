@@ -6,3 +6,5 @@ __pycache__
 /dist
 **/logs
 **/.env
+**/.env_config
+kha_lastz_auto/.env_config

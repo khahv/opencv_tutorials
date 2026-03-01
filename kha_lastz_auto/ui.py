@@ -5,6 +5,7 @@ import tkinter as tk
 from datetime import datetime
 
 from croniter import croniter
+from fn_settings_schema import SCHEMA as _FN_SETTINGS_SCHEMA
 
 _log = logging.getLogger("kha_lastz")
 
@@ -33,7 +34,10 @@ class BotUI:
                  key_bindings: dict = None,
                  save_callback=None,
                  bot_paused: dict = None,
-                 cron_callback=None):
+                 cron_callback=None,
+                 fn_settings: dict = None,
+                 settings_save_callback=None,
+                 run_callback=None):
         self._fn_enabled    = fn_enabled
         self._fn_configs    = [fc for fc in fn_configs if fc.get("name")]
         self._runner        = runner_ref
@@ -42,11 +46,16 @@ class BotUI:
         self._save_callback = save_callback
         self._bot_paused    = bot_paused   if bot_paused   is not None else {"paused": False}
         self._cron_callback = cron_callback  # fn(fn_name, cron_expr_or_empty)
+        self._fn_settings   = fn_settings if fn_settings is not None else {}
+        self._settings_save_callback = settings_save_callback  # fn(fn_settings)
+        self._run_callback  = run_callback   # fn(fn_name) — trigger function immediately
 
         self._vars       = {}   # fn_name → BooleanVar
         self._row_frames = {}   # fn_name → (row_frame, name_label)
         self._badge_lbls = {}   # fn_name → badge tk.Label
         self._sched_lbls = {}   # fn_name → schedule "S" tk.Label
+        self._gear_lbls  = {}   # fn_name → gear tk.Label (or None if no settings)
+        self._play_lbls  = {}   # fn_name → play ▶ tk.Label
         self._rebinding  = None
         self._rebind_lbl = None
         self._root       = None
@@ -130,7 +139,7 @@ class BotUI:
         self._update_badge_states()
 
     def _update_badge_states(self):
-        """Grey out / restore all key badges and schedule buttons based on Is Running state."""
+        """Grey out / restore all key badges, schedule and gear buttons based on Is Running state."""
         paused = self._bot_paused["paused"]
         for name, badge_lbl in self._badge_lbls.items():
             if badge_lbl is None:
@@ -151,6 +160,22 @@ class BotUI:
                 sched_lbl.config(fg=ACCENT if has_cron else FG, cursor="hand2")
             else:
                 sched_lbl.config(fg=GRAY, cursor="arrow")
+
+        for name, gear_lbl in self._gear_lbls.items():
+            if gear_lbl is None:
+                continue
+            if paused:
+                gear_lbl.config(fg=ACCENT, cursor="hand2")
+            else:
+                gear_lbl.config(fg=GRAY, cursor="arrow")
+
+        for name, play_lbl in self._play_lbls.items():
+            if play_lbl is None:
+                continue
+            if paused:
+                play_lbl.config(fg=GRAY, cursor="arrow")
+            else:
+                play_lbl.config(fg=GREEN, cursor="hand2")
 
     def _on_close(self):
         os._exit(0)
@@ -227,9 +252,32 @@ class BotUI:
         sched_lbl.bind("<Button-1>",
                        lambda e, n=name, lbl=sched_lbl: self._show_schedule(n, lbl))
 
+        # Gear "⚙" button — only for functions that have settings schema
+        has_settings = bool(_FN_SETTINGS_SCHEMA.get(name))
+        if has_settings:
+            gear_lbl = tk.Label(row, text=" ⚙ ",
+                                font=("Segoe UI", 10),
+                                bg=GRAY2, fg=GRAY,
+                                padx=4, pady=2, relief="flat", cursor="arrow")
+            gear_lbl.pack(side="right", padx=(0, 4))
+            gear_lbl.bind("<Button-1>",
+                          lambda e, n=name: self._show_fn_settings(n))
+        else:
+            gear_lbl = None
+
+        # Play "▶" button — active when Is Running = ON (paused=False), greyed when paused
+        play_lbl = tk.Label(row, text=" ▶ ",
+                            font=("Segoe UI", 10),
+                            bg=GRAY2, fg=GREEN,
+                            padx=4, pady=2, relief="flat", cursor="hand2")
+        play_lbl.pack(side="right", padx=(0, 4))
+        play_lbl.bind("<Button-1>", lambda e, n=name: self._run_fn(n))
+
         self._row_frames[name] = (row, name_lbl)
         self._badge_lbls[name] = badge_lbl
         self._sched_lbls[name] = sched_lbl
+        self._gear_lbls[name]  = gear_lbl
+        self._play_lbls[name]  = play_lbl
 
         # Tooltip on hover — show next run time / trigger / hotkey
         for w in (row, inner, name_lbl):
@@ -437,6 +485,189 @@ class BotUI:
         cx = self._root.winfo_x() + self._root.winfo_width()  // 2
         cy = self._root.winfo_y() + self._root.winfo_height() // 2
         dlg.geometry("+{}+{}".format(cx - w // 2, cy - h // 2))
+
+    # ── Function settings dialog ──────────────────────────────────────────────
+
+    def _show_fn_settings(self, name):
+        if not self._bot_paused["paused"]:
+            self._show_toast("Bot is running — pause it first (uncheck Is Running) to edit settings.")
+            return
+        schema = _FN_SETTINGS_SCHEMA.get(name)
+        if not schema:
+            return
+
+        current = self._fn_settings.get(name, {})
+
+        dlg = tk.Toplevel(self._root)
+        dlg.title("Settings — {}".format(name))
+        dlg.configure(bg=BG)
+        dlg.resizable(False, False)
+        dlg.attributes("-topmost", True)
+        dlg.grab_set()
+
+        tk.Label(dlg, text="Settings  —  {}".format(name),
+                 font=("Segoe UI", 11, "bold"), bg=BG, fg=ACCENT
+                 ).pack(fill="x", padx=14, pady=(12, 6))
+        tk.Frame(dlg, bg=GRAY2, height=1).pack(fill="x", padx=14, pady=(0, 10))
+
+        field_vars = {}  # key → tk var
+
+        for field in schema:
+            key   = field["key"]
+            label = field["label"]
+            ftype = field.get("type", "str")
+            desc  = field.get("description", "")
+            fmin  = field.get("min")
+            fmax  = field.get("max")
+            fdef  = field.get("default")
+            stored = current.get(key, fdef)
+
+            row = tk.Frame(dlg, bg=BG)
+            row.pack(fill="x", padx=14, pady=(0, 8))
+
+            tk.Label(row, text=label, font=("Segoe UI", 9, "bold"),
+                     bg=BG, fg=FG, width=22, anchor="w").pack(side="left")
+
+            if ftype == "int":
+                var = tk.IntVar(value=int(stored) if stored is not None else (fmin or 0))
+                field_vars[key] = var
+                spin = tk.Spinbox(
+                    row, from_=fmin if fmin is not None else 0,
+                    to=fmax if fmax is not None else 9999,
+                    textvariable=var, width=8,
+                    bg=BG2, fg=YELLOW, buttonbackground=GRAY2,
+                    insertbackground=FG, relief="flat",
+                    font=("Consolas", 11, "bold"), justify="center")
+                spin.pack(side="left")
+                if desc:
+                    tk.Label(row, text=desc, font=("Segoe UI", 8),
+                             bg=BG, fg=GRAY, padx=8).pack(side="left")
+
+            elif ftype == "float":
+                fstep = field.get("step", 0.1)
+                init_val = float(stored) if stored is not None else float(fmin or 0)
+                var = tk.StringVar(value="{:.3g}".format(init_val))
+                field_vars[key] = var
+                fmin_f = float(fmin) if fmin is not None else 0.0
+                fmax_f = float(fmax) if fmax is not None else 9999.0
+                spin = tk.Spinbox(
+                    row, from_=fmin_f, to=fmax_f, increment=fstep,
+                    textvariable=var, width=8,
+                    bg=BG2, fg=YELLOW, buttonbackground=GRAY2,
+                    insertbackground=FG, relief="flat",
+                    font=("Consolas", 11, "bold"), justify="center", format="%.3g")
+                spin.pack(side="left")
+                if desc:
+                    tk.Label(row, text=desc, font=("Segoe UI", 8),
+                             bg=BG, fg=GRAY, padx=8).pack(side="left")
+
+            elif ftype == "bool":
+                var = tk.BooleanVar(value=bool(stored))
+                field_vars[key] = var
+                tk.Checkbutton(row, variable=var, bg=BG, activebackground=BG,
+                               selectcolor=GRAY2, fg=FG, activeforeground=FG,
+                               relief="flat", bd=0, highlightthickness=0).pack(side="left")
+                if desc:
+                    tk.Label(row, text=desc, font=("Segoe UI", 8),
+                             bg=BG, fg=GRAY, padx=4).pack(side="left")
+
+            elif ftype == "password":
+                var = tk.StringVar(value=str(stored) if stored else "")
+                field_vars[key] = var
+                pw_frame = tk.Frame(row, bg=BG)
+                pw_frame.pack(side="left")
+                pw_entry = tk.Entry(pw_frame, textvariable=var, width=18,
+                                    show="*", bg=BG2, fg=YELLOW,
+                                    insertbackground=FG, relief="flat",
+                                    font=("Consolas", 10))
+                pw_entry.pack(side="left")
+                _show_pw = {"v": False}
+                def _toggle_pw(e=pw_entry, s=_show_pw):
+                    s["v"] = not s["v"]
+                    e.config(show="" if s["v"] else "*")
+                eye_btn = tk.Label(pw_frame, text="👁", font=("Segoe UI", 9),
+                                   bg=BG, fg=GRAY, cursor="hand2", padx=4)
+                eye_btn.pack(side="left")
+                eye_btn.bind("<Button-1>", lambda e: _toggle_pw())
+                if desc:
+                    tk.Label(row, text=desc, font=("Segoe UI", 8),
+                             bg=BG, fg=GRAY, padx=8).pack(side="left")
+
+            else:  # str
+                var = tk.StringVar(value=str(stored) if stored is not None else "")
+                field_vars[key] = var
+                tk.Entry(row, textvariable=var, width=22,
+                         bg=BG2, fg=YELLOW, insertbackground=FG,
+                         relief="flat", font=("Consolas", 10)).pack(side="left")
+                if desc:
+                    tk.Label(row, text=desc, font=("Segoe UI", 8),
+                             bg=BG, fg=GRAY, padx=8).pack(side="left")
+
+        # ── Buttons ────────────────────────────────────────────────────────────
+        tk.Frame(dlg, bg=GRAY2, height=1).pack(fill="x", padx=14, pady=(4, 0))
+        btn_frame = tk.Frame(dlg, bg=BG)
+        btn_frame.pack(fill="x", padx=14, pady=(6, 12))
+        btn_cfg = dict(font=("Segoe UI", 9, "bold"), relief="flat",
+                       padx=10, pady=4, cursor="hand2")
+
+        def _save():
+            saved = self._fn_settings.setdefault(name, {})
+            for field in schema:
+                k = field["key"]
+                ftype = field.get("type", "str")
+                raw = field_vars[k].get()
+                # Coerce to correct Python type
+                try:
+                    if ftype == "int":
+                        v = int(raw)
+                    elif ftype == "float":
+                        v = float(raw)
+                    elif ftype == "bool":
+                        v = bool(raw)
+                    else:
+                        v = str(raw)
+                except (ValueError, TypeError):
+                    v = raw
+                saved[k] = v
+                # Also push to runner immediately so bot picks it up without restart
+                if hasattr(self._runner, "fn_settings"):
+                    self._runner.fn_settings.setdefault(name, {})[k] = v
+            if self._settings_save_callback:
+                self._settings_save_callback(self._fn_settings)
+            dlg.destroy()
+
+        def _reset():
+            for field in schema:
+                k = field["key"]
+                v = field.get("default")
+                if k in field_vars and v is not None:
+                    field_vars[k].set(v)
+
+        tk.Button(btn_frame, text="Reset defaults", bg=GRAY2, fg=GRAY,
+                  command=_reset, **btn_cfg).pack(side="left")
+        tk.Button(btn_frame, text="Cancel", bg=GRAY2, fg=FG,
+                  command=dlg.destroy, **btn_cfg).pack(side="left", padx=(6, 0))
+        tk.Button(btn_frame, text="Save", bg=ACCENT, fg=BG3,
+                  command=_save, **btn_cfg).pack(side="right")
+
+        # Center over root
+        dlg.update_idletasks()
+        w, h = dlg.winfo_width(), dlg.winfo_height()
+        cx = self._root.winfo_x() + self._root.winfo_width()  // 2
+        cy = self._root.winfo_y() + self._root.winfo_height() // 2
+        dlg.geometry("+{}+{}".format(cx - w // 2, cy - h // 2))
+
+    # ── Manual run ────────────────────────────────────────────────────────────
+
+    def _run_fn(self, name):
+        if self._bot_paused["paused"]:
+            self._show_toast("Bot is paused — enable Is Running first.")
+            return
+        if not self._fn_enabled.get(name, True):
+            self._show_toast("{} is disabled — enable it first.".format(name))
+            return
+        if self._run_callback:
+            self._run_callback(name)
 
     # ── Row tooltip ───────────────────────────────────────────────────────────
 

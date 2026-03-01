@@ -12,182 +12,99 @@ import yaml
 import pyautogui
 import cv2 as cv
 from vision import Vision
+from ocr_utils import (
+    read_level_from_roi    as _read_level_from_roi,
+    read_raw_text_from_roi as _read_raw_text_from_roi,
+    read_region_relative,
+)
 
-def _save_debug_image(screenshot, raw_center, click_center, needle_w, needle_h, event_type, template_path):
-    """Save a debug PNG with green rect (match area) and red circle (click/move target)."""
+log = logging.getLogger("kha_lastz")
+
+
+def _save_debug_image(screenshot, raw_center, click_center, needle_w, needle_h, event_type, template_path,
+                      truck_name=None):
+    """Save a debug PNG with green rect (match area) and red circle (click/move target).
+    For YellowTruckSmall: also saves a tight crop of the truck. All files include a timestamp.
+    truck_name: optional string overlaid on the YellowTruckSmall crop."""
+    import datetime
+    ts = datetime.datetime.now().strftime("%H%M%S_%f")[:-3]  # HHMMSSmmm
+    tname = os.path.splitext(os.path.basename(template_path))[0]
+    os.makedirs("debug_ocr", exist_ok=True)
+
+    # Full screenshot with rect + dot
     dbg = screenshot.copy()
     rx = raw_center[0] - needle_w // 2
     ry = raw_center[1] - needle_h // 2
     cv.rectangle(dbg, (rx, ry), (rx + needle_w, ry + needle_h), (0, 255, 0), 2)
     cv.circle(dbg, (click_center[0], click_center[1]), 12, (0, 0, 255), -1)
-    tname = os.path.splitext(os.path.basename(template_path))[0]
-    out_path = "debug_{}_{}.png".format(event_type, tname)
+    out_path = os.path.join("debug_ocr", "debug_{}_{}_{}.png".format(event_type, tname, ts))
     cv.imwrite(out_path, dbg)
-    log.info("[Runner] debug_click saved → {}".format(out_path))
+    log.info("[Runner] debug_click saved → {}".format(os.path.abspath(out_path)))
 
-
-try:
-    import pytesseract
-    _tesseract_configured = False
-
-    def _configure_tesseract():
-        global _tesseract_configured
-        if _tesseract_configured:
-            return
-        if os.name == "nt":
-            for path in [
-                r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-                r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-            ]:
-                if os.path.isfile(path):
-                    pytesseract.pytesseract.tesseract_cmd = path
-                    break
-        _tesseract_configured = True
-except ImportError:
-    pytesseract = None
-    _configure_tesseract = lambda: None
-
-log = logging.getLogger("kha_lastz")
-_tesseract_warned = False
-
-
-def _preprocess_for_ocr(gray, debug_save_path=None):
-    """Scale up 4x, threshold, add white padding. Returns list of candidate images to try."""
-    # Scale up to make text big enough for OCR (Tesseract struggles with small text)
-    gray = cv.resize(gray, None, fx=4, fy=4, interpolation=cv.INTER_CUBIC)
-
-    # Otsu: works well when contrast is clear
-    _, thresh = cv.threshold(gray, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU)
-
-    # Ensure dark text on white (Tesseract default)
-    if thresh.mean() < 128:
-        thresh = 255 - thresh
-
-    # Add white border so characters at edges aren't clipped
-    padded = cv.copyMakeBorder(thresh, 20, 20, 20, 20, cv.BORDER_CONSTANT, value=255)
-    inverted = 255 - padded
-
-    if debug_save_path:
-        # Save raw gray (before threshold) for easier visual inspection
-        raw_big = cv.resize(gray, None, fx=1, fy=1)
-        cv.imwrite(debug_save_path.replace(".png", "_raw.png"), raw_big)
-        cv.imwrite(debug_save_path, padded)
-
-    return [padded, inverted]
-
-
-def _read_level_from_roi(screenshot, roi_ratios, wincap, anchor_center=None, anchor_offset=None, debug_save_path=None, level_range=(1, 99)):
-    """Crop screenshot and OCR. Use anchor_center+(offset) if provided, else roi_ratios [x,y,w,h] (0-1)."""
-    if pytesseract is None:
-        return None
-    _configure_tesseract()
-    h_img, w_img = screenshot.shape[:2]
-    if anchor_center is not None and anchor_offset is not None and len(anchor_offset) == 4:
-        cx, cy = anchor_center
-        ox, oy, rw, rh = anchor_offset
-        x = max(0, int(cx + ox))
-        y = max(0, int(cy + oy))
-        w = max(1, int(rw))
-        h = max(1, int(rh))
-    else:
-        x = int(roi_ratios[0] * w_img)
-        y = int(roi_ratios[1] * h_img)
-        w = max(1, int(roi_ratios[2] * w_img))
-        h = max(1, int(roi_ratios[3] * h_img))
-    x = max(0, min(x, w_img - 1))
-    y = max(0, min(y, h_img - 1))
-    w = min(w, w_img - x)
-    h = min(h, h_img - y)
-    roi = screenshot[y:y + h, x:x + w]
-    if roi.size == 0:
-        return None
-    gray = cv.cvtColor(roi, cv.COLOR_BGR2GRAY) if len(roi.shape) == 3 else roi
-
-    candidates = _preprocess_for_ocr(gray, debug_save_path=debug_save_path)
-
-    # psm 7 = single text line, psm 8 = single word — best for "Lv.1" label
-    for psm in (7, 8, 6):
-        for img in candidates:
-            try:
-                text = pytesseract.image_to_string(img, config="--oem 3 --psm {}".format(psm))
-            except Exception as e:
-                global _tesseract_warned
-                if not _tesseract_warned and ("tesseract" in str(e).lower() or "TesseractNotFound" in type(e).__name__):
-                    _tesseract_warned = True
-                    log.info("[bot_engine] Tesseract OCR not found. Install from https://github.com/UB-Mannheim/tesseract/wiki")
-                return None
-            text_s = text.strip()
-            if text_s:
-                log.info("[OCR] psm={} raw={!r}".format(psm, text_s))
-            # Strict: "Lv.3", "LV.3", etc.
-            m = re.search(r"[Ll][Vv]\.?\s*(\d{1,2})", text_s)
-            if not m:
-                # Fallback: ".digit" — the dot separator is reliable
-                m = re.search(r"[.,]\s*(\d{1,2})\b", text_s)
-            if not m:
-                # Last resort: any standalone 1-2 digit number
-                m = re.search(r"\b(\d{1,2})\b", text_s)
-            if m:
-                num = int(m.group(1))
-                if level_range[0] <= num <= level_range[1]:
-                    log.info("[OCR] psm={} -> Lv.{} from {!r}".format(psm, num, text_s))
-                    return num
-    log.info("[OCR] no level match from any psm/variant")
+    # YellowTruckSmall: crop tight around the truck + overlay name
+    if "YellowTruckSmall" in tname:
+        pad_x = max(30, needle_w * 6)   # wide left padding to show player name
+        pad_y = max(20, needle_h)
+        h, w = screenshot.shape[:2]
+        x1 = max(0, rx - pad_x)
+        y1 = max(0, ry - pad_y)
+        x2 = min(w, rx + needle_w + 20)
+        y2 = min(h, ry + needle_h + pad_y)
+        crop = screenshot[y1:y2, x1:x2].copy()
+        lrx, lry = rx - x1, ry - y1
+        cv.rectangle(crop, (lrx, lry), (lrx + needle_w, lry + needle_h), (0, 255, 0), 2)
+        cx, cy = click_center[0] - x1, click_center[1] - y1
+        if 0 <= cx < crop.shape[1] and 0 <= cy < crop.shape[0]:
+            cv.circle(crop, (cx, cy), 10, (0, 0, 255), -1)
+        if truck_name:
+            label = truck_name
+            font_scale = max(0.5, needle_h / 30.0)
+            thickness = max(1, int(font_scale * 1.5))
+            (tw, th), _ = cv.getTextSize(label, cv.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+            tx = max(0, lrx - tw - 4)
+            ty = lry + needle_h // 2 + th // 2
+            cv.rectangle(crop, (tx - 2, ty - th - 2), (tx + tw + 2, ty + 2), (0, 0, 0), -1)
+            cv.putText(crop, label, (tx, ty), cv.FONT_HERSHEY_SIMPLEX,
+                       font_scale, (0, 255, 255), thickness, cv.LINE_AA)
+        safe_name = (truck_name or "").replace("/", "_").replace("\\", "_").replace(" ", "_")[:20]
+        crop_fname = "YellowTruck_{}_{}.png".format(safe_name, ts) if safe_name else "YellowTruck_crop_{}.png".format(ts)
+        crop_path = os.path.join("debug_ocr", crop_fname)
+        cv.imwrite(crop_path, crop)
+        log.info("[Runner] debug_click saved (truck crop) → {}".format(os.path.abspath(crop_path)))
+        return crop_path  # caller can store this to rename/overlay once player name is known
     return None
 
 
-def _read_raw_text_from_roi(screenshot, anchor_center, anchor_offset,
-                             char_whitelist=None, debug_save_path=None):
-    """Crop a ROI relative to anchor_center and return OCR'd raw text.
-
-    anchor_offset: [ox, oy, w, h] in pixels.
-        ox, oy = offset from anchor_center to the TOP-LEFT corner of the ROI.
-        w, h   = size of the ROI in pixels.
-
-    char_whitelist: optional string passed to Tesseract (e.g. "0123456789:")
-    Returns stripped text, or None if OCR is unavailable or ROI is empty.
-    """
-    if pytesseract is None:
-        return None
-    _configure_tesseract()
-
-    h_img, w_img = screenshot.shape[:2]
-    cx, cy = anchor_center
-    ox, oy, rw, rh = anchor_offset
-
-    x = max(0, int(cx + ox))
-    y = max(0, int(cy + oy))
-    w = max(1, int(rw))
-    h = max(1, int(rh))
-    x = max(0, min(x, w_img - 1))
-    y = max(0, min(y, h_img - 1))
-    w = min(w, w_img - x)
-    h = min(h, h_img - y)
-
-    roi = screenshot[y:y + h, x:x + w]
-    if roi.size == 0:
-        return None
-
-    gray = cv.cvtColor(roi, cv.COLOR_BGR2GRAY) if len(roi.shape) == 3 else roi
-    candidates = _preprocess_for_ocr(gray, debug_save_path=debug_save_path)
-
-    config = "--oem 3 --psm 7"
-    if char_whitelist:
-        config += " -c tessedit_char_whitelist={}".format(char_whitelist)
-
-    for img in candidates:
-        try:
-            text = pytesseract.image_to_string(img, config=config).strip()
-        except Exception as e:
-            global _tesseract_warned
-            if not _tesseract_warned and ("tesseract" in str(e).lower() or "TesseractNotFound" in type(e).__name__):
-                _tesseract_warned = True
-                log.info("[bot_engine] Tesseract OCR not found. Install from https://github.com/UB-Mannheim/tesseract/wiki")
-            return None
-        if text:
-            return text
-
-    return None
+def _retitle_truck_crop(old_path, player_name):
+    """Reload existing truck crop, overlay player name, save under new name including the name."""
+    if not old_path or not os.path.isfile(old_path):
+        return old_path
+    img = cv.imread(old_path)
+    if img is None:
+        return old_path
+    # Overlay name text at top-left
+    label = player_name
+    font_scale, thickness = 0.6, 2
+    (tw, th), _ = cv.getTextSize(label, cv.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+    cv.rectangle(img, (4, 4), (tw + 10, th + 12), (0, 0, 0), -1)
+    cv.putText(img, label, (7, th + 7), cv.FONT_HERSHEY_SIMPLEX,
+               font_scale, (0, 255, 255), thickness, cv.LINE_AA)
+    # Build new filename: insert safe name before the timestamp suffix
+    base = os.path.basename(old_path)
+    root, ext = os.path.splitext(base)
+    safe_name = player_name.replace("/", "_").replace("\\", "_").replace(" ", "_")[:25]
+    # root is like "YellowTruck_crop_HHMMSS_mmm" — replace "crop" with the safe name
+    new_root = root.replace("_crop_", "_{}_".format(safe_name), 1)
+    if new_root == root:  # fallback: just append
+        new_root = "{}_{}".format(root, safe_name)
+    new_path = os.path.join(os.path.dirname(old_path), new_root + ext)
+    cv.imwrite(new_path, img)
+    try:
+        os.remove(old_path)
+    except OSError:
+        pass
+    log.info("[Runner] truck crop retitled → {}".format(os.path.abspath(new_path)))
+    return new_path
 
 
 def load_functions(functions_dir="functions"):
@@ -216,6 +133,8 @@ def collect_templates(functions_dict):
         for step in fn["steps"]:
             if step.get("event_type") in ("match_click", "match_multi_click", "match_count", "match_move") and step.get("template"):
                 templates.add(step["template"])
+            if step.get("event_type") == "match_click" and step.get("refresh_template"):
+                templates.add(step["refresh_template"])
             if step.get("event_type") == "wait_until_match" and step.get("template"):
                 templates.add(step["template"])
             if step.get("event_type") == "click_unless_visible":
@@ -232,6 +151,10 @@ def collect_templates(functions_dict):
                     templates.add(step["level_anchor_template"])
             if step.get("event_type") == "base_zoomout" and step.get("template"):
                 templates.add(step["template"])
+            if step.get("event_type") == "ocr_log":
+                tpl = step.get("anchor_template") or step.get("template")
+                if tpl:
+                    templates.add(tpl)
     return list(templates)
 
 
@@ -249,8 +172,9 @@ def build_vision_cache(template_paths):
 class FunctionRunner:
     """Chay 1 function: giu state step hien tai, xu ly tung step theo type."""
 
-    def __init__(self, vision_cache):
+    def __init__(self, vision_cache, fn_settings=None):
         self.vision_cache = vision_cache
+        self.fn_settings = fn_settings if fn_settings is not None else {}
         self.functions = {}
         self.state = "idle"  # idle | running
         self.function_name = None
@@ -260,6 +184,12 @@ class FunctionRunner:
         self.step_click_count = 0
         self.wincap = None
         self.last_step_result = True  # True = previous step matched/succeeded
+        self._step_retry_counts = {}  # {step_index: retry_count} for on_fail_goto
+        self._tried_positions = []    # [(x, y)] positions already clicked in current cycle
+
+    def _fn_setting(self, key, fallback=None):
+        """Return fn_settings[current_function][key], or fallback if not set."""
+        return self.fn_settings.get(self.function_name or "", {}).get(key, fallback)
 
     def load(self, functions_dict):
         self.functions = functions_dict
@@ -276,6 +206,10 @@ class FunctionRunner:
         self.wincap = wincap
         self.state = "running"
         self.last_step_result = True
+        self._step_retry_counts = {}
+        self._tried_positions = []
+        self._last_zero_refresh_t = 0
+        self._last_truck_crop_path = None
         for attr in ("_set_level_debug_saved", "_set_level_warned"):
             if hasattr(self, attr):
                 delattr(self, attr)
@@ -320,6 +254,19 @@ class FunctionRunner:
             timeout_sec = step.get("timeout_sec") or 999
             max_clicks = step.get("max_clicks") or 999999
             click_interval_sec = step.get("click_interval_sec") or 0
+            # fn_settings overrides (ClickTreasure and any function with these settings)
+            _ov_max_clicks = self._fn_setting("max_clicks")
+            if _ov_max_clicks is not None:
+                try:
+                    max_clicks = int(_ov_max_clicks)
+                except (ValueError, TypeError):
+                    pass
+            _ov_interval = self._fn_setting("click_interval_sec")
+            if _ov_interval is not None:
+                try:
+                    click_interval_sec = float(_ov_interval)
+                except (ValueError, TypeError):
+                    pass
             click_random_offset = step.get("click_random_offset") or 0   # legacy: pixels
             click_random_offset_x = step.get("click_random_offset_x")   # ratio of needle_w (e.g. 0.4 = ±40%)
             click_random_offset_y = step.get("click_random_offset_y")   # ratio of needle_h (e.g. 0.4 = ±40%)
@@ -332,6 +279,13 @@ class FunctionRunner:
                 return "running"
             debug_click  = step.get("debug_click", False)
             debug_log    = step.get("debug_log", False)
+            match_color  = step.get("match_color", False)   # True = BGR match (color-sensitive)
+            color_match_tolerance  = step.get("color_match_tolerance")   # BGR mean-color distance cap
+            color_min_saturation   = step.get("color_min_saturation")    # HSV saturation minimum (0-255)
+            color_hue_range        = step.get("color_hue_range")          # [min_h, max_h] in OpenCV hue units (0-179)
+            color_hue_min_fraction = step.get("color_hue_min_fraction", 0.4)  # min fraction of pixels in hue_range
+            log_match_score        = step.get("log_match_score", False)  # log template correlation score when match
+            ocr_name_region        = step.get("ocr_name_region")          # [x,y,w,h] ratios → OCR name to the left of truck
             cache_position = step.get("cache_position", False) or step.get("cache_frames", 0) > 0  # match once, reuse forever
 
             # Run matchTemplate only on first hit, then reuse cached position for all subsequent clicks.
@@ -339,13 +293,124 @@ class FunctionRunner:
             if cache_position and _cached_pos is not None:
                 points = [_cached_pos]  # use cached position, skip matchTemplate
             else:
-                points = vision.find(screenshot, threshold=threshold, debug_mode='info' if (debug_click or debug_log) else None)
+                dbg = 'info' if (debug_click or debug_log) else None
+                if match_color:
+                    result = vision.find_color(screenshot, threshold=threshold, debug_mode=dbg,
+                                               color_tolerance=color_match_tolerance,
+                                               min_saturation=color_min_saturation,
+                                               hue_range=color_hue_range,
+                                               hue_min_fraction=color_hue_min_fraction,
+                                               log_match_score=log_match_score)
+                    points = result[0] if isinstance(result, tuple) else result
+                    meta_list = result[1] if isinstance(result, tuple) and len(result) > 1 else None
+                else:
+                    points = vision.find(screenshot, threshold=threshold, debug_mode=dbg)
+                    scores = None
                 if points:
                     self._step_pos_cache = points[0]
                 elif debug_log:
                     elapsed = now - self.step_start_time
                     log.info("[Runner] {} → not found (elapsed={:.1f}s)".format(self._step_label(step), elapsed))
+                # Fallback: debug_click YellowTruckSmall but 0 passed color filter → save best match anyway (once)
+                if not points and debug_click and "YellowTruckSmall" in (template or ""):
+                    if not getattr(self, '_debug_yellow_fallback_saved', False):
+                        _fallback = vision.find(screenshot, threshold=0.5, debug_mode=None)
+                        if _fallback:
+                            self._debug_yellow_fallback_saved = True
+                            rc = _fallback[0]
+                            rcenter = (rc[0] + int(click_offset_x * vision.needle_w),
+                                       rc[1] + int(click_offset_y * vision.needle_h))
+                            _save_debug_image(screenshot, rc, rcenter, vision.needle_w, vision.needle_h,
+                                             "match_click", template)
+                            log.info("[Runner] {} → 0 passed color filter, saved best match → debug_ocr/".format(
+                                self._step_label(step)))
+            # When 0 trucks found and track_tried+refresh: click refresh to reload list (unstick)
+            if not points and step.get("track_tried") and step.get("refresh_template"):
+                _last_refresh = getattr(self, "_last_zero_refresh_t", 0)
+                if now - _last_refresh >= 2.0:  # throttle: max 1 refresh per 2s
+                    _refresh_tpl = step.get("refresh_template")
+                    _v_ref = self.vision_cache.get(_refresh_tpl) if _refresh_tpl else None
+                    if _v_ref:
+                        _ref_pts = _v_ref.find(screenshot, threshold=step.get("threshold", 0.75), debug_mode=None)
+                        if _ref_pts:
+                            _rsx, _rsy = wincap.get_screen_position(tuple(_ref_pts[0]))
+                            pyautogui.click(_rsx, _rsy)
+                            log.info("[Runner] {} → 0 trucks found → clicked refresh, retrying".format(self._step_label(step)))
+                            self._tried_positions = []
+                            self.step_start_time = time.time()
+                            self._last_zero_refresh_t = now
+                            return "running"
             if points:
+                # ── OCR player name for each truck (if configured) ────────────────────
+                _point_names = {}
+                if ocr_name_region and len(ocr_name_region) == 4:
+                    _onr_x, _onr_y, _onr_w, _onr_h = ocr_name_region
+                    for _pt in points:
+                        _name = read_region_relative(
+                            screenshot, _pt[0], _pt[1],
+                            vision.needle_w, vision.needle_h,
+                            x=_onr_x, y=_onr_y, w=_onr_w, h=_onr_h,
+                        )
+                        _point_names[tuple(_pt)] = (_name or "").strip()
+                # ── track_tried: skip positions already clicked in this cycle ──────────
+                track_tried = step.get("track_tried", False)
+                if track_tried:
+                    _tol = step.get("tried_tolerance_px", 30)
+                    untried = [pt for pt in points if not any(
+                        abs(pt[0] - tp[0]) < _tol and abs(pt[1] - tp[1]) < _tol
+                        for tp in self._tried_positions
+                    )]
+                    if meta_list is not None and len(meta_list) == len(points):
+                        parts = []
+                        for p, m in zip(points, meta_list):
+                            s = m.get("score")
+                            extras = []
+                            _pname = _point_names.get(tuple(p), "")
+                            if _pname:
+                                extras.append("name={}".format(_pname))
+                            if m.get("region_bgr") is not None:
+                                b, g, r = m["region_bgr"]
+                                extras.append("B={:.0f} G={:.0f} R={:.0f}".format(b, g, r))
+                            if m.get("dominant_color") is not None:
+                                extras.append("color={}".format(m["dominant_color"]))
+                            if m.get("color_dist") is not None:
+                                extras.append("dist={:.0f}".format(m["color_dist"]))
+                            if m.get("mean_sat") is not None:
+                                extras.append("sat={:.0f}".format(m["mean_sat"]))
+                            if m.get("median_hue") is not None:
+                                extras.append("hue={:.0f}".format(m["median_hue"]))
+                            if m.get("in_range_frac") is not None:
+                                extras.append("frac={:.0f}%".format(m["in_range_frac"] * 100))
+                            parts.append("({},{}) score={:.3f} [{}]".format(
+                                p[0], p[1], s, " ".join(extras)))
+                        _pts_str = " | ".join(parts)
+                    else:
+                        parts = []
+                        for p in points:
+                            _pname = _point_names.get(tuple(p), "")
+                            parts.append("({},{}){}".format(p[0], p[1], " name={}".format(_pname) if _pname else ""))
+                        _pts_str = ", ".join(parts)
+                    log.info("[Runner] {} → found {} truck(s): [{}] | tried={} untried={}".format(
+                        self._step_label(step), len(points), _pts_str,
+                        len(self._tried_positions), len(untried)))
+                    if not untried:
+                        _refresh_tpl = step.get("refresh_template")
+                        _v_ref = self.vision_cache.get(_refresh_tpl) if _refresh_tpl else None
+                        if _v_ref:
+                            _ref_pts = _v_ref.find(screenshot, threshold=threshold, debug_mode=None)
+                            if _ref_pts:
+                                _rsx, _rsy = wincap.get_screen_position(tuple(_ref_pts[0]))
+                                pyautogui.click(_rsx, _rsy)
+                                log.info("[Runner] {} → all {} truck(s) tried → clicked refresh, retrying".format(
+                                    self._step_label(step), len(self._tried_positions)))
+                                self._tried_positions = []
+                                self.step_start_time = time.time()
+                                return "running"
+                        log.info("[Runner] {} → all tried, no refresh available → abort".format(self._step_label(step)))
+                        self._advance_step(False)
+                        return "running"
+                    points = untried
+                # ─────────────────────────────────────────────────────────────────────
                 center = list(points[0])
                 # click_offset_x/y and click_random_offset_x/y are ratios of template size (0.5 = 50% width/height)
                 center[0] += int(click_offset_x * vision.needle_w)
@@ -370,11 +435,17 @@ class FunctionRunner:
                         vision.needle_w, vision.needle_h,
                         click_offset_x, click_offset_y,
                         center[0], center[1], sx, sy))
-                # Save debug image only once per step (file I/O is slow — do NOT call every frame)
-                if debug_click and not getattr(self, '_debug_click_saved', False):
-                    self._debug_click_saved = True
-                    _save_debug_image(screenshot, raw_center, tuple(center),
-                                      vision.needle_w, vision.needle_h, "match_click", template)
+                # For YellowTruckSmall: save every truck click (timestamp in filename prevents overwrite)
+                # For other steps: save only once per step activation to avoid spam
+                if debug_click:
+                    _is_yellow_truck = "YellowTruckSmall" in (template or "")
+                    if _is_yellow_truck or not getattr(self, '_debug_click_saved', False):
+                        if not _is_yellow_truck:
+                            self._debug_click_saved = True
+                        _crop_path = _save_debug_image(screenshot, raw_center, tuple(center),
+                                          vision.needle_w, vision.needle_h, "match_click", template)
+                        if _is_yellow_truck and _crop_path:
+                            self._last_truck_crop_path = _crop_path
                 # Move mouse once to position, then burst-click without re-moving
                 pyautogui.moveTo(sx, sy)
                 if debug_log:
@@ -410,6 +481,8 @@ class FunctionRunner:
                         remaining = click_interval_sec - elapsed
                         if remaining > 0:
                             time.sleep(remaining)
+                if step.get("track_tried", False):
+                    self._tried_positions.append(tuple(points[0]))
                 if one_shot:
                     log.info("[Runner] {} → true (clicked)".format(self._step_label(step)))
                     self._advance_step(True)
@@ -533,6 +606,13 @@ class FunctionRunner:
         if step_type == "set_level":
             # OCR-based: read "Lv.X" from screen, click Plus/Minus to reach target_level.
             target_level = step.get("target_level", 10)
+            # fn_settings override: UI-configurable target level per function
+            _fn_override = self.fn_settings.get(self.function_name or "", {})
+            if "target_level" in _fn_override:
+                try:
+                    target_level = int(_fn_override["target_level"])
+                except (ValueError, TypeError):
+                    pass
             level_roi = step.get("level_roi")
             level_anchor_template = step.get("level_anchor_template")
             level_anchor_offset = step.get("level_anchor_offset")
@@ -642,12 +722,18 @@ class FunctionRunner:
 
         if step_type == "type_text":
             text = str(step.get("text", ""))
-            # Resolve ${ENV_VAR} placeholders from environment
-            text = re.sub(
-                r"\$\{([^}]+)\}",
-                lambda m: os.environ.get(m.group(1), ""),
-                text,
-            )
+            # Resolve ${ENV_VAR} placeholders — fn_settings takes priority over os.environ
+            def _resolve_var(m):
+                env_key = m.group(1)
+                # Map known env vars to fn_settings keys
+                _env_to_setting = {"PIN_PASSWORD": "password"}
+                setting_key = _env_to_setting.get(env_key)
+                if setting_key:
+                    from_settings = self._fn_setting(setting_key)
+                    if from_settings is not None and str(from_settings).strip():
+                        return str(from_settings)
+                return os.environ.get(env_key, "")
+            text = re.sub(r"\$\{([^}]+)\}", _resolve_var, text)
             interval = step.get("interval_sec", 0.1)
             if text:
                 pyautogui.write(text, interval=interval)
@@ -735,20 +821,23 @@ class FunctionRunner:
         if step_type == "ocr_log":
             # OCR text from a region, then log the result. Always advances — never blocks the flow.
             #
-            # Two modes (mirror of set_level in FightBoomer):
-            #
-            # Mode A — anchor template (like level_anchor_template):
+            # Mode A — anchor template + pixel offset (single region):
             #   anchor_template: template to find for position
             #   anchor_offset:   [ox, oy, w, h] px from anchor center to OCR region
+            #
+            # Mode A2 — anchor template + ratio regions (multiple regions):
+            #   anchor_template: template to find for position
+            #   ocr_regions:     list of {name, x, y, w, h, digits_only, pattern}
+            #                    x/y/w/h are ratios of template size (0.0–1.0)
             #
             # Mode B — absolute ROI (no template needed, most robust):
             #   roi_ratios: [x, y, w, h] as fractions of screen size (0.0–1.0)
             #
             # debug_save: true → save ROI crop (and screenshot if anchor not found)
             # abort_if_found: true → advance(False)/abort if anchor IS found; advance(True)/continue if NOT found
-            #   Use case: check if a condition is already met, skip remaining steps if so
             anchor_template = step.get("anchor_template") or step.get("template")
             roi_ratios      = step.get("roi_ratios")       # [x, y, w, h] 0-1 fractions
+            ocr_regions     = step.get("ocr_regions")      # list of ratio-based region dicts
             threshold       = step.get("threshold", 0.75)
             anchor_offset   = step.get("anchor_offset")   # [ox, oy, w, h] px from anchor center
             char_whitelist  = step.get("char_whitelist")
@@ -773,20 +862,10 @@ class FunctionRunner:
                 if debug_save and not getattr(self, _debug_key, False):
                     debug_path = "debug_ocr_{}.png".format(label.replace(" ", "_"))
                     setattr(self, _debug_key, True)
-                gray = cv.cvtColor(roi, cv.COLOR_BGR2GRAY) if len(roi.shape) == 3 else roi
-                candidates = _preprocess_for_ocr(gray, debug_save_path=debug_path)
-                config = "--oem 3 --psm 7"
-                if char_whitelist:
-                    config += " -c tessedit_char_whitelist={}".format(char_whitelist)
-                text = None
-                for img in candidates:
-                    try:
-                        t = pytesseract.image_to_string(img, config=config).strip() if pytesseract else ""
-                    except Exception:
-                        t = ""
-                    if t:
-                        text = t
-                        break
+                # anchor_center=(0,0) + offset=(x,y,w,h) → crops exactly [x:x+w, y:y+h]
+                text = _read_raw_text_from_roi(
+                    screenshot, (0, 0), [x, y, w, h],
+                    char_whitelist=char_whitelist, debug_save_path=debug_path)
                 if text:
                     log.info("[Runner] {} [{}]: {}".format(self._step_label(step), label, text))
                 else:
@@ -796,9 +875,9 @@ class FunctionRunner:
                 self._advance_step(True)
                 return "running"
 
-            # ── Mode A: anchor template ───────────────────────────────────────
-            if not anchor_template or not anchor_offset or len(anchor_offset) != 4:
-                log.info("[Runner] {} → skip (set roi_ratios or anchor_template+anchor_offset)".format(self._step_label(step)))
+            # ── Mode A / A2: anchor template ──────────────────────────────────
+            if not anchor_template or (not anchor_offset and not ocr_regions):
+                log.info("[Runner] {} → skip (set roi_ratios, or anchor_template + anchor_offset/ocr_regions)".format(self._step_label(step)))
                 self._advance_step(True)
                 return "running"
 
@@ -810,22 +889,113 @@ class FunctionRunner:
 
             points = vision.find(screenshot, threshold=threshold, debug_mode=None)
             if points:
-                anchor_center = (int(points[0][0]), int(points[0][1]))
-                debug_path = None
-                if debug_save and not getattr(self, _debug_key, False):
-                    debug_path = "debug_ocr_{}.png".format(label.replace(" ", "_"))
-                    setattr(self, _debug_key, True)
-                text = _read_raw_text_from_roi(
-                    screenshot, anchor_center, anchor_offset,
-                    char_whitelist=char_whitelist,
-                    debug_save_path=debug_path,
-                )
-                if text:
-                    log.info("[Runner] {} [{}]: {}".format(self._step_label(step), label, text))
+                cx, cy = int(points[0][0]), int(points[0][1])
+                tpl_name = os.path.splitext(os.path.basename(anchor_template))[0]
+
+                if ocr_regions:
+                    # Mode A2: multiple ratio-based regions relative to template size
+                    for region in ocr_regions:
+                        rname   = region.get("name", "ocr")
+                        dbg_lbl = "{}_{}".format(tpl_name, rname) if debug_save else None
+                        text = read_region_relative(
+                            screenshot, cx, cy,
+                            vision.needle_w, vision.needle_h,
+                            x           = region.get("x", 0.0),
+                            y           = region.get("y", 0.0),
+                            w           = region.get("w", 1.0),
+                            h           = region.get("h", 1.0),
+                            digits_only = region.get("digits_only", False),
+                            pattern     = region.get("pattern"),
+                            debug_label = dbg_lbl,
+                        )
+                        log.info("[Runner] {} [{}]: {}".format(self._step_label(step), rname, text or "(no text)"))
+                        if dbg_lbl:
+                            log.info("[Runner] ocr_log: debug crops → debug_ocr/{}_*.png".format(dbg_lbl))
+
+                        # ── Retitle last truck crop with player name ───────────
+                        if rname == "player_name" and text:
+                            _crop = getattr(self, '_last_truck_crop_path', None)
+                            if _crop:
+                                self._last_truck_crop_path = _retitle_truck_crop(_crop, text)
+
+                        # ── Assertions ────────────────────────────────────────
+                        assert_eq  = region.get("assert_equals")   # exact string match
+                        assert_in  = region.get("assert_in")        # match any value in list
+                        assert_max = region.get("assert_max")       # numeric: fail if value >= max
+                        assert_min = region.get("assert_min")       # numeric: fail if value < min
+                        # fn_settings overrides for TruckPlunder (and any function with these keys)
+                        if rname == "server":
+                            _srv_ov = self._fn_setting("servers")
+                            if _srv_ov is not None and str(_srv_ov).strip():
+                                assert_in = [s.strip() for s in str(_srv_ov).split(",") if s.strip()]
+                        if rname == "power":
+                            _mp_ov = self._fn_setting("max_power")
+                            if _mp_ov is not None:
+                                try:
+                                    assert_max = int(_mp_ov)
+                                except (ValueError, TypeError):
+                                    pass
+
+                        _assert_fail_reason = None
+
+                        if assert_in is not None:
+                            allowed = [str(v) for v in (assert_in if isinstance(assert_in, list) else [assert_in])]
+                            if text not in allowed:
+                                _assert_fail_reason = "assert_in FAIL ({!r} not in {})".format(text, allowed)
+                        elif assert_eq is not None and text != str(assert_eq):
+                            _assert_fail_reason = "assert_equals FAIL ({!r} != {!r})".format(text, str(assert_eq))
+
+                        if _assert_fail_reason is None and (assert_max is not None or assert_min is not None):
+                            try:
+                                num = int(text.replace(",", "").replace(".", ""))
+                                if assert_max is not None and num >= int(assert_max):
+                                    _assert_fail_reason = "assert_max FAIL ({} >= {})".format(num, assert_max)
+                                elif assert_min is not None and num < int(assert_min):
+                                    _assert_fail_reason = "assert_min FAIL ({} < {})".format(num, assert_min)
+                            except (ValueError, AttributeError):
+                                _assert_fail_reason = "assert numeric FAIL (cannot parse {!r})".format(text)
+
+                        if _assert_fail_reason:
+                            on_fail_goto = step.get("on_fail_goto")
+                            max_retries  = int(step.get("max_retries", 0))
+                            cur_step_idx = self.step_index
+
+                            if on_fail_goto is not None and max_retries > 0:
+                                retry_count = self._step_retry_counts.get(cur_step_idx, 0) + 1
+                                if retry_count <= max_retries:
+                                    self._step_retry_counts[cur_step_idx] = retry_count
+                                    log.info("[Runner] {} [{}]: {} → retry {}/{} (goto step {})".format(
+                                        self._step_label(step), rname, _assert_fail_reason,
+                                        retry_count, max_retries, on_fail_goto))
+                                    self._goto_step(int(on_fail_goto))
+                                    return "running"
+                                else:
+                                    log.info("[Runner] {} [{}]: {} → max_retries ({}) reached → abort".format(
+                                        self._step_label(step), rname, _assert_fail_reason, max_retries))
+                            else:
+                                log.info("[Runner] {} [{}]: {} → abort".format(
+                                    self._step_label(step), rname, _assert_fail_reason))
+
+                            self._advance_step(False)
+                            return "running"
                 else:
-                    log.info("[Runner] {} [{}]: (no text read)".format(self._step_label(step), label))
-                if debug_path:
-                    log.info("[Runner] ocr_log: ROI saved to {}".format(debug_path))
+                    # Mode A: single pixel-offset region
+                    debug_path = None
+                    if debug_save and not getattr(self, _debug_key, False):
+                        debug_path = "debug_ocr_{}.png".format(label.replace(" ", "_"))
+                        setattr(self, _debug_key, True)
+                    text = _read_raw_text_from_roi(
+                        screenshot, (cx, cy), anchor_offset,
+                        char_whitelist=char_whitelist,
+                        debug_save_path=debug_path,
+                    )
+                    if text:
+                        log.info("[Runner] {} [{}]: {}".format(self._step_label(step), label, text))
+                    else:
+                        log.info("[Runner] {} [{}]: (no text read)".format(self._step_label(step), label))
+                    if debug_path:
+                        log.info("[Runner] ocr_log: ROI saved to {}".format(debug_path))
+
                 if abort_if_found:
                     log.info("[Runner] {} → abort (abort_if_found, anchor matched)".format(self._step_label(step)))
                     self._advance_step(False)
@@ -838,7 +1008,7 @@ class FunctionRunner:
                     # anchor NOT found → condition not met → continue with next steps
                     log.info("[Runner] {} → continue (abort_if_found but anchor not found in {}s)".format(self._step_label(step), timeout_sec))
                 else:
-                    log.info("[Runner] {} → skip (anchor not found in {}s)".format(self._step_label(step), timeout_sec))
+                    log.info("[Runner] {} → anchor not found in {}s".format(self._step_label(step), timeout_sec))
                 if debug_save and not getattr(self, _debug_key + "_shot", False):
                     setattr(self, _debug_key + "_shot", True)
                     try:
@@ -847,7 +1017,26 @@ class FunctionRunner:
                         log.info("[Runner] ocr_log: anchor not found — screen saved to {}".format(shot_path))
                     except Exception as e:
                         log.info("[Runner] ocr_log: failed to save debug screen: {}".format(e))
-                self._advance_step(True)
+
+                if not abort_if_found:
+                    # Anchor not found = cannot verify conditions → treat as assertion failure
+                    on_fail_goto = step.get("on_fail_goto")
+                    max_retries  = int(step.get("max_retries", 0))
+                    cur_step_idx = self.step_index
+                    if on_fail_goto is not None and max_retries > 0:
+                        retry_count = self._step_retry_counts.get(cur_step_idx, 0) + 1
+                        if retry_count <= max_retries:
+                            self._step_retry_counts[cur_step_idx] = retry_count
+                            log.info("[Runner] {} → anchor not found → retry {}/{} (goto step {})".format(
+                                self._step_label(step), retry_count, max_retries, on_fail_goto))
+                            self._goto_step(int(on_fail_goto))
+                            return "running"
+                        else:
+                            log.info("[Runner] {} → anchor not found → max_retries ({}) reached → abort".format(
+                                self._step_label(step), max_retries))
+                    self._advance_step(False)
+                else:
+                    self._advance_step(True)
             return "running"
 
         # unknown type -> skip (true so next step still runs)
@@ -878,6 +1067,16 @@ class FunctionRunner:
         self.step_start_time = time.time()
         self.step_click_count = 0
         self.last_step_result = result
+        self._step_last_click_t = None
+        self._debug_click_saved = False
+        self._step_pos_cache = None
+
+    def _goto_step(self, index):
+        """Jump to a specific step index (used for retry loops)."""
+        self.step_index = index
+        self.step_start_time = time.time()
+        self.step_click_count = 0
+        self.last_step_result = True
         self._step_last_click_t = None
         self._debug_click_saved = False
         self._step_pos_cache = None

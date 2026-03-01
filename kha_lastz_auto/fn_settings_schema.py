@@ -1,0 +1,82 @@
+"""
+fn_settings_schema.py
+---------------------
+Per-function UI settings schema.
+Each entry is a list of field definitions that the Settings dialog renders.
+
+Field definition keys:
+    key         str   – storage key in fn_settings[fn_name]
+    label       str   – display label in dialog
+    description str   – hint/tooltip text (optional)
+    type        str   – "int" | "float" | "str" | "bool" | "password"
+    min/max     num   – for int/float: bounds
+    default     any   – default value if not stored
+
+To add settings for a new function, add an entry here.
+bot_engine.py reads overrides from fn_settings at runtime.
+"""
+
+SCHEMA: dict = {
+    "PinLoggin": [
+        {
+            "key":         "password",
+            "label":       "PIN Password",
+            "description": "Login PIN code (stored in .env_config, not .env)",
+            "type":        "password",
+            "default":     "",
+        },
+    ],
+
+    "ClickTreasure": [
+        {
+            "key":         "max_clicks",
+            "label":       "Max Clicks",
+            "description": "Maximum clicks per session",
+            "type":        "int",
+            "min":         1,
+            "max":         99999,
+            "default":     2000,
+        },
+        {
+            "key":         "click_interval_sec",
+            "label":       "Click Interval (sec)",
+            "description": "Seconds between clicks (0 = max speed)",
+            "type":        "float",
+            "min":         0.0,
+            "max":         5.0,
+            "step":        0.01,
+            "default":     0.01,
+        },
+    ],
+
+    "TruckPlunder": [
+        {
+            "key":         "servers",
+            "label":       "Server Filter",
+            "description": "Comma-separated server numbers to plunder (e.g. 600, 601)",
+            "type":        "str",
+            "default":     "600, 601",
+        },
+        {
+            "key":         "max_power",
+            "label":       "Max Power",
+            "description": "Skip trucks with power ≥ this value",
+            "type":        "int",
+            "min":         0,
+            "max":         99999999,
+            "default":     10000000,
+        },
+    ],
+
+    "FightBoomer": [
+        {
+            "key":         "target_level",
+            "label":       "Target Level (Lv.)",
+            "description": "Boomer fight level to set before searching (1–10)",
+            "type":        "int",
+            "min":         1,
+            "max":         10,
+            "default":     10,
+        },
+    ],
+}

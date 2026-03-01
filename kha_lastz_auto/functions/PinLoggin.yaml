@@ -1,6 +1,7 @@
 # Function: PinLoggin
 # Auto-login when the password screen appears.
-# Password is read from .env file: PIN_PASSWORD=your_pin
+# Password is set via the ⚙ Settings button in the UI (stored in .env_config).
+# Legacy fallback: PIN_PASSWORD env var in .env file.
 description: "Auto login: detect PasswordSlotArray -> click slot -> type PIN -> Confirm"
 
 steps:

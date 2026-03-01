@@ -80,6 +80,10 @@ def setup_logging():
 
 log = setup_logging()
 
+# Preload EasyOCR model at startup so it's ready before first OCR call
+from ocr_easyocr import preload as _preload_easyocr
+_preload_easyocr()
+
 if _dotenv_keys:
     log.info("[Env] Loaded from .env: {}".format(", ".join(_dotenv_keys)))
 else:
@@ -137,7 +141,8 @@ else:
 
 vision_module.set_global_scale(1.0)
 
-runner = FunctionRunner(vision_cache)
+fn_settings = config_manager.load_fn_settings()
+runner = FunctionRunner(vision_cache, fn_settings=fn_settings)
 runner.load(functions)
 
 # ── Ctrl+C / SIGINT ──────────────────────────────────────────────────────────
@@ -318,7 +323,10 @@ BotUI(fn_enabled, fn_configs, runner, next_run_at,
       key_bindings=key_bindings,
       save_callback=lambda: config_manager.save(fn_configs, fn_enabled),
       bot_paused=bot_paused,
-      cron_callback=_on_cron_change).start()
+      cron_callback=_on_cron_change,
+      fn_settings=fn_settings,
+      settings_save_callback=config_manager.save_fn_settings,
+      run_callback=lambda fn_name: _try_start(fn_name, trigger="ui_play")).start()
 
 # ── Focus thread ──────────────────────────────────────────────────────────────
 running = True
