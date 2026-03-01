@@ -31,7 +31,7 @@ class LogoutDetector:
             "ended"    — logged back in (login screen gone)
             None       — no state change
         """
-        icon = bool(self._vision.find(screenshot, threshold=self._threshold))
+        icon = self._vision.exists(screenshot, threshold=self._threshold)
         now = time.time()
 
         if not self._logged_out:

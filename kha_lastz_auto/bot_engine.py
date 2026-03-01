@@ -291,7 +291,8 @@ class FunctionRunner:
         if self.state != "running" or screenshot is None or self.step_index >= len(self.steps):
             if self.state == "running" and self.step_index >= len(self.steps):
                 self.state = "idle"
-                log.info("[Runner] Finished function: {}".format(self.function_name))
+                suffix = "" if self.last_step_result else " (aborted)"
+                log.info("[Runner] Finished function: {}{}".format(self.function_name, suffix))
                 return "done"
             return "idle" if self.state == "idle" else "running"
 
@@ -299,18 +300,14 @@ class FunctionRunner:
         step = self.steps[self.step_index]
         step_type = step.get("event_type", "")
 
-        # Step result gate: abort function if previous step returned False
-        # unless this step sets run_always: true
+        # Step result gate: skip this step if previous returned False,
+        # UNLESS this step has run_always: true (always executes regardless).
+        # Skip one step at a time so run_always steps later in the list still get reached.
         run_always = step.get("run_always", False)
         if not run_always and not self.last_step_result:
-            # Log tat ca cac step con lai (tu vi tri hien tai) la [skip]
-            for i in range(self.step_index, len(self.steps)):
-                s = self.steps[i]
-                if not s.get("run_always", False):
-                    log.info("[Runner] [skip] {}".format(self._step_label(s)))
-            self.state = "idle"
-            log.info("[Runner] Finished function: {} (aborted)".format(self.function_name))
-            return "done"
+            log.info("[Runner] [skip] {}".format(self._step_label(step)))
+            self._advance_step(False)
+            return "running"
 
         now = time.time()
         if self.step_start_time is None:
@@ -323,7 +320,9 @@ class FunctionRunner:
             timeout_sec = step.get("timeout_sec") or 999
             max_clicks = step.get("max_clicks") or 999999
             click_interval_sec = step.get("click_interval_sec") or 0
-            click_random_offset = step.get("click_random_offset") or 0
+            click_random_offset = step.get("click_random_offset") or 0   # legacy: pixels
+            click_random_offset_x = step.get("click_random_offset_x")   # ratio of needle_w (e.g. 0.4 = ±40%)
+            click_random_offset_y = step.get("click_random_offset_y")   # ratio of needle_h (e.g. 0.4 = ±40%)
             click_offset_x = step.get("click_offset_x") or 0.0
             click_offset_y = step.get("click_offset_y") or 0.0
 
@@ -331,41 +330,91 @@ class FunctionRunner:
             if not vision:
                 self._advance_step(True)  # config skip, not a match failure
                 return "running"
-            debug_click = step.get("debug_click", False)
-            points = vision.find(screenshot, threshold=threshold, debug_mode='info' if debug_click else None)
+            debug_click  = step.get("debug_click", False)
+            debug_log    = step.get("debug_log", False)
+            cache_position = step.get("cache_position", False) or step.get("cache_frames", 0) > 0  # match once, reuse forever
+
+            # Run matchTemplate only on first hit, then reuse cached position for all subsequent clicks.
+            _cached_pos = getattr(self, '_step_pos_cache', None)
+            if cache_position and _cached_pos is not None:
+                points = [_cached_pos]  # use cached position, skip matchTemplate
+            else:
+                points = vision.find(screenshot, threshold=threshold, debug_mode='info' if (debug_click or debug_log) else None)
+                if points:
+                    self._step_pos_cache = points[0]
+                elif debug_log:
+                    elapsed = now - self.step_start_time
+                    log.info("[Runner] {} → not found (elapsed={:.1f}s)".format(self._step_label(step), elapsed))
             if points:
                 center = list(points[0])
-                # click_offset_x/y are ratios of template size: 0.5 = half template width/height
+                # click_offset_x/y and click_random_offset_x/y are ratios of template size (0.5 = 50% width/height)
                 center[0] += int(click_offset_x * vision.needle_w)
                 center[1] += int(click_offset_y * vision.needle_h)
-                if click_random_offset > 0:
+                if click_random_offset_x is not None:
+                    rx = int(click_random_offset_x * vision.needle_w)
+                    if rx > 0:
+                        center[0] += random.randint(-rx, rx)
+                elif click_random_offset > 0:
                     center[0] += random.randint(-click_random_offset, click_random_offset)
+                if click_random_offset_y is not None:
+                    ry = int(click_random_offset_y * vision.needle_h)
+                    if ry > 0:
+                        center[1] += random.randint(-ry, ry)
+                elif click_random_offset > 0:
                     center[1] += random.randint(-click_random_offset, click_random_offset)
                 sx, sy = wincap.get_screen_position(tuple(center))
                 raw_center = points[0]
-                if debug_click:
+                if debug_log:
                     log.info("[Runner] {} | raw_center=({},{}) needle=({}x{}) offset=({},{}) after_offset=({},{}) screen=({},{})".format(
                         self._step_label(step), raw_center[0], raw_center[1],
                         vision.needle_w, vision.needle_h,
                         click_offset_x, click_offset_y,
                         center[0], center[1], sx, sy))
+                # Save debug image only once per step (file I/O is slow — do NOT call every frame)
+                if debug_click and not getattr(self, '_debug_click_saved', False):
+                    self._debug_click_saved = True
                     _save_debug_image(screenshot, raw_center, tuple(center),
                                       vision.needle_w, vision.needle_h, "match_click", template)
-                pyautogui.click(sx, sy)
-                if debug_click:
+                # Move mouse once to position, then burst-click without re-moving
+                pyautogui.moveTo(sx, sy)
+                if debug_log:
                     actual = pyautogui.position()
                     log.info("[Runner] {} | intended=({},{}) actual=({},{}) diff=({},{})".format(
                         self._step_label(step), sx, sy, actual.x, actual.y,
                         actual.x - sx, actual.y - sy))
-                self.step_click_count += 1
-                if not one_shot and click_interval_sec > 0:
-                    time.sleep(click_interval_sec)
+
+                burst_start = time.time()
+                if not one_shot and click_interval_sec == 0:
+                    # Burst mode: click as many times as possible within 50ms this frame
+                    burst_end = burst_start + 0.05
+                    while time.time() < burst_end and self.step_click_count < max_clicks:
+                        pyautogui.click()
+                        self.step_click_count += 1
+                else:
+                    pyautogui.click()
+                    self.step_click_count += 1
+
+                if not one_shot:
+                    click_t = time.time()
+                    last_t = getattr(self, '_step_last_click_t', None)
+                    if debug_log and last_t is not None:
+                        frame_interval = click_t - last_t
+                        actual_rate = round(self.step_click_count / max(0.001, click_t - self.step_start_time), 1)
+                        log.info("[Runner] {} | frame={:.3f}s total={} rate={:.1f}/s".format(
+                            self._step_label(step), frame_interval,
+                            self.step_click_count, actual_rate))
+                    self._step_last_click_t = click_t
+                    # click_interval_sec > 0: sleep the remaining time to hit target rate
+                    if click_interval_sec > 0 and last_t is not None:
+                        elapsed = click_t - last_t
+                        remaining = click_interval_sec - elapsed
+                        if remaining > 0:
+                            time.sleep(remaining)
                 if one_shot:
                     log.info("[Runner] {} → true (clicked)".format(self._step_label(step)))
                     self._advance_step(True)
                     return "running"
-                if self.step_click_count % 10 == 0:
-                    log.info("[Runner] {} clicking... (count {})".format(self._step_label(step), self.step_click_count))
+                log.info("[Runner] {} clicking... (count {})".format(self._step_label(step), self.step_click_count))
                 if self.step_click_count >= max_clicks:
                     log.info("[Runner] {} → true (clicked {})".format(self._step_label(step), self.step_click_count))
                     self._advance_step(True)
@@ -381,29 +430,32 @@ class FunctionRunner:
             timeout_sec  = step.get("timeout_sec") or 999
             click_offset_x = step.get("click_offset_x") or 0.0
             click_offset_y = step.get("click_offset_y") or 0.0
-            debug_click    = step.get("debug_click", False)
+            debug_click = step.get("debug_click", False)  # save debug image once
+            debug_log   = step.get("debug_log", False)    # log click coords
 
             vision = self.vision_cache.get(template)
             if not vision:
                 self._advance_step(True)
                 return "running"
-            points = vision.find(screenshot, threshold=threshold, debug_mode='info' if debug_click else None)
+            points = vision.find(screenshot, threshold=threshold, debug_mode='info' if (debug_click or debug_log) else None)
             if points:
                 raw_center = points[0]
                 center = list(raw_center)
                 center[0] += int(click_offset_x * vision.needle_w)
                 center[1] += int(click_offset_y * vision.needle_h)
                 sx, sy = wincap.get_screen_position(tuple(center))
-                if debug_click:
+                if debug_log:
                     log.info("[Runner] {} | raw_center=({},{}) needle=({}x{}) offset=({},{}) after_offset=({},{}) screen=({},{})".format(
                         self._step_label(step), raw_center[0], raw_center[1],
                         vision.needle_w, vision.needle_h,
                         click_offset_x, click_offset_y,
                         center[0], center[1], sx, sy))
+                if debug_click and not getattr(self, '_debug_click_saved', False):
+                    self._debug_click_saved = True
                     _save_debug_image(screenshot, raw_center, tuple(center),
                                       vision.needle_w, vision.needle_h, "match_move", template)
                 pyautogui.moveTo(sx, sy)
-                if debug_click:
+                if debug_log:
                     actual = pyautogui.position()
                     log.info("[Runner] {} → true | intended=({},{}) actual=({},{}) diff=({},{})".format(
                         self._step_label(step), sx, sy, actual.x, actual.y,
@@ -826,6 +878,9 @@ class FunctionRunner:
         self.step_start_time = time.time()
         self.step_click_count = 0
         self.last_step_result = result
+        self._step_last_click_t = None
+        self._debug_click_saved = False
+        self._step_pos_cache = None
 
 
 def load_config(config_path="config.yaml"):

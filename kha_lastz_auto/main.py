@@ -7,6 +7,8 @@ import threading
 import logging
 from datetime import datetime
 import pyautogui
+pyautogui.PAUSE = 0        # remove default 0.1s pause after every pyautogui call
+pyautogui.FAILSAFE = True  # keep failsafe (move mouse to corner to abort)
 from pynput import keyboard
 from croniter import croniter
 from windowcapture import WindowCapture
@@ -20,6 +22,7 @@ from bot_engine import (
 import vision as vision_module
 from attack_detector import AttackDetector
 from logout_detector import LogoutDetector
+from alliance_attack_detector import AllianceAttackDetector
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
@@ -78,8 +81,9 @@ fn_configs = config.get("functions") or []
 key_bindings      = {}   # key_char -> fn_name
 fn_enabled        = {}   # fn_name  -> bool
 schedules         = []   # [{ "function": ..., "cron": ... }]
-attacked_triggers    = []   # fn_names triggered when attack starts
-logged_out_triggers  = []   # fn_names triggered when logged out
+attacked_triggers         = []   # fn_names triggered when attack starts
+logged_out_triggers       = []   # fn_names triggered when logged out
+alliance_attacked_triggers = []  # fn_names triggered when alliance is attacked
 
 for fc in fn_configs:
     name    = fc.get("name")
@@ -98,6 +102,8 @@ for fc in fn_configs:
         attacked_triggers.append(name)
     if trigger == "logged_out" and enabled:
         logged_out_triggers.append(name)
+    if trigger == "alliance_attacked" and enabled:
+        alliance_attacked_triggers.append(name)
 
 functions    = load_functions("functions")
 templates    = collect_templates(functions)
@@ -252,6 +258,8 @@ if attacked_triggers:
     log.info("Attack triggers: {}".format(attacked_triggers))
 if logged_out_triggers:
     log.info("Logout triggers: {}".format(logged_out_triggers))
+if alliance_attacked_triggers:
+    log.info("Alliance attack triggers: {}".format(alliance_attacked_triggers))
     for fn_name, ts in sorted(next_run_at.items(), key=lambda x: x[1]):
         log.info("Cron next run: {} at {}".format(
             fn_name, datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")))
@@ -286,6 +294,78 @@ logout_detector = LogoutDetector(
     confirm_sec=1.0,
     clear_sec=5.0,
 )
+
+alliance_attack_detector = AllianceAttackDetector(
+    warning_template_path="buttons_template/AllianceBeingAttackedWarning.png",
+    clear_sec=10.0,
+)
+
+# ── Detector background thread ─────────────────────────────────────────────────
+# Detectors run matchTemplate (~0.3s each × 3 = ~0.9s total). Running them on the
+# main thread blocks clicking. Instead, run them in a background thread every 2s
+# and post events to a queue for the main loop to handle.
+_detector_event_queue = queue.Queue()
+_DETECTOR_INTERVAL = 2.0  # background detectors check every 2s
+
+def _detector_loop():
+    import mss as _mss_lib
+    import win32gui as _win32gui
+    import numpy as _np
+    _mss_inst = _mss_lib.mss()
+    log.info("[Detector] Background thread started (interval={}s)".format(_DETECTOR_INTERVAL))
+    _tick = 0
+    while running and not exit_requested:
+        time.sleep(_DETECTOR_INTERVAL)
+        if not running or exit_requested:
+            break
+        _tick += 1
+        try:
+            w, h = wincap.w, wincap.h
+            hwnd = wincap.hwnd
+            if w <= 0 or h <= 0 or not hwnd:
+                log.warning("[Detector] #{} skip — invalid window size {}x{}".format(_tick, w, h))
+                continue
+            (left, top) = _win32gui.ClientToScreen(hwnd, (0, 0))
+            monitor = {'left': left, 'top': top, 'width': w, 'height': h}
+            raw = _mss_inst.grab(monitor)
+            img = _np.array(raw)[..., :3]
+            img = _np.ascontiguousarray(img)
+        except Exception as e:
+            log.warning("[Detector] #{} screenshot failed: {}".format(_tick, e))
+            continue
+
+        import cv2 as _cv2
+        img_gray = _cv2.cvtColor(img, _cv2.COLOR_BGR2GRAY)
+        def _max_score(detector_vision):
+            r = _cv2.matchTemplate(img_gray, detector_vision.needle_gray, detector_vision.method)
+            _, mv, _, _ = _cv2.minMaxLoc(r)
+            return mv
+
+        _a_score   = _max_score(attack_detector._vision)
+        _lo_score  = _max_score(logout_detector._vision)
+        _al_score  = _max_score(alliance_attack_detector._vision)
+        log.info("[Detector] #{} scores — attack={:.3f} logout={:.3f} alliance={:.3f}".format(
+            _tick, _a_score, _lo_score, _al_score))
+
+        attack_event = attack_detector.update(img, log)
+        if attack_event == "started":
+            log.info("[Detector] #{} → attacked, triggers={}".format(_tick, attacked_triggers))
+            _detector_event_queue.put(("attacked", list(attacked_triggers)))
+
+        logout_event = logout_detector.update(img, log)
+        if logout_event == "started":
+            log.info("[Detector] #{} → logged_out, triggers={}".format(_tick, logged_out_triggers))
+            _detector_event_queue.put(("logged_out", list(logged_out_triggers)))
+
+        alliance_attack_event = alliance_attack_detector.update(img, log)
+        if alliance_attack_event == "started":
+            log.info("[Detector] #{} → alliance_attacked, triggers={}".format(_tick, alliance_attacked_triggers))
+            _detector_event_queue.put(("alliance_attacked", list(alliance_attacked_triggers)))
+
+    log.info("[Detector] Background thread exited")
+
+_detector_thread = threading.Thread(target=_detector_loop, daemon=True)
+_detector_thread.start()
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 _CAPTURE_INTERVAL = 0.1   # 10 FPS cap
@@ -347,17 +427,21 @@ while running and not exit_requested:
     if screenshot is None:
         continue
 
-    # Being-attacked detection
-    attack_event = attack_detector.update(screenshot, log)
-    if attack_event == "started":
-        for fn_name in attacked_triggers:
-            _try_start(fn_name, trigger="attacked")
-
-    # Logged-out detection
-    logout_event = logout_detector.update(screenshot, log)
-    if logout_event == "started":
-        for fn_name in logged_out_triggers:
-            _start_urgent(fn_name, trigger="logged_out")
+    # Drain detector events from background thread (zero matchTemplate cost on main thread)
+    try:
+        while True:
+            event_type, triggers = _detector_event_queue.get_nowait()
+            if event_type == "logged_out":
+                for fn_name in triggers:
+                    _start_urgent(fn_name, trigger="logged_out")
+            elif event_type == "attacked":
+                for fn_name in triggers:
+                    _try_start(fn_name, trigger="attacked")
+            elif event_type == "alliance_attacked":
+                for fn_name in triggers:
+                    _try_start(fn_name, trigger="alliance_attacked")
+    except queue.Empty:
+        pass
 
     was_running = runner.state == "running"
     runner.update(screenshot, wincap)

@@ -79,3 +79,8 @@ steps:
     click_offset_x: 0.33
     click_offset_y: -0.4
     debug_click: false
+
+  # Always close the City Walls panel — runs even if previous steps aborted
+  - event_type: key_press
+    key: escape
+    run_always: true

@@ -25,7 +25,7 @@ class AttackDetector:
             "ended"    — attack just ended this frame
             None       — no state change
         """
-        icon = bool(self._vision.find(screenshot, threshold=self._threshold))
+        icon = self._vision.exists(screenshot, threshold=self._threshold)
         now = time.time()
 
         if not self._attacked:

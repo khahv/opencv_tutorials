@@ -1,0 +1,8 @@
+# Function: TestAllianceAttack
+# Triggered by alliance_attacked event (AllianceBeingAttackedWarning icon detected).
+# Purpose: verify the alliance_attack_detector trigger is wired correctly.
+description: "Test alliance_attacked trigger: log detection and sleep briefly"
+
+steps:
+  - event_type: sleep
+    duration_sec: 3

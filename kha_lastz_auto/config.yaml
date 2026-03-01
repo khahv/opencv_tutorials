@@ -26,6 +26,10 @@ functions:
     enabled: false
 
   - name: ClickTreasure
+    key: y
+    enabled: true
+
+  - name: ClickTreasureManual
     key: t
     enabled: true
 
@@ -35,7 +39,7 @@ functions:
     key: c
 
   - name: SoliderTrain
-    cron: "0 */6 * * *"
+    cron: "0 */3 * * *"
     enabled: true
     key: s
 
@@ -52,5 +56,10 @@ functions:
   - name: DonateAllianceTech
     key: d
     enabled: true
+
+  - name: TestAllianceAttack
+    trigger: alliance_attacked
+    enabled: true
+    key: a
 
  

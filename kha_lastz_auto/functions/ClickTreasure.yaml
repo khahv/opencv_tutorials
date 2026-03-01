@@ -2,10 +2,30 @@
 description: "Click lien tuc vao Treasure Helicopter khi match"
 steps:
   - event_type: match_click
-    template: buttons_template/TreasureHellicopter.png
-    threshold: 0.7
+    template: buttons_template/Treasure1.png
+    threshold: 0.6
+    one_shot: true
+    timeout_sec: 2
+    debug_log: true
+
+  - event_type: match_click
+    template: buttons_template/Treasure4.png
+    threshold: 0.6
+    one_shot: true
+    timeout_sec: 2
+    debug_log: true
+
+  - event_type: match_click
+    template: buttons_template/Treasure3.png
+    threshold: 0.6
+    run_always: true
     one_shot: false
     timeout_sec: 60
-    max_clicks: 500
-    click_interval_sec: 0.05   # 0.05s giua moi click (~20 click/s)
-    click_random_offset: 20    # pixel ngau nhien ±20 quanh tam template
+    max_clicks: 2000
+    click_interval_sec: 0.01     # 0 = max speed, rate limited by template matching speed
+    click_random_offset_x: 0.3  # ngau nhien ±40% chieu ngang template
+    click_random_offset_y: 0.3  # ngau nhien ±40% chieu doc template
+    click_offset_y: 0.1
+    cache_position: true       # matchTemplate 1 lan dau, reuse vi tri cho tat ca clicks sau
+    debug_click: false
+    debug_log: true

@@ -30,6 +30,7 @@ steps:
     threshold: 0.75
     one_shot: true
     timeout_sec: 10
+    run_always: true
 
   # Click corner to close any remaining dialog
   - event_type: sleep

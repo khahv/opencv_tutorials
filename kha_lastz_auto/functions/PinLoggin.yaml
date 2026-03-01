@@ -47,3 +47,7 @@ steps:
   - event_type: click_position
     offset_x: 0.15
     offset_y: 0.15
+    
+  - event_type: key_press
+    key: escape
+    run_always: true

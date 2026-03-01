@@ -60,6 +60,7 @@ class WindowCapture:
             self.offset_y = client_top
 
         log.info('WindowCapture: client size = {}x{}, screen offset = ({}, {})'.format(self.w, self.h, self.offset_x, self.offset_y))
+        self._mss = mss.mss()   # reuse across frames — creating mss() every frame costs ~100-200ms
 
     def refresh_geometry(self):
         """Cap nhat lai kich thuoc va offset cua cua so (can thiet sau khi restore tu minimize)."""
@@ -141,9 +142,8 @@ class WindowCapture:
 
         (left, top) = win32gui.ClientToScreen(self.hwnd, (0, 0))
 
-        with mss.mss() as sct:
-            monitor = {'left': left, 'top': top, 'width': self.w, 'height': self.h}
-            raw = sct.grab(monitor)
+        monitor = {'left': left, 'top': top, 'width': self.w, 'height': self.h}
+        raw = self._mss.grab(monitor)
 
         img = np.array(raw)          # BGRA uint8
         img = img[..., :3]
