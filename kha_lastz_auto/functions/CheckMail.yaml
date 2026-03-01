@@ -39,3 +39,8 @@ steps:
   - event_type: click_position
     offset_x: 0.15
     offset_y: 0.15
+  - event_type: sleep
+    duration_sec: 2
+  - event_type: click_position
+    offset_x: 0.15
+    offset_y: 0.15

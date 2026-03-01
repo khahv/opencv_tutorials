@@ -4,6 +4,7 @@
 # Neu resize that bai (fullscreen/bi khoa), bot fallback normalize theo scale.
 reference_width: 2400
 reference_height: 1600
+show_preview: false   # hien thi cua so debug screenshot (true = bat, false = tat)
 
 # Function list: key, cron, enabled
 # https://crontab.guru/ for cron syntax
@@ -22,8 +23,8 @@ functions:
 
   - name: FightBoomer
     key: b
-    cron: "*/2 * * * *"
-    enabled: false
+    cron: "*/3 * * * *"
+    enabled: true
 
   - name: ClickTreasure
     key: y
@@ -34,7 +35,7 @@ functions:
     enabled: true
 
   - name: CollectExplorationReward
-    cron: "0 */8 * * *"
+    cron: "0 */2 * * *"
     enabled: true
     key: c
 

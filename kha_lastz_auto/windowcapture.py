@@ -102,7 +102,7 @@ class WindowCapture:
                 self.hwnd, None,
                 window_rect[0], window_rect[1],  # giu nguyen vi tri
                 total_w, total_h,
-                win32con.SWP_NOZORDER,
+                win32con.SWP_NOZORDER | win32con.SWP_ASYNCWINDOWPOS,
             )
             time.sleep(0.1)
             self.refresh_geometry()

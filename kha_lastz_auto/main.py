@@ -1,11 +1,20 @@
 import cv2 as cv
 import os
+import ctypes
 import signal
 import time
 import queue
 import threading
 import logging
 from datetime import datetime
+
+# Ngan Windows sleep / lock man hinh trong khi bot chay
+_ES_CONTINUOUS       = 0x80000000
+_ES_SYSTEM_REQUIRED  = 0x00000001
+_ES_DISPLAY_REQUIRED = 0x00000002
+ctypes.windll.kernel32.SetThreadExecutionState(
+    _ES_CONTINUOUS | _ES_SYSTEM_REQUIRED | _ES_DISPLAY_REQUIRED
+)
 import pyautogui
 pyautogui.PAUSE = 0        # remove default 0.1s pause after every pyautogui call
 pyautogui.FAILSAFE = True  # keep failsafe (move mouse to corner to abort)
@@ -113,6 +122,7 @@ wincap = WindowCapture("LastZ")
 
 _ref_w = config.get("reference_width")
 _ref_h = config.get("reference_height")
+_show_preview = config.get("show_preview", False)
 
 # Resize window ve dung kich thuoc ngay khi khoi dong.
 # focus_loop se tiep tuc giu kich thuoc nay trong suot qua trinh chay.
@@ -334,19 +344,6 @@ def _detector_loop():
             log.warning("[Detector] #{} screenshot failed: {}".format(_tick, e))
             continue
 
-        import cv2 as _cv2
-        img_gray = _cv2.cvtColor(img, _cv2.COLOR_BGR2GRAY)
-        def _max_score(detector_vision):
-            r = _cv2.matchTemplate(img_gray, detector_vision.needle_gray, detector_vision.method)
-            _, mv, _, _ = _cv2.minMaxLoc(r)
-            return mv
-
-        _a_score   = _max_score(attack_detector._vision)
-        _lo_score  = _max_score(logout_detector._vision)
-        _al_score  = _max_score(alliance_attack_detector._vision)
-        log.info("[Detector] #{} scores — attack={:.3f} logout={:.3f} alliance={:.3f}".format(
-            _tick, _a_score, _lo_score, _al_score))
-
         attack_event = attack_detector.update(img, log)
         if attack_event == "started":
             log.info("[Detector] #{} → attacked, triggers={}".format(_tick, attacked_triggers))
@@ -450,11 +447,16 @@ while running and not exit_requested:
     if was_running and runner.state == "idle":
         _process_queue()
 
-    cv.imshow("LastZ Capture", screenshot)
-    if cv.waitKey(1) == ord("q"):
-        break
+    if _show_preview:
+        cv.imshow("LastZ Capture", screenshot)
+        if cv.waitKey(1) == ord("q"):
+            break
+    else:
+        cv.waitKey(1)
 
 listener.stop()
 cv.destroyAllWindows()
+# Reset ve trang thai mac dinh khi thoat
+ctypes.windll.kernel32.SetThreadExecutionState(_ES_CONTINUOUS)
 log.info("=== End ===")
 log.info("Done.")
