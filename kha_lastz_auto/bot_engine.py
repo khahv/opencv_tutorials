@@ -210,6 +210,9 @@ class FunctionRunner:
         self._tried_positions = []
         self._last_zero_refresh_t = 0
         self._last_truck_crop_path = None
+        self._ocr_prev_vals = {}  # {step_index: last_read_value} for wait_for_change_region
+        self._last_click_pos = None      # position of the most recent match_click (template-space)
+        self._last_ocr_click_pos = None  # position that was current when ocr_log last ran
         for attr in ("_set_level_debug_saved", "_set_level_warned"):
             if hasattr(self, attr):
                 delattr(self, attr)
@@ -484,6 +487,7 @@ class FunctionRunner:
                 if step.get("track_tried", False):
                     self._tried_positions.append(tuple(points[0]))
                 if one_shot:
+                    self._last_click_pos = tuple(center)
                     log.info("[Runner] {} → true (clicked)".format(self._step_label(step)))
                     self._advance_step(True)
                     return "running"
@@ -781,6 +785,19 @@ class FunctionRunner:
                             shot_path))
                     except Exception as e:
                         log.info("[Runner] match_count debug save failed: {}".format(e))
+                on_fail_goto = step.get("on_fail_goto")
+                max_retries  = int(step.get("max_retries", 0))
+                if on_fail_goto is not None and max_retries > 0:
+                    cur_step_idx = self.step_index
+                    retry_count = self._step_retry_counts.get(cur_step_idx, 0) + 1
+                    if retry_count <= max_retries:
+                        self._step_retry_counts[cur_step_idx] = retry_count
+                        log.info("[Runner] {} → retry {}/{} (goto step {})".format(
+                            self._step_label(step), retry_count, max_retries, on_fail_goto))
+                        self._goto_step(int(on_fail_goto))
+                        return "running"
+                    log.info("[Runner] {} → max_retries ({}) reached → abort".format(
+                        self._step_label(step), max_retries))
                 self._advance_step(False)
             return "running"
 
@@ -891,6 +908,43 @@ class FunctionRunner:
             if points:
                 cx, cy = int(points[0][0]), int(points[0][1])
                 tpl_name = os.path.splitext(os.path.basename(anchor_template))[0]
+
+                # ── require_new_click: gate OCR on a fresh truck click ────────────
+                # If set, only proceed when _last_click_pos differs from the position
+                # recorded on the previous OCR run — i.e. a NEW truck was clicked.
+                # No extra OCR call needed; the click coordinates are the signal.
+                if step.get("require_new_click", False):
+                    _cur_pos  = self._last_click_pos
+                    _prev_pos = self._last_ocr_click_pos
+                    if _cur_pos is not None and _cur_pos == _prev_pos:
+                        # Same click as before — wait until a new truck is clicked
+                        if now - self.step_start_time < timeout_sec:
+                            return "running"
+                        # Timeout: no new click detected → treat as assertion failure
+                        log.info("[Runner] {} [require_new_click]: timeout, no new click detected".format(
+                            self._step_label(step)))
+                        on_fail_goto = step.get("on_fail_goto")
+                        max_retries  = int(step.get("max_retries", 0))
+                        if on_fail_goto is not None and max_retries > 0:
+                            cur_step_idx = self.step_index
+                            retry_count = self._step_retry_counts.get(cur_step_idx, 0) + 1
+                            if retry_count <= max_retries:
+                                self._step_retry_counts[cur_step_idx] = retry_count
+                                log.info("[Runner] {} [require_new_click]: retry {}/{} (goto step {})".format(
+                                    self._step_label(step), retry_count, max_retries, on_fail_goto))
+                                self._goto_step(int(on_fail_goto))
+                                return "running"
+                            log.info("[Runner] {} [require_new_click]: max_retries ({}) reached → abort".format(
+                                self._step_label(step), max_retries))
+                        self._advance_step(False)
+                        return "running"
+                    # New click position detected — record it and proceed
+                    if _cur_pos != _prev_pos:
+                        self._last_ocr_click_pos = _cur_pos
+                        if _prev_pos is not None:
+                            log.info("[Runner] {} [require_new_click]: new click {} → {}, proceeding".format(
+                                self._step_label(step), _prev_pos, _cur_pos))
+                # ─────────────────────────────────────────────────────────────────
 
                 if ocr_regions:
                     # Mode A2: multiple ratio-based regions relative to template size

@@ -289,9 +289,49 @@ config_manager.init_if_missing(fn_configs, fn_enabled)
 bot_paused = {"paused": False}
 
 
+def _rebuild_schedules():
+    """Rebuild schedules and next_run_at from fn_configs + fn_enabled (mirror of .env_config).
+    Preserves existing next_run_at timing for already-scheduled functions.
+    Called after any enabled/cron change so cron state is always consistent with .env_config.
+    """
+    newly_scheduled = set()
+    for fc in fn_configs:
+        name = fc.get("name")
+        cron = fc.get("cron")
+        if name and cron and fn_enabled.get(name, True):
+            newly_scheduled.add(name)
+
+    # Remove entries no longer active
+    for fn_name in list(next_run_at.keys()):
+        if fn_name not in newly_scheduled:
+            next_run_at.pop(fn_name)
+            log.info("Cron removed: {}".format(fn_name))
+
+    # Rebuild schedules list
+    schedules.clear()
+    for fc in fn_configs:
+        name = fc.get("name")
+        cron = fc.get("cron")
+        if name and cron and fn_enabled.get(name, True):
+            schedules.append({"function": name, "cron": cron})
+            if name not in next_run_at:
+                it = croniter(cron, datetime.now().astimezone())
+                next_run_at[name] = it.get_next(float)
+                log.info("Cron scheduled: {} = {} (next: {})".format(
+                    name, cron,
+                    datetime.fromtimestamp(next_run_at[name]).strftime("%Y-%m-%d %H:%M:%S")))
+
+    # Rebuild key_bindings from fn_configs
+    key_bindings.clear()
+    for fc in fn_configs:
+        name = fc.get("name")
+        key  = fc.get("key")
+        if name and key and fn_enabled.get(name, True):
+            key_bindings[key] = name
+
+
 def _on_cron_change(fn_name, cron_expr):
     """Called from UI when user saves or clears a schedule for a function."""
-    # Update fn_configs in-place (UI already did fc['cron'] = ..., but keep in sync)
     for fc in fn_configs:
         if fc.get("name") == fn_name:
             if cron_expr:
@@ -300,23 +340,20 @@ def _on_cron_change(fn_name, cron_expr):
                 fc.pop("cron", None)
             break
 
-    # Rebuild schedules list entry for this function
-    for i, s in enumerate(schedules):
-        if s.get("function") == fn_name:
-            schedules.pop(i)
-            break
-    if cron_expr and fn_enabled.get(fn_name, True):
-        schedules.append({"function": fn_name, "cron": cron_expr})
-        it = croniter(cron_expr, datetime.now().astimezone())
-        next_run_at[fn_name] = it.get_next(float)
+    _rebuild_schedules()
+    config_manager.save(fn_configs, fn_enabled)
+    if cron_expr:
+        ts = next_run_at.get(fn_name)
         log.info("Cron updated: {} = {} (next: {})".format(
             fn_name, cron_expr,
-            datetime.fromtimestamp(next_run_at[fn_name]).strftime("%H:%M:%S")))
+            datetime.fromtimestamp(ts).strftime("%H:%M:%S") if ts else "N/A"))
     else:
-        next_run_at.pop(fn_name, None)
         log.info("Cron cleared: {}".format(fn_name))
 
-    config_manager.save(fn_configs, fn_enabled)
+
+def _on_enabled_change(fn_name, enabled):
+    """Called from UI when user toggles a function enabled/disabled."""
+    _rebuild_schedules()
 
 
 BotUI(fn_enabled, fn_configs, runner, next_run_at,
@@ -326,7 +363,8 @@ BotUI(fn_enabled, fn_configs, runner, next_run_at,
       cron_callback=_on_cron_change,
       fn_settings=fn_settings,
       settings_save_callback=config_manager.save_fn_settings,
-      run_callback=lambda fn_name: _try_start(fn_name, trigger="ui_play")).start()
+      run_callback=lambda fn_name: _try_start(fn_name, trigger="ui_play"),
+      enabled_callback=_on_enabled_change).start()
 
 # ── Focus thread ──────────────────────────────────────────────────────────────
 running = True

@@ -37,7 +37,8 @@ class BotUI:
                  cron_callback=None,
                  fn_settings: dict = None,
                  settings_save_callback=None,
-                 run_callback=None):
+                 run_callback=None,
+                 enabled_callback=None):
         self._fn_enabled    = fn_enabled
         self._fn_configs    = [fc for fc in fn_configs if fc.get("name")]
         self._runner        = runner_ref
@@ -49,6 +50,7 @@ class BotUI:
         self._fn_settings   = fn_settings if fn_settings is not None else {}
         self._settings_save_callback = settings_save_callback  # fn(fn_settings)
         self._run_callback  = run_callback   # fn(fn_name) — trigger function immediately
+        self._enabled_callback = enabled_callback  # fn(fn_name, enabled_bool)
 
         self._vars       = {}   # fn_name → BooleanVar
         self._row_frames = {}   # fn_name → (row_frame, name_label)
@@ -217,6 +219,8 @@ class BotUI:
                        fg=GREEN if new_val else GRAY)
             self._fn_enabled[n] = new_val
             self._refresh_row(n)
+            if self._enabled_callback:
+                self._enabled_callback(n, new_val)
             if self._save_callback:
                 self._save_callback()
 
