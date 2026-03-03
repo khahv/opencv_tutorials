@@ -52,7 +52,15 @@ def apply_overrides(fn_configs: list) -> None:
 
 
 def save(fn_configs: list, fn_enabled: dict) -> None:
-    """Persist key bindings, cron overrides, and enabled states to .env_config."""
+    """Persist key bindings, cron overrides, and enabled states to .env_config.
+    Preserves all other sections (fn_settings, etc.) already in the file."""
+    # Read existing file to preserve sections we don't manage here (e.g. fn_settings)
+    if os.path.isfile(ENV_CONFIG_PATH):
+        with open(ENV_CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    else:
+        data = {}
+
     kb = {}
     cr = {}
     for fc in fn_configs:
@@ -64,11 +72,10 @@ def save(fn_configs: list, fn_enabled: dict) -> None:
         if cron:
             cr[name] = cron
 
-    data = {
-        "key_bindings":   kb,
-        "cron_overrides": cr,
-        "fn_enabled":     {k: bool(v) for k, v in fn_enabled.items()},
-    }
+    data["key_bindings"]   = kb
+    data["cron_overrides"] = cr
+    data["fn_enabled"]     = {k: bool(v) for k, v in fn_enabled.items()}
+
     with open(ENV_CONFIG_PATH, "w", encoding="utf-8") as f:
         yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 

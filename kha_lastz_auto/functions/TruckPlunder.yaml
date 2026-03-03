@@ -17,19 +17,24 @@ steps:
 
   - event_type: match_click
     template: buttons_template/YellowTruckSmall.png
-    threshold: 0.8   # wrong-color truck ~0.924, yellow ~0.95 → 0.93 rejects wrong
-    match_color: true
-    color_match_tolerance: 50   # YellowTruckSmall BGR vs grey~99 purple~105 — tighten
-    color_min_saturation: 140   # YellowTruckSmall S≈199 (yellow) — reject grey S≈30
-    color_hue_range: [5, 35]    # YellowTruckSmall H median=17 peak 4-22 — reject purple H≈120
-    color_hue_min_fraction: 0.5 # ≥50% saturated pixels in hue_range
-    log_match_score: true       # log template_score when match+click
+    threshold: 0.8
     one_shot: true
-    timeout_sec: 10
+    timeout_sec: 2
     run_always: true
     track_tried: true
     debug_click: false
     refresh_template: buttons_template/TruckRefresh.png
+    refresh_sleep_sec: 1.5   # wait for new truck list to render after refresh
+    # Filter: only click trucks that have a player name overlaid (text on truck cab)
+    require_text_in_region:
+      x: -1.5    # wider than truck to catch text that overflows left/right
+      y: -0.2    # top portion of the truck where "[TAG] Name" is overlaid
+      w: 3.0
+      h: 0.5
+      canny_low: 60            # only detect strong edges (default 50) — reduces noise from truck texture
+      canny_high: 180          # suppress weak edges (default 150) — keeps sharp text edges only
+      top_k: 2                 # pick the 2 trucks with highest edge density (ignores threshold)
+      debug_save: false
 
   # Wait for game to render the new truck banner after click
   - event_type: sleep
@@ -45,7 +50,6 @@ steps:
     timeout_sec: 1
     run_always: true
     on_fail_goto: 2
-    max_retries: 50
 
   # Filter 2 (slow OCR): check server + power only after OrangeHeroFragment confirmed
   # require_new_click: ensures banner is from the truck just clicked, not the previous one
@@ -58,7 +62,7 @@ steps:
     run_always: true
     debug_save: true
     on_fail_goto: 2   # step index of match_click YellowTruck (0-based)
-    max_retries: 50   # total OCR assertion failures before giving up (across refreshes)
+    # max_retries: 50   # total OCR assertion failures before giving up (across refreshes)
     ocr_regions:
       - name: player_name
         x: -2.3   # right of server "#NNN" (which ends at ~-2.45)

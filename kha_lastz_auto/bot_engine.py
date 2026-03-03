@@ -126,6 +126,26 @@ def load_functions(functions_dir="functions"):
     return result
 
 
+def _crop_region_relative(screenshot, cx, cy, needle_w, needle_h,
+                          x=0.0, y=0.0, w=1.0, h=1.0):
+    """Crop a sub-region relative to a template match center.
+    x/y/w/h are ratios of the needle (template) size — same coordinate space as read_region_relative.
+    Returns the cropped BGR image, or None if out of bounds."""
+    tl_x = cx - needle_w // 2
+    tl_y = cy - needle_h // 2
+    rx = max(0, tl_x + int(x * needle_w))
+    ry = max(0, tl_y + int(y * needle_h))
+    rw = max(1, int(w * needle_w))
+    rh = max(1, int(h * needle_h))
+    img_h, img_w = screenshot.shape[:2]
+    rw = min(rw, img_w - rx)
+    rh = min(rh, img_h - ry)
+    if rw <= 0 or rh <= 0:
+        return None
+    crop = screenshot[ry: ry + rh, rx: rx + rw]
+    return crop if crop.size > 0 else None
+
+
 def collect_templates(functions_dict):
     """Lay danh sach duong dan template tu tat ca steps de tao vision cache."""
     templates = set()
@@ -186,6 +206,8 @@ class FunctionRunner:
         self.last_step_result = True  # True = previous step matched/succeeded
         self._step_retry_counts = {}  # {step_index: retry_count} for on_fail_goto
         self._tried_positions = []    # [(x, y)] positions already clicked in current cycle
+        self._rtr_cache = {}          # require_text_in_region cache: frozenset(points) → filtered points
+        self._rtr_page_logged = False # True after printing truck list for current refresh cycle
 
     def _fn_setting(self, key, fallback=None):
         """Return fn_settings[current_function][key], or fallback if not set."""
@@ -255,6 +277,7 @@ class FunctionRunner:
             threshold = step.get("threshold", 0.75)
             one_shot = step.get("one_shot", True)
             timeout_sec = step.get("timeout_sec") or 999
+            refresh_sleep_sec = step.get("refresh_sleep_sec", 1.0)
             max_clicks = step.get("max_clicks") or 999999
             click_interval_sec = step.get("click_interval_sec") or 0
             # fn_settings overrides (ClickTreasure and any function with these settings)
@@ -297,6 +320,7 @@ class FunctionRunner:
                 points = [_cached_pos]  # use cached position, skip matchTemplate
             else:
                 dbg = 'info' if (debug_click or debug_log) else None
+                meta_list = None
                 if match_color:
                     result = vision.find_color(screenshot, threshold=threshold, debug_mode=dbg,
                                                color_tolerance=color_match_tolerance,
@@ -338,8 +362,11 @@ class FunctionRunner:
                         if _ref_pts:
                             _rsx, _rsy = wincap.get_screen_position(tuple(_ref_pts[0]))
                             pyautogui.click(_rsx, _rsy)
-                            log.info("[Runner] {} → 0 trucks found → clicked refresh, retrying".format(self._step_label(step)))
+                            log.info("[Runner] {} → 0 trucks found → clicked refresh, sleeping {:.1f}s".format(self._step_label(step), refresh_sleep_sec))
+                            time.sleep(refresh_sleep_sec)
                             self._tried_positions = []
+                            self._rtr_cache = {}
+                            self._rtr_page_logged = False
                             self.step_start_time = time.time()
                             self._last_zero_refresh_t = now
                             return "running"
@@ -355,47 +382,146 @@ class FunctionRunner:
                             x=_onr_x, y=_onr_y, w=_onr_w, h=_onr_h,
                         )
                         _point_names[tuple(_pt)] = (_name or "").strip()
+
+                # ── require_text_in_region: keep trucks where a region has text-like edges ──
+                # Uses Canny edge density — text produces many edges; bare background does not.
+                # No OCR needed: just count edge pixels / total pixels vs min_edge_density.
+                _rtr = step.get("require_text_in_region")
+                if _rtr and points:
+                    _rtr_x       = _rtr.get("x", -1.0)
+                    _rtr_y       = _rtr.get("y", 0.0)
+                    _rtr_w       = _rtr.get("w", 2.0)
+                    _rtr_h       = _rtr.get("h", 0.8)
+                    _rtr_density  = _rtr.get("min_edge_density", 0.05)
+                    _rtr_canny_lo = _rtr.get("canny_low", 50)
+                    _rtr_canny_hi = _rtr.get("canny_high", 150)
+                    _rtr_debug    = _rtr.get("debug_save", False)
+                    _rtr_top_k    = _rtr.get("top_k")
+                    # Cache key: round coordinates to nearest 10px to absorb per-frame jitter
+                    _rtr_key = frozenset((round(_p[0] / 10) * 10, round(_p[1] / 10) * 10) for _p in points)
+                    if _rtr_key in self._rtr_cache:
+                        _rtr_passed, _rtr_density_map = self._rtr_cache[_rtr_key]
+                        points = _rtr_passed
+                    else:
+                        _passed = []
+                        _rtr_density_map = {}
+                        _rtr_log_parts = []
+                        for _pt in points:
+                            _crop = _crop_region_relative(screenshot, _pt[0], _pt[1],
+                                                          vision.needle_w, vision.needle_h,
+                                                          _rtr_x, _rtr_y, _rtr_w, _rtr_h)
+                            if _crop is None:
+                                continue
+                            _gray  = cv.cvtColor(_crop, cv.COLOR_BGR2GRAY) if len(_crop.shape) == 3 else _crop
+                            _edges = cv.Canny(_gray, _rtr_canny_lo, _rtr_canny_hi)
+                            _density = float(_edges.sum()) / (255.0 * max(_edges.size, 1))
+                            _ok = _density >= _rtr_density
+                            _rtr_density_map[tuple(_pt)] = _density
+                            _rtr_log_parts.append("({},{}) {}:{:.3f}".format(
+                                _pt[0], _pt[1], "PASS" if _ok else "SKIP", _density))
+                            if _rtr_debug:
+                                import datetime
+                                _ts = datetime.datetime.now().strftime("%H%M%S_%f")[:-3]
+                                _tag = "pass" if _ok else "skip"
+                                _dbg_dir = os.path.join(os.path.dirname(__file__), "debug_ocr")
+                                os.makedirs(_dbg_dir, exist_ok=True)
+                                cv.imwrite(os.path.join(_dbg_dir,
+                                    "require_text_{}_{}_{},{}.png".format(_tag, _ts, _pt[0], _pt[1])), _crop)
+                                cv.imwrite(os.path.join(_dbg_dir,
+                                    "require_text_edges_{}_{}_{},{}.png".format(_tag, _ts, _pt[0], _pt[1])), _edges)
+                            if _ok:
+                                _passed.append(_pt)
+                        if _rtr_top_k:
+                            # top_k: skip threshold, pick the K trucks with highest edge density
+                            _all_sorted = sorted(points, key=lambda p: _rtr_density_map.get(tuple(p), 0), reverse=True)
+                            _passed = _all_sorted[:_rtr_top_k]
+                        elif len(_passed) == 0:
+                            pass  # all filtered out by threshold
+                        if not self._rtr_page_logged:
+                            log.info("[Runner] {} → require_text_in_region ({} trucks, threshold={:.3f}): {}".format(
+                                self._step_label(step), len(points), _rtr_density,
+                                " | ".join(_rtr_log_parts)))
+                        self._rtr_cache[_rtr_key] = (_passed, _rtr_density_map)
+                        points = _passed
+                    self._rtr_density_map_last = _rtr_density_map
+
+                # ── require_bright_region: keep trucks where a region is bright (light square) ──
+                # Used to detect avatar frames (white/light square) above trucks.
+                # Checks mean grayscale brightness of a relative region vs min_mean (0-255).
+                _rbr = step.get("require_bright_region")
+                if _rbr and points:
+                    _rbr_x   = _rbr.get("x", -0.5)
+                    _rbr_y   = _rbr.get("y", -2.0)
+                    _rbr_w   = _rbr.get("w", 1.0)
+                    _rbr_h   = _rbr.get("h", 1.5)
+                    _rbr_min = _rbr.get("min_mean", 160)
+                    _passed = []
+                    for _pt in points:
+                        _crop = _crop_region_relative(screenshot, _pt[0], _pt[1],
+                                                      vision.needle_w, vision.needle_h,
+                                                      _rbr_x, _rbr_y, _rbr_w, _rbr_h)
+                        if _crop is None:
+                            continue
+                        _gray = cv.cvtColor(_crop, cv.COLOR_BGR2GRAY) if len(_crop.shape) == 3 else _crop
+                        _mean = float(_gray.mean())
+                        if _mean >= _rbr_min:
+                            _passed.append(_pt)
+                        else:
+                            log.info("[Runner] {} ({},{}) → require_bright_region SKIP"
+                                     " mean_brightness={:.1f} < {:.1f}".format(
+                                self._step_label(step), _pt[0], _pt[1], _mean, _rbr_min))
+                    points = _passed
+
                 # ── track_tried: skip positions already clicked in this cycle ──────────
                 track_tried = step.get("track_tried", False)
+                _rtr_density_map = getattr(self, '_rtr_density_map_last', {})
                 if track_tried:
                     _tol = step.get("tried_tolerance_px", 30)
                     untried = [pt for pt in points if not any(
                         abs(pt[0] - tp[0]) < _tol and abs(pt[1] - tp[1]) < _tol
                         for tp in self._tried_positions
                     )]
-                    if meta_list is not None and len(meta_list) == len(points):
-                        parts = []
-                        for p, m in zip(points, meta_list):
-                            s = m.get("score")
-                            extras = []
-                            _pname = _point_names.get(tuple(p), "")
-                            if _pname:
-                                extras.append("name={}".format(_pname))
-                            if m.get("region_bgr") is not None:
-                                b, g, r = m["region_bgr"]
-                                extras.append("B={:.0f} G={:.0f} R={:.0f}".format(b, g, r))
-                            if m.get("dominant_color") is not None:
-                                extras.append("color={}".format(m["dominant_color"]))
-                            if m.get("color_dist") is not None:
-                                extras.append("dist={:.0f}".format(m["color_dist"]))
-                            if m.get("mean_sat") is not None:
-                                extras.append("sat={:.0f}".format(m["mean_sat"]))
-                            if m.get("median_hue") is not None:
-                                extras.append("hue={:.0f}".format(m["median_hue"]))
-                            if m.get("in_range_frac") is not None:
-                                extras.append("frac={:.0f}%".format(m["in_range_frac"] * 100))
-                            parts.append("({},{}) score={:.3f} [{}]".format(
-                                p[0], p[1], s, " ".join(extras)))
-                        _pts_str = " | ".join(parts)
-                    else:
-                        parts = []
-                        for p in points:
-                            _pname = _point_names.get(tuple(p), "")
-                            parts.append("({},{}){}".format(p[0], p[1], " name={}".format(_pname) if _pname else ""))
-                        _pts_str = ", ".join(parts)
-                    log.info("[Runner] {} → found {} truck(s): [{}] | tried={} untried={}".format(
-                        self._step_label(step), len(points), _pts_str,
-                        len(self._tried_positions), len(untried)))
+                    # Only log the full truck list once per refresh cycle.
+                    # Reset _rtr_page_logged when refresh is clicked.
+                    if not self._rtr_page_logged:
+                        if meta_list is not None and len(meta_list) == len(points):
+                            parts = []
+                            for p, m in zip(points, meta_list):
+                                s = m.get("score")
+                                extras = []
+                                _pname = _point_names.get(tuple(p), "")
+                                if _pname:
+                                    extras.append("name={}".format(_pname))
+                                if m.get("region_bgr") is not None:
+                                    b, g, r = m["region_bgr"]
+                                    extras.append("B={:.0f} G={:.0f} R={:.0f}".format(b, g, r))
+                                if m.get("dominant_color") is not None:
+                                    extras.append("color={}".format(m["dominant_color"]))
+                                if m.get("color_dist") is not None:
+                                    extras.append("dist={:.0f}".format(m["color_dist"]))
+                                if m.get("mean_sat") is not None:
+                                    extras.append("sat={:.0f}".format(m["mean_sat"]))
+                                if m.get("median_hue") is not None:
+                                    extras.append("hue={:.0f}".format(m["median_hue"]))
+                                if m.get("in_range_frac") is not None:
+                                    extras.append("frac={:.0f}%".format(m["in_range_frac"] * 100))
+                                parts.append("({},{}) score={:.3f} [{}]".format(
+                                    p[0], p[1], s, " ".join(extras)))
+                            _pts_str = " | ".join(parts)
+                        else:
+                            parts = []
+                            for p in points:
+                                _pname = _point_names.get(tuple(p), "")
+                                _d = _rtr_density_map.get(tuple(p))
+                                _d_str = " density={:.3f}".format(_d) if _d is not None else ""
+                                parts.append("({},{}){}{}".format(
+                                    p[0], p[1], _d_str,
+                                    " name={}".format(_pname) if _pname else ""))
+                            _pts_str = ", ".join(parts)
+                        log.info("[Runner] {} → found {} truck(s): [{}] | tried={} untried={}".format(
+                            self._step_label(step), len(points), _pts_str,
+                            len(self._tried_positions), len(untried)))
+                        self._rtr_page_logged = True
                     if not untried:
                         _refresh_tpl = step.get("refresh_template")
                         _v_ref = self.vision_cache.get(_refresh_tpl) if _refresh_tpl else None
@@ -404,9 +530,12 @@ class FunctionRunner:
                             if _ref_pts:
                                 _rsx, _rsy = wincap.get_screen_position(tuple(_ref_pts[0]))
                                 pyautogui.click(_rsx, _rsy)
-                                log.info("[Runner] {} → all {} truck(s) tried → clicked refresh, retrying".format(
-                                    self._step_label(step), len(self._tried_positions)))
+                                log.info("[Runner] {} → all {} truck(s) tried → clicked refresh, sleeping {:.1f}s".format(
+                                    self._step_label(step), len(self._tried_positions), refresh_sleep_sec))
+                                time.sleep(refresh_sleep_sec)
                                 self._tried_positions = []
+                                self._rtr_cache = {}
+                                self._rtr_page_logged = False
                                 self.step_start_time = time.time()
                                 return "running"
                         log.info("[Runner] {} → all tried, no refresh available → abort".format(self._step_label(step)))
@@ -488,7 +617,11 @@ class FunctionRunner:
                     self._tried_positions.append(tuple(points[0]))
                 if one_shot:
                     self._last_click_pos = tuple(center)
-                    log.info("[Runner] {} → true (clicked)".format(self._step_label(step)))
+                    _click_truck_pt = tuple(points[0])
+                    _click_density = getattr(self, '_rtr_density_map_last', {}).get(_click_truck_pt)
+                    _click_density_str = " density={:.3f}".format(_click_density) if _click_density is not None else ""
+                    log.info("[Runner] {} → true (clicked truck ({},{}){})"  .format(
+                        self._step_label(step), _click_truck_pt[0], _click_truck_pt[1], _click_density_str))
                     self._advance_step(True)
                     return "running"
                 log.info("[Runner] {} clicking... (count {})".format(self._step_label(step), self.step_click_count))
@@ -786,18 +919,26 @@ class FunctionRunner:
                     except Exception as e:
                         log.info("[Runner] match_count debug save failed: {}".format(e))
                 on_fail_goto = step.get("on_fail_goto")
-                max_retries  = int(step.get("max_retries", 0))
-                if on_fail_goto is not None and max_retries > 0:
-                    cur_step_idx = self.step_index
-                    retry_count = self._step_retry_counts.get(cur_step_idx, 0) + 1
-                    if retry_count <= max_retries:
-                        self._step_retry_counts[cur_step_idx] = retry_count
-                        log.info("[Runner] {} → retry {}/{} (goto step {})".format(
-                            self._step_label(step), retry_count, max_retries, on_fail_goto))
+                max_retries  = step.get("max_retries")  # None = unlimited retries
+                if on_fail_goto is not None:
+                    if max_retries is None:
+                        # No limit — retry indefinitely
+                        log.info("[Runner] {} → retry (goto step {})".format(
+                            self._step_label(step), on_fail_goto))
                         self._goto_step(int(on_fail_goto))
                         return "running"
-                    log.info("[Runner] {} → max_retries ({}) reached → abort".format(
-                        self._step_label(step), max_retries))
+                    else:
+                        max_retries = int(max_retries)
+                        cur_step_idx = self.step_index
+                        retry_count = self._step_retry_counts.get(cur_step_idx, 0) + 1
+                        if retry_count <= max_retries:
+                            self._step_retry_counts[cur_step_idx] = retry_count
+                            log.info("[Runner] {} → retry {}/{} (goto step {})".format(
+                                self._step_label(step), retry_count, max_retries, on_fail_goto))
+                            self._goto_step(int(on_fail_goto))
+                            return "running"
+                        log.info("[Runner] {} → max_retries ({}) reached → abort".format(
+                            self._step_label(step), max_retries))
                 self._advance_step(False)
             return "running"
 
@@ -981,7 +1122,11 @@ class FunctionRunner:
                         if rname == "server":
                             _srv_ov = self._fn_setting("servers")
                             if _srv_ov is not None and str(_srv_ov).strip():
-                                assert_in = [s.strip() for s in str(_srv_ov).split(",") if s.strip()]
+                                _srv_str = str(_srv_ov).strip()
+                                if _srv_str == "*":
+                                    assert_in = None   # wildcard: accept any server
+                                else:
+                                    assert_in = [s.strip() for s in _srv_str.split(",") if s.strip()]
                         if rname == "power":
                             _mp_ov = self._fn_setting("max_power")
                             if _mp_ov is not None:
@@ -1011,19 +1156,26 @@ class FunctionRunner:
 
                         if _assert_fail_reason:
                             on_fail_goto = step.get("on_fail_goto")
-                            max_retries  = int(step.get("max_retries", 0))
+                            max_retries  = step.get("max_retries")  # None = unlimited retries
                             cur_step_idx = self.step_index
 
-                            if on_fail_goto is not None and max_retries > 0:
-                                retry_count = self._step_retry_counts.get(cur_step_idx, 0) + 1
-                                if retry_count <= max_retries:
-                                    self._step_retry_counts[cur_step_idx] = retry_count
-                                    log.info("[Runner] {} [{}]: {} → retry {}/{} (goto step {})".format(
-                                        self._step_label(step), rname, _assert_fail_reason,
-                                        retry_count, max_retries, on_fail_goto))
+                            if on_fail_goto is not None:
+                                if max_retries is None:
+                                    # No limit — retry indefinitely
+                                    log.info("[Runner] {} [{}]: {} → retry (goto step {})".format(
+                                        self._step_label(step), rname, _assert_fail_reason, on_fail_goto))
                                     self._goto_step(int(on_fail_goto))
                                     return "running"
                                 else:
+                                    max_retries = int(max_retries)
+                                    retry_count = self._step_retry_counts.get(cur_step_idx, 0) + 1
+                                    if retry_count <= max_retries:
+                                        self._step_retry_counts[cur_step_idx] = retry_count
+                                        log.info("[Runner] {} [{}]: {} → retry {}/{} (goto step {})".format(
+                                            self._step_label(step), rname, _assert_fail_reason,
+                                            retry_count, max_retries, on_fail_goto))
+                                        self._goto_step(int(on_fail_goto))
+                                        return "running"
                                     log.info("[Runner] {} [{}]: {} → max_retries ({}) reached → abort".format(
                                         self._step_label(step), rname, _assert_fail_reason, max_retries))
                             else:
