@@ -17,24 +17,25 @@ steps:
 
   - event_type: match_click
     template: buttons_template/YellowTruckSmall.png
-    threshold: 0.8
+    threshold: 0.70
     one_shot: true
-    timeout_sec: 2
+    timeout_sec: 3
     run_always: true
+    match_color: true 
     track_tried: true
     debug_click: false
     refresh_template: buttons_template/TruckRefresh.png
     refresh_sleep_sec: 1.5   # wait for new truck list to render after refresh
     # Filter: only click trucks that have a player name overlaid (text on truck cab)
-    require_text_in_region:
-      x: -1.5    # wider than truck to catch text that overflows left/right
-      y: -0.2    # top portion of the truck where "[TAG] Name" is overlaid
-      w: 3.0
-      h: 0.5
-      canny_low: 60            # only detect strong edges (default 50) — reduces noise from truck texture
-      canny_high: 180          # suppress weak edges (default 150) — keeps sharp text edges only
-      top_k: 2                 # pick the 2 trucks with highest edge density (ignores threshold)
-      debug_save: false
+    # require_text_in_region:
+    #   x: -1.5    # wider than truck to catch text that overflows left/right
+    #   y: -0.2    # top portion of the truck where "[TAG] Name" is overlaid
+    #   w: 3.0
+    #   h: 0.5
+    #   canny_low: 60            # only detect strong edges (default 50) — reduces noise from truck texture
+    #   canny_high: 180          # suppress weak edges (default 150) — keeps sharp text edges only
+    #   top_k: 5                 # pick the 2 trucks with highest edge density (ignores threshold)
+    #   debug_save: false
 
   # Wait for game to render the new truck banner after click
   - event_type: sleep
@@ -86,7 +87,7 @@ steps:
         w: 1.85   # right margin ~0.25*nw avoids "$" decoration on banner right edge
         h: 0.40   # tighter height: excludes cargo item quantities below power row
         digits_only: true
-        pattern: "(\\d{1,3}[,.]\\d{3}[,.]\\d{3})"   # strict: match X,XXX,XXX only — ignores leading/trailing noise
+        pattern: "(\\d{1,3}[,.]\\d{3}([,.]\\d{3})?)"   # match XXX,XXX or X,XXX,XXX
         assert_max: 10000000
 
   # Reached only if server match AND power < 10,000,000 AND OrangeHeroFragment visible

@@ -30,6 +30,7 @@ from bot_engine import (
 )
 import vision as vision_module
 from attack_detector import AttackDetector
+from treasure_detector import TreasureDetector
 from ui import BotUI
 import config_manager
 from logout_detector import LogoutDetector
@@ -97,9 +98,10 @@ config_manager.apply_overrides(fn_configs)  # .env_config overrides config.yaml
 key_bindings      = {}   # key_char -> fn_name
 fn_enabled        = {}   # fn_name  -> bool
 schedules         = []   # [{ "function": ..., "cron": ... }]
-attacked_triggers         = []   # fn_names triggered when attack starts
-logged_out_triggers       = []   # fn_names triggered when logged out
-alliance_attacked_triggers = []  # fn_names triggered when alliance is attacked
+attacked_triggers          = []   # fn_names triggered when attack starts
+treasure_detected_triggers = []   # fn_names triggered when treasure is detected
+logged_out_triggers        = []   # fn_names triggered when logged out
+alliance_attacked_triggers = []   # fn_names triggered when alliance is attacked
 
 for fc in fn_configs:
     name    = fc.get("name")
@@ -116,6 +118,8 @@ for fc in fn_configs:
         schedules.append({"function": name, "cron": cron})
     if trigger == "attacked" and enabled:
         attacked_triggers.append(name)
+    if trigger == "treasure_detected" and enabled:
+        treasure_detected_triggers.append(name)
     if trigger == "logged_out" and enabled:
         logged_out_triggers.append(name)
     if trigger == "alliance_attacked" and enabled:
@@ -276,6 +280,8 @@ if attacked_triggers:
     log.info("Attack triggers: {}".format(attacked_triggers))
 if logged_out_triggers:
     log.info("Logout triggers: {}".format(logged_out_triggers))
+if treasure_detected_triggers:
+    log.info("Treasure detected triggers: {}".format(treasure_detected_triggers))
 if alliance_attacked_triggers:
     log.info("Alliance attack triggers: {}".format(alliance_attacked_triggers))
     for fn_name, ts in sorted(next_run_at.items(), key=lambda x: x[1]):
@@ -401,6 +407,12 @@ alliance_attack_detector = AllianceAttackDetector(
     clear_sec=10.0,
 )
 
+treasure_detector = TreasureDetector(
+    treasure_template_path="buttons_template/Treasure1.png",
+    threshold=0.6,
+    clear_sec=10.0,
+)
+
 from exit_banner_detector import ExitBannerDetector
 exit_banner_detector = ExitBannerDetector(
     template_path="buttons_template/ExitGameBanner.png",
@@ -456,6 +468,11 @@ def _detector_loop():
         if alliance_attack_event == "started":
             log.info("[Detector] #{} → alliance_attacked, triggers={}".format(_tick, alliance_attacked_triggers))
             _detector_event_queue.put(("alliance_attacked", list(alliance_attacked_triggers)))
+
+        treasure_event = treasure_detector.update(img, log)
+        if treasure_event == "started":
+            log.info("[Detector] #{} → treasure_detected, triggers={}".format(_tick, treasure_detected_triggers))
+            _detector_event_queue.put(("treasure_detected", list(treasure_detected_triggers)))
 
         # Check ExitGameBanner every N ticks — click corner to dismiss
         if exit_banner_detector.update(img, wincap, log):
@@ -547,6 +564,9 @@ while running and not exit_requested:
             elif event_type == "alliance_attacked":
                 for fn_name in triggers:
                     _try_start(fn_name, trigger="alliance_attacked")
+            elif event_type == "treasure_detected":
+                for fn_name in triggers:
+                    _try_start(fn_name, trigger="treasure_detected")
     except queue.Empty:
         pass
 

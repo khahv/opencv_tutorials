@@ -679,6 +679,7 @@ class BotUI:
         "logged_out":        "Logout detected",
         "attacked":          "Under attack detected",
         "alliance_attacked": "Alliance attack detected",
+        "treasure_detected": "Treasure detected",
     }
 
     def _row_tooltip_text(self, name):

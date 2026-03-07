@@ -111,6 +111,8 @@ def read_region_easy(crop_bgr, digits_only=False, pattern=None, debug_label=None
         _log.info("[OCR] {} raw={!r}".format(debug_label, raw))
 
     if pattern:
+        # Normalize OCR noise: ",." often read instead of "," (e.g. 65,292,.028 → 65,292,028)
+        raw = raw.replace(",.", ",")
         m = re.search(pattern, raw)
         if debug_label and not m:
             _log.info("[OCR] {} pattern {!r} → no match".format(debug_label, pattern))

@@ -18,8 +18,22 @@ steps:
     run_always: true
 
   - event_type: match_click
-    template: buttons_template/SoliderTrain.png
+    template: buttons_template/AssaultCollect.png
     threshold: 0.75
+    one_shot: true
+    timeout_sec: 5
+    run_always: true
+
+  - event_type: match_click
+    template: buttons_template/RiderCollect.png
+    threshold: 0.75
+    one_shot: true
+    timeout_sec: 5
+    run_always: true
+
+  - event_type: match_click
+    template: buttons_template/SoliderTrain.png
+    threshold: 0.6
     timeout_sec: 3
     click_interval_sec: 0.15
     run_always: true
@@ -49,17 +63,12 @@ steps:
     click_interval_sec: 0.15
     run_always: true
 
-  - event_type: match_click
-    template: buttons_template/AssaultCollect.png
-    threshold: 0.75
-    one_shot: true
-    timeout_sec: 5
-    run_always: true
+
 
   - event_type: match_click
     template: buttons_template/SoliderTrain.png
-    threshold: 0.75
-    timeout_sec: 3
+    threshold: 0.6
+    timeout_sec: 10
     click_interval_sec: 0.15
     run_always: true
 
@@ -77,17 +86,12 @@ steps:
     click_interval_sec: 0.15
     run_always: true
 
-  - event_type: match_click
-    template: buttons_template/RiderCollect.png
-    threshold: 0.75
-    one_shot: true
-    timeout_sec: 5
-    run_always: true
+
 
   - event_type: match_click
     template: buttons_template/SoliderTrain.png
-    threshold: 0.75
-    timeout_sec: 3
+    threshold: 0.6
+    timeout_sec: 10
     click_interval_sec: 0.15
     run_always: true
 

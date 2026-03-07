@@ -27,6 +27,7 @@ functions:
     enabled: false
 
   - name: ClickTreasure
+    trigger: treasure_detected
     key: y
     enabled: true
 

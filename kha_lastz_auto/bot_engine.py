@@ -12,6 +12,7 @@ import yaml
 import pyautogui
 import cv2 as cv
 from vision import Vision
+from fast_clicker import FastClicker
 from ocr_utils import (
     read_level_from_roi    as _read_level_from_roi,
     read_raw_text_from_roi as _read_raw_text_from_roi,
@@ -208,6 +209,7 @@ class FunctionRunner:
         self._tried_positions = []    # [(x, y)] positions already clicked in current cycle
         self._rtr_cache = {}          # require_text_in_region cache: frozenset(points) → filtered points
         self._rtr_page_logged = False # True after printing truck list for current refresh cycle
+        self._fast_clicker = FastClicker()
 
     def _fn_setting(self, key, fallback=None):
         """Return fn_settings[current_function][key], or fallback if not set."""
@@ -242,6 +244,7 @@ class FunctionRunner:
         return True
 
     def stop(self):
+        self._fast_clicker.stop()
         self.state = "idle"
         self.function_name = None
 
@@ -249,6 +252,7 @@ class FunctionRunner:
         """Tra ve 'running' | 'done' | 'idle'. Neu running thi xu ly step hien tai."""
         if self.state != "running" or screenshot is None or self.step_index >= len(self.steps):
             if self.state == "running" and self.step_index >= len(self.steps):
+                self._fast_clicker.stop()
                 self.state = "idle"
                 suffix = "" if self.last_step_result else " (aborted)"
                 log.info("[Runner] Finished function: {}{}".format(self.function_name, suffix))
@@ -298,6 +302,23 @@ class FunctionRunner:
             click_random_offset_y = step.get("click_random_offset_y")   # ratio of needle_h (e.g. 0.4 = ±40%)
             click_offset_x = step.get("click_offset_x") or 0.0
             click_offset_y = step.get("click_offset_y") or 0.0
+            click_storm_sec      = step.get("click_storm_sec") or 0.0        # bypass screenshot: tight click loop for N seconds
+            click_storm_max_rate  = step.get("click_storm_max_rate") or 0    # max clicks/s in storm (0 = unlimited)
+            click_storm_offset_x  = int(step.get("click_storm_offset_x") or 0)   # ±px random X offset
+            click_storm_offset_y  = int(step.get("click_storm_offset_y") or 0)   # ±px random Y offset
+            _corner_cfg = step.get("click_storm_corner")                          # {offset_x, offset_y, every} or {x, y, every}
+            if _corner_cfg:
+                if "offset_x" in _corner_cfg or "offset_y" in _corner_cfg:
+                    _cox = _corner_cfg.get("offset_x", 0.05)
+                    _coy = _corner_cfg.get("offset_y", 0.05)
+                    _cpx = int(wincap.w * _cox)
+                    _cpy = int(wincap.h * _coy)
+                    click_storm_corner = wincap.get_screen_position((_cpx, _cpy))
+                else:
+                    click_storm_corner = (int(_corner_cfg["x"]), int(_corner_cfg["y"]))
+            else:
+                click_storm_corner = None
+            click_storm_corner_every = int((_corner_cfg or {}).get("every", 1000))
 
             vision = self.vision_cache.get(template)
             if not vision:
@@ -578,7 +599,35 @@ class FunctionRunner:
                                           vision.needle_w, vision.needle_h, "match_click", template)
                         if _is_yellow_truck and _crop_path:
                             self._last_truck_crop_path = _crop_path
-                # Move mouse once to position, then burst-click without re-moving
+                # click_storm: start FastClicker once, then return immediately every tick.
+                # No screenshot is taken while the clicker is running — zero overhead.
+                if click_storm_sec > 0 and not one_shot:
+                    if not self._fast_clicker.is_running:
+                        # First time: start the clicker at detected position
+                        self._storm_start_t = time.time()
+                        self._fast_clicker.start(sx, sy,
+                            rate=click_storm_max_rate or 0,
+                            offset_x=click_storm_offset_x,
+                            offset_y=click_storm_offset_y,
+                            corner_pos=click_storm_corner,
+                            corner_every=click_storm_corner_every)
+                        log.info("[Runner] {} → storm started at ({},{}) rate={}".format(
+                            self._step_label(step), sx, sy, click_storm_max_rate or "unlimited"))
+                    else:
+                        # Clicker already running: check elapsed time and click count
+                        _n = self._fast_clicker.click_count
+                        _elapsed = max(0.001, time.time() - getattr(self, '_storm_start_t', time.time()))
+                        if _n >= max_clicks or _elapsed >= click_storm_sec:
+                            self._fast_clicker.stop()
+                            self.step_click_count += _n
+                            _rate = round(_n / _elapsed, 0)
+                            log.info("[Runner] {} | storm={} clicks in {:.1f}s (~{:.0f}/s)".format(
+                                self._step_label(step), _n, _elapsed, _rate))
+                            log.info("[Runner] {} → true (clicked {})".format(self._step_label(step), self.step_click_count))
+                            self._advance_step(True)
+                    return "running"
+
+                # Non-storm path: move cursor with pyautogui then click
                 pyautogui.moveTo(sx, sy)
                 if debug_log:
                     actual = pyautogui.position()
