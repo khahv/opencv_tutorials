@@ -16,6 +16,14 @@ functions:
     enabled: true
     key: l
 
+  - name: BeingAttacked
+    trigger: attacked
+    enabled: true
+    key: p
+  - name: TestAllianceAttack
+    trigger: alliance_attacked
+    enabled: true
+    key: a
   - name: TurnOnShield
     trigger: attacked
     key: o
@@ -70,9 +78,6 @@ functions:
     enabled: true
     key: x
 
-  - name: TestAllianceAttack
-    trigger: alliance_attacked
-    enabled: true
-    key: a
+
 
  

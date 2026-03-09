@@ -38,7 +38,8 @@ class BotUI:
                  fn_settings: dict = None,
                  settings_save_callback=None,
                  run_callback=None,
-                 enabled_callback=None):
+                 enabled_callback=None,
+                 quit_check=None):
         self._fn_enabled    = fn_enabled
         self._fn_configs    = [fc for fc in fn_configs if fc.get("name")]
         self._runner        = runner_ref
@@ -51,6 +52,7 @@ class BotUI:
         self._settings_save_callback = settings_save_callback  # fn(fn_settings)
         self._run_callback  = run_callback   # fn(fn_name) — trigger function immediately
         self._enabled_callback = enabled_callback  # fn(fn_name, enabled_bool)
+        self._quit_check   = quit_check   # callable() -> bool, if True close UI (for Ctrl+C)
 
         self._vars       = {}   # fn_name → BooleanVar
         self._row_frames = {}   # fn_name → (row_frame, name_label)
@@ -63,7 +65,12 @@ class BotUI:
         self._root       = None
 
     def start(self):
+        """Start UI in a background thread (legacy). Prefer run_main() on main thread to avoid hangs."""
         threading.Thread(target=self._run, daemon=True).start()
+
+    def run_main(self):
+        """Run UI mainloop on the current (main) thread. Use this to avoid startup hangs on Windows."""
+        self._run()
 
     # ── Build ─────────────────────────────────────────────────────────────────
 
@@ -74,6 +81,9 @@ class BotUI:
         self._root.resizable(False, False)
         self._root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._build()
+        # Force window size (tuned for 4K: larger so window is visible)
+        self._root.minsize(1200, 2000)
+        self._root.geometry("1200x2000")
         self._root.after(500, self._tick)
         self._root.mainloop()
 
@@ -114,9 +124,50 @@ class BotUI:
         tk.Label(lf, text="click [key] to rebind  (pause first)",
                  font=("Segoe UI", 8), bg=BG, fg=GRAY).pack(side="right")
 
-        # Function rows
-        ff = tk.Frame(r, bg=BG, padx=10)
-        ff.pack(fill="both", expand=True, pady=(0, 4))
+        # Function list: fixed height + scroll (theo tài liệu Tk: scrollregion + yscrollcommand + command)
+        LIST_HEIGHT = 620
+        list_container = tk.Frame(r, bg=BG)
+        list_container.pack(fill="both", expand=True, pady=(0, 4))
+
+        canvas = tk.Canvas(list_container, bg=BG, highlightthickness=0, height=LIST_HEIGHT)
+        scrollbar = tk.Scrollbar(list_container, orient="vertical", command=canvas.yview, bg=BG2)
+        # Hai chiều (tkinter docs): canvas báo view cho scrollbar; scrollbar gọi canvas.yview khi kéo
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        ff = tk.Frame(canvas, bg=BG, padx=10)
+        canvas_window = canvas.create_window((0, 0), window=ff, anchor="nw")
+
+        def _update_scroll_region():
+            """Cập nhật scrollregion theo bbox nội dung (để scroll hoạt động đủ; thumb theo yview)."""
+            try:
+                canvas.update_idletasks()
+                bbox = canvas.bbox("all")
+                if bbox and bbox[2] > bbox[0] and bbox[3] > bbox[1]:
+                    canvas.configure(scrollregion=bbox)
+                w = max(1, canvas.winfo_width())
+                canvas.itemconfig(canvas_window, width=w)
+            except tk.TclError:
+                pass
+
+        def _on_frame_configure(e):
+            _update_scroll_region()
+
+        def _on_canvas_configure(e):
+            w = max(1, e.width)
+            canvas.itemconfig(canvas_window, width=w)
+            canvas.after_idle(_update_scroll_region)
+
+        ff.bind("<Configure>", _on_frame_configure)
+        canvas.bind("<Configure>", _on_canvas_configure)
+
+        def _on_mousewheel(e):
+            canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+
+        canvas.bind("<MouseWheel>", _on_mousewheel)
+
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
         for fc in self._fn_configs:
             self._build_row(ff, fc)
 
@@ -926,6 +977,9 @@ class BotUI:
 
     def _tick(self):
         if not self._root:
+            return
+        if self._quit_check and self._quit_check():
+            self._root.quit()
             return
         if self._rebinding or self._bot_paused["paused"]:
             self._root.after(500, self._tick)

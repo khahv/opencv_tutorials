@@ -1,6 +1,6 @@
 # Function: TurnOnShield
 # Triggered automatically when an attack is detected (trigger: attacked in config.yaml).
-description: "Activate shield when under attack: HQ -> World -> center click -> CityWall -> PeaceShield arrow"
+description: "Activate shield when under attack: send Zalo alert, then HQ -> World -> CityWall -> PeaceShield"
 
 steps:
 

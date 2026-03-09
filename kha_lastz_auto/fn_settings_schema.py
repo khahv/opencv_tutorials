@@ -79,4 +79,80 @@ SCHEMA: dict = {
             "default":     10,
         },
     ],
+
+    "BeingAttacked": [
+        {
+            "key":         "send_zalo_message",
+            "label":       "Zalo message",
+            "description": "Nội dung tin nhắn gửi khi bị tấn công (@All = báo cả nhóm)",
+            "type":        "str",
+            "default":     "@All Ối dời ơi!, Kem Chua đang bị tấn công",
+        },
+        {
+            "key":         "send_zalo_repeat_interval_sec",
+            "label":       "Repeat interval (sec)",
+            "description": "Gửi lặp mỗi N giây khi icon attack còn hiện (0 = chỉ gửi 1 lần)",
+            "type":        "int",
+            "min":         0,
+            "max":         3600,
+            "default":     300,
+        },
+    ],
+
+    "TestAllianceAttack": [
+        {
+            "key":         "send_zalo_message",
+            "label":       "Zalo message",
+            "description": "Nội dung tin nhắn gửi khi liên minh bị tấn công",
+            "type":        "str",
+            "default":     " @All Bớ làng nước ơi!, liên minh đang bị tấn công",
+        },
+        {
+            "key":         "send_zalo_repeat_interval_sec",
+            "label":       "Repeat interval (sec)",
+            "description": "Gửi lặp mỗi N giây khi icon còn hiện (0 = chỉ gửi 1 lần)",
+            "type":        "int",
+            "min":         0,
+            "max":         3600,
+            "default":     300,
+        },
+    ],
+
+    "ClickTreasure": [
+        {
+            "key":         "send_zalo_message",
+            "label":       "Zalo message (treasure)",
+            "description": "Nội dung tin nhắn khi có kho báo",
+            "type":        "str",
+            "default":     "@All Có kho báo!",
+        },
+        {
+            "key":         "send_zalo_repeat_interval_sec",
+            "label":       "Zalo repeat (sec)",
+            "description": "Gửi lặp mỗi N giây khi treasure còn hiện (0 = chỉ gửi 1 lần)",
+            "type":        "int",
+            "min":         0,
+            "max":         3600,
+            "default":     60,
+        },
+        {
+            "key":         "max_clicks",
+            "label":       "Max Clicks",
+            "description": "Maximum clicks per session",
+            "type":        "int",
+            "min":         1,
+            "max":         99999,
+            "default":     2000,
+        },
+        {
+            "key":         "click_interval_sec",
+            "label":       "Click Interval (sec)",
+            "description": "Seconds between clicks (0 = max speed)",
+            "type":        "float",
+            "min":         0.0,
+            "max":         5.0,
+            "step":        0.01,
+            "default":     0.01,
+        },
+    ],
 }

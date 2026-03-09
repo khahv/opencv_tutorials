@@ -1,5 +1,5 @@
-import cv2 as cv
 import os
+import sys
 import ctypes
 import signal
 import time
@@ -7,34 +7,6 @@ import queue
 import threading
 import logging
 from datetime import datetime
-
-# Ngan Windows sleep / lock man hinh trong khi bot chay
-_ES_CONTINUOUS       = 0x80000000
-_ES_SYSTEM_REQUIRED  = 0x00000001
-_ES_DISPLAY_REQUIRED = 0x00000002
-ctypes.windll.kernel32.SetThreadExecutionState(
-    _ES_CONTINUOUS | _ES_SYSTEM_REQUIRED | _ES_DISPLAY_REQUIRED
-)
-import pyautogui
-pyautogui.PAUSE = 0        # remove default 0.1s pause after every pyautogui call
-pyautogui.FAILSAFE = True  # keep failsafe (move mouse to corner to abort)
-from pynput import keyboard
-from croniter import croniter
-from windowcapture import WindowCapture
-from bot_engine import (
-    load_functions,
-    load_config,
-    collect_templates,
-    build_vision_cache,
-    FunctionRunner,
-)
-import vision as vision_module
-from attack_detector import AttackDetector
-from treasure_detector import TreasureDetector
-from ui import BotUI
-import config_manager
-from logout_detector import LogoutDetector
-from alliance_attack_detector import AllianceAttackDetector
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
@@ -53,9 +25,6 @@ def _load_dotenv(path=".env"):
                 keys.append(line.split("=", 1)[0].strip())
     return keys
 
-_dotenv_keys = _load_dotenv(".env")
-
-# Logging: timestamp on every line, write to console + per-run file
 LOG_NAME = "kha_lastz"
 
 def setup_logging():
@@ -68,6 +37,7 @@ def setup_logging():
     formatter = logging.Formatter(fmt, datefmt=datefmt)
     logger = logging.getLogger(LOG_NAME)
     logger.setLevel(logging.DEBUG)
+    logger.propagate = False
     for h in list(logger.handlers):
         logger.removeHandler(h)
     fh = logging.FileHandler(log_path, encoding="utf-8")
@@ -81,9 +51,89 @@ def setup_logging():
 
 log = setup_logging()
 
-# Preload EasyOCR model at startup so it's ready before first OCR call
-from ocr_easyocr import preload as _preload_easyocr
-_preload_easyocr()
+# Heavy imports in background thread so main thread can react to Ctrl+C (wait with 1s timeout)
+log.info("Loading modules...")
+sys.stdout.flush()
+sys.stderr.flush()
+
+_ES_CONTINUOUS       = 0x80000000
+_ES_SYSTEM_REQUIRED  = 0x00000001
+_ES_DISPLAY_REQUIRED = 0x00000002
+_imports_ready = threading.Event()
+_imports_error = []
+
+def _do_heavy_imports():
+    try:
+        ctypes.windll.kernel32.SetThreadExecutionState(
+            _ES_CONTINUOUS | _ES_SYSTEM_REQUIRED | _ES_DISPLAY_REQUIRED
+        )
+        import cv2 as cv
+        import pyautogui
+        from croniter import croniter as croniter_class
+        from pynput import keyboard
+        from windowcapture import WindowCapture
+        from bot_engine import (
+            load_functions,
+            load_config,
+            collect_templates,
+            build_vision_cache,
+            FunctionRunner,
+        )
+        import vision as vision_module
+        from attack_detector import AttackDetector
+        from treasure_detector import TreasureDetector
+        from ui import BotUI
+        import config_manager
+        from logout_detector import LogoutDetector
+        from alliance_attack_detector import AllianceAttackDetector
+        main_mod = sys.modules.get("__main__")
+        if main_mod:
+            main_mod.cv = cv
+            main_mod.pyautogui = pyautogui
+            main_mod.keyboard = keyboard
+            main_mod.croniter = croniter_class
+            main_mod.WindowCapture = WindowCapture
+            main_mod.load_functions = load_functions
+            main_mod.load_config = load_config
+            main_mod.collect_templates = collect_templates
+            main_mod.build_vision_cache = build_vision_cache
+            main_mod.FunctionRunner = FunctionRunner
+            main_mod.vision_module = vision_module
+            main_mod.AttackDetector = AttackDetector
+            main_mod.TreasureDetector = TreasureDetector
+            main_mod.BotUI = BotUI
+            main_mod.config_manager = config_manager
+            main_mod.LogoutDetector = LogoutDetector
+            main_mod.AllianceAttackDetector = AllianceAttackDetector
+        pyautogui.PAUSE = 0
+        pyautogui.FAILSAFE = True
+    except Exception as e:
+        _imports_error.append(e)
+    finally:
+        _imports_ready.set()
+
+threading.Thread(target=_do_heavy_imports, daemon=True).start()
+while True:
+    try:
+        if _imports_ready.wait(timeout=1.0):
+            break
+    except KeyboardInterrupt:
+        log.info("Interrupted by user (Ctrl+C).")
+        sys.exit(130)
+if _imports_error:
+    log.error("Failed to load modules: {}".format(_imports_error[0]))
+    sys.exit(1)
+
+_dotenv_keys = _load_dotenv(".env")
+
+# EasyOCR preload in background so main thread does not freeze (Ctrl+C stays responsive)
+def _do_easyocr_preload():
+    try:
+        from ocr_easyocr import preload as _preload_easyocr
+        _preload_easyocr()
+    except Exception as e:
+        log.warning("[EasyOCR] Preload failed: {}".format(e))
+threading.Thread(target=_do_easyocr_preload, daemon=True).start()
 
 if _dotenv_keys:
     log.info("[Env] Loaded from .env: {}".format(", ".join(_dotenv_keys)))
@@ -129,7 +179,30 @@ functions    = load_functions("functions")
 templates    = collect_templates(functions)
 vision_cache = build_vision_cache(templates)
 
-wincap = WindowCapture("LastZ")
+# Create WindowCapture in thread with timeout so FindWindow cannot freeze main (Ctrl+C works)
+_wincap_result = []
+_wincap_done = threading.Event()
+def _create_wincap():
+    try:
+        _wincap_result.append(WindowCapture("LastZ"))
+    except Exception as e:
+        log.error("WindowCapture failed: {}".format(e))
+    finally:
+        _wincap_done.set()
+log.info("Connecting to game window 'LastZ'...")
+sys.stdout.flush()
+threading.Thread(target=_create_wincap, daemon=True).start()
+try:
+    if not _wincap_done.wait(timeout=15):
+        log.error("Window 'LastZ' not found or timeout (15s). Open the game window and restart.")
+        sys.exit(1)
+except KeyboardInterrupt:
+    log.info("Interrupted by user.")
+    sys.exit(130)
+if not _wincap_result:
+    log.error("WindowCapture failed. Check that 'LastZ' window exists.")
+    sys.exit(1)
+wincap = _wincap_result[0]
 
 _ref_w = config.get("reference_width")
 _ref_h = config.get("reference_height")
@@ -365,15 +438,17 @@ def _on_enabled_change(fn_name, enabled):
     _rebuild_schedules()
 
 
-BotUI(fn_enabled, fn_configs, runner, next_run_at,
-      key_bindings=key_bindings,
-      save_callback=lambda: config_manager.save(fn_configs, fn_enabled),
-      bot_paused=bot_paused,
-      cron_callback=_on_cron_change,
-      fn_settings=fn_settings,
-      settings_save_callback=config_manager.save_fn_settings,
-      run_callback=lambda fn_name: _try_start(fn_name, trigger="ui_play"),
-      enabled_callback=_on_enabled_change).start()
+# UI will run on main thread via .run_main() after game loop thread is started (reduces startup hang)
+_ui = BotUI(fn_enabled, fn_configs, runner, next_run_at,
+            key_bindings=key_bindings,
+            save_callback=lambda: config_manager.save(fn_configs, fn_enabled),
+            bot_paused=bot_paused,
+            cron_callback=_on_cron_change,
+            fn_settings=fn_settings,
+            settings_save_callback=config_manager.save_fn_settings,
+            run_callback=lambda fn_name: _try_start(fn_name, trigger="ui_play"),
+            enabled_callback=_on_enabled_change,
+            quit_check=lambda: exit_requested)
 
 # ── Focus thread ──────────────────────────────────────────────────────────────
 running = True
@@ -390,7 +465,21 @@ def focus_loop():
 focus_thread = threading.Thread(target=focus_loop, daemon=True)
 focus_thread.start()
 
-wincap.focus_window()
+# Initial focus with timeout so SetForegroundWindow cannot hang startup (Windows can block here)
+def _focus_window_with_timeout(timeout_sec=2.0):
+    done = threading.Event()
+    def _do():
+        try:
+            wincap.focus_window()
+        except Exception as e:
+            log.warning("[Startup] focus_window: {}".format(e))
+        finally:
+            done.set()
+    t = threading.Thread(target=_do, daemon=True)
+    t.start()
+    if not done.wait(timeout=timeout_sec):
+        log.warning("[Startup] focus_window did not finish in {}s, continuing anyway".format(timeout_sec))
+_focus_window_with_timeout(2.0)
 time.sleep(0.2)
 
 attack_detector = AttackDetector(
@@ -515,116 +604,123 @@ def _detector_loop():
 _detector_thread = threading.Thread(target=_detector_loop, daemon=True)
 _detector_thread.start()
 
-# ── Main loop ─────────────────────────────────────────────────────────────────
+# ── Game loop (background thread; Tkinter runs on main thread to avoid startup hang) ──
 _CAPTURE_INTERVAL = 0.1   # 10 FPS cap
 _last_capture_time = 0.0
 last_stopped_key = None
 detector_lock = threading.Lock()
 _last_detector_restart = 0
-now = time.time()
-while running and not exit_requested:
-    if exit_requested:
-        break
-    # Watchdog detector thread
-    with detector_lock:
-        if not _detector_thread.is_alive() and now - _last_detector_restart > 5:
-            log.error("[Watchdog] Detector thread died! Restarting...")
-            _detector_thread = threading.Thread(target=_detector_loop, daemon=True)
-            _detector_thread.start()
-            _last_detector_restart = now
 
-    # Process hotkey messages — quit always works, others blocked when paused
-    try:
-        while True:
-            msg = key_queue_msg.get_nowait()
-            if msg == "quit":
-                running = False
-                break
-            if bot_paused["paused"]:
-                continue
-            if isinstance(msg, tuple) and msg[0] == "hotkey":
-                key_char = msg[1]
-                fn_name  = key_bindings.get(key_char)
-                if not fn_name:
-                    continue
-                # Toggle: press same key while running same function -> stop
-                if runner.state == "running" and runner.function_name == fn_name:
-                    runner.stop()
-                    last_stopped_key = key_char
-                    log.info("[Runner] Stopped function: {} (hotkey toggle)".format(fn_name))
-                else:
-                    if key_char != last_stopped_key:
-                        _try_start(fn_name, trigger="hotkey")
-                    last_stopped_key = None
-    except queue.Empty:
-        pass
-    if not running:
-        break
-
-    if bot_paused["paused"]:
-        cv.waitKey(1)
-        continue
-
-    # Process cron triggers
+def _game_loop():
+    global _last_detector_restart, _detector_thread, running, _last_capture_time, last_stopped_key
     now = time.time()
-    for fn_name, next_ts in list(next_run_at.items()):
-        if now >= next_ts:
-            # Advance next cron time regardless of whether we run now
-            cron_expr = next((s["cron"] for s in schedules if s["function"] == fn_name), None)
-            if cron_expr:
-                it = croniter(cron_expr, datetime.fromtimestamp(now).astimezone())
-                next_run_at[fn_name] = it.get_next(float)
-                log.info("Cron next run: {} at {}".format(
-                    fn_name, datetime.fromtimestamp(next_run_at[fn_name]).strftime("%Y-%m-%d %H:%M:%S")))
-            _try_start(fn_name, trigger="cron")
-
-    # Throttle to 10 FPS — hotkey/cron above still run every iteration
-    _now = time.time()
-    if _now - _last_capture_time < _CAPTURE_INTERVAL:
-        cv.waitKey(1)
-        continue
-    _last_capture_time = _now
-
-    # Get screenshot and update runner
-    screenshot = wincap.get_screenshot()
-    if screenshot is None:
-        continue
-
-    # Drain detector events from background thread (zero matchTemplate cost on main thread)
-    try:
-        while True:
-            event_type, triggers = _detector_event_queue.get_nowait()
-            if event_type == "logged_out":
-                for fn_name in triggers:
-                    _start_urgent(fn_name, trigger="logged_out")
-            elif event_type == "attacked":
-                for fn_name in triggers:
-                    _try_start(fn_name, trigger="attacked", trigger_event="attacked",
-                               trigger_active_cb=trigger_active_callbacks.get("attacked"))
-            elif event_type == "alliance_attacked":
-                for fn_name in triggers:
-                    _try_start(fn_name, trigger="alliance_attacked", trigger_event="alliance_attacked",
-                               trigger_active_cb=trigger_active_callbacks.get("alliance_attacked"))
-            elif event_type == "treasure_detected":
-                for fn_name in triggers:
-                    _try_start(fn_name, trigger="treasure_detected", trigger_event="treasure_detected",
-                               trigger_active_cb=trigger_active_callbacks.get("treasure_detected"))
-    except queue.Empty:
-        pass
-
-    was_running = runner.state == "running"
-    runner.update(screenshot, wincap)
-
-    # After function finishes, process pending queue
-    if was_running and runner.state == "idle":
-        _process_queue()
-
-    if _show_preview:
-        cv.imshow("LastZ Capture", screenshot)
-        if cv.waitKey(1) == ord("q"):
+    while running and not exit_requested:
+        if exit_requested:
             break
-    else:
-        cv.waitKey(1)
+        with detector_lock:
+            if not _detector_thread.is_alive() and now - _last_detector_restart > 5:
+                log.error("[Watchdog] Detector thread died! Restarting...")
+                _detector_thread = threading.Thread(target=_detector_loop, daemon=True)
+                _detector_thread.start()
+                _last_detector_restart = now
+
+        try:
+            while True:
+                msg = key_queue_msg.get_nowait()
+                if msg == "quit":
+                    running = False
+                    break
+                if bot_paused["paused"]:
+                    continue
+                if isinstance(msg, tuple) and msg[0] == "hotkey":
+                    key_char = msg[1]
+                    fn_name  = key_bindings.get(key_char)
+                    if not fn_name:
+                        continue
+                    if runner.state == "running" and runner.function_name == fn_name:
+                        runner.stop()
+                        last_stopped_key = key_char
+                        log.info("[Runner] Stopped function: {} (hotkey toggle)".format(fn_name))
+                    else:
+                        if key_char != last_stopped_key:
+                            _try_start(fn_name, trigger="hotkey")
+                        last_stopped_key = None
+        except queue.Empty:
+            pass
+        if not running:
+            break
+
+        if bot_paused["paused"]:
+            cv.waitKey(1)
+            continue
+
+        now = time.time()
+        for fn_name, next_ts in list(next_run_at.items()):
+            if now >= next_ts:
+                cron_expr = next((s["cron"] for s in schedules if s["function"] == fn_name), None)
+                if cron_expr:
+                    it = croniter(cron_expr, datetime.fromtimestamp(now).astimezone())
+                    next_run_at[fn_name] = it.get_next(float)
+                    log.info("Cron next run: {} at {}".format(
+                        fn_name, datetime.fromtimestamp(next_run_at[fn_name]).strftime("%Y-%m-%d %H:%M:%S")))
+                    _try_start(fn_name, trigger="cron")
+
+        # Throttle to 10 FPS — hotkey/cron above still run every iteration
+        _now = time.time()
+        if _now - _last_capture_time < _CAPTURE_INTERVAL:
+            cv.waitKey(1)
+            continue
+        _last_capture_time = _now
+
+        # Get screenshot and update runner
+        screenshot = wincap.get_screenshot()
+        if screenshot is None:
+            continue
+
+        # Drain detector events from background thread (zero matchTemplate cost on main thread)
+        try:
+            while True:
+                event_type, triggers = _detector_event_queue.get_nowait()
+                if event_type == "logged_out":
+                    for fn_name in triggers:
+                        _start_urgent(fn_name, trigger="logged_out")
+                elif event_type == "attacked":
+                    for fn_name in triggers:
+                        _try_start(fn_name, trigger="attacked", trigger_event="attacked",
+                                   trigger_active_cb=trigger_active_callbacks.get("attacked"))
+                elif event_type == "alliance_attacked":
+                    for fn_name in triggers:
+                        _try_start(fn_name, trigger="alliance_attacked", trigger_event="alliance_attacked",
+                                   trigger_active_cb=trigger_active_callbacks.get("alliance_attacked"))
+                elif event_type == "treasure_detected":
+                    for fn_name in triggers:
+                        _try_start(fn_name, trigger="treasure_detected", trigger_event="treasure_detected",
+                                   trigger_active_cb=trigger_active_callbacks.get("treasure_detected"))
+        except queue.Empty:
+            pass
+
+        was_running = runner.state == "running"
+        runner.update(screenshot, wincap)
+
+        # After function finishes, process pending queue
+        if was_running and runner.state == "idle":
+            _process_queue()
+
+        if _show_preview:
+            cv.imshow("LastZ Capture", screenshot)
+            if cv.waitKey(1) == ord("q"):
+                break
+        else:
+            cv.waitKey(1)
+
+# Start game loop in background, then run UI on main thread (blocks until window closed)
+game_thread = threading.Thread(target=_game_loop, daemon=True)
+game_thread.start()
+try:
+    _ui.run_main()
+except KeyboardInterrupt:
+    log.info("Ctrl+C received, shutting down...")
+    sys.exit(0)
 
 listener.stop()
 cv.destroyAllWindows()

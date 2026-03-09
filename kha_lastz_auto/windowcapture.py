@@ -1,6 +1,7 @@
 import ctypes
 import time
 import logging
+import threading
 import numpy as np
 import win32gui, win32ui, win32con
 import mss
@@ -60,7 +61,8 @@ class WindowCapture:
             self.offset_y = client_top
 
         log.info('WindowCapture: client size = {}x{}, screen offset = ({}, {})'.format(self.w, self.h, self.offset_x, self.offset_y))
-        self._mss = mss.mss()   # reuse across frames — creating mss() every frame costs ~100-200ms
+        # mss uses thread-local GDI handles on Windows; use per-thread instance so get_screenshot() works from any thread
+        self._mss_local = threading.local()
 
     def refresh_geometry(self):
         """Cap nhat lai kich thuoc va offset cua cua so (can thiet sau khi restore tu minimize)."""
@@ -140,10 +142,14 @@ class WindowCapture:
         if self.w <= 0 or self.h <= 0:
             return None
 
+        if not hasattr(self._mss_local, 'mss') or self._mss_local.mss is None:
+            self._mss_local.mss = mss.mss()
+        _mss = self._mss_local.mss
+
         (left, top) = win32gui.ClientToScreen(self.hwnd, (0, 0))
 
         monitor = {'left': left, 'top': top, 'width': self.w, 'height': self.h}
-        raw = self._mss.grab(monitor)
+        raw = _mss.grab(monitor)
 
         img = np.array(raw)          # BGRA uint8
         img = img[..., :3]

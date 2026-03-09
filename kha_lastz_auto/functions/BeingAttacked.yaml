@@ -1,0 +1,11 @@
+# Function: BeingAttacked
+# Triggered by attacked event (BeingAttackedWarning icon detected).
+# Dedicated function for attack_detector: Zalo alert + optional steps.
+description: "Being attacked: send Zalo alert, repeat every 300s while icon visible"
+
+steps:
+  - event_type: send_zalo
+    message: "@All Ối dời ơi!, Kem Chua đang bị tấn công"
+    repeat_interval_sec: 300
+  - event_type: sleep
+    duration_sec: 3

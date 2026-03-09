@@ -759,8 +759,17 @@ class FunctionRunner:
             return "running"
 
         if step_type == "send_zalo":
-            message = step.get("message") or ""
-            repeat_interval_sec = step.get("repeat_interval_sec") or 0
+            # UI override from fn_settings (Settings button); fallback to YAML step
+            _msg_ov = self._fn_setting("send_zalo_message")
+            message = (_msg_ov if _msg_ov is not None and str(_msg_ov).strip() else "") or (step.get("message") or "")
+            _int_ov = self._fn_setting("send_zalo_repeat_interval_sec")
+            if _int_ov is not None:
+                try:
+                    repeat_interval_sec = int(_int_ov)
+                except (ValueError, TypeError):
+                    repeat_interval_sec = step.get("repeat_interval_sec") or 0
+            else:
+                repeat_interval_sec = step.get("repeat_interval_sec") or 0
             trigger_cb = getattr(self, "trigger_active_cb", None)
 
             def _do_send():
