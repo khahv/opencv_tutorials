@@ -8,3 +8,4 @@ pynput
 croniter
 pytesseract
 python-dotenv
+playwright

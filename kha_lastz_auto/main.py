@@ -211,8 +211,11 @@ def _queue_add(fn_name, reason="cron"):
     pending_queue.append(fn_name)
     log.info("[Scheduler] {} queued (reason={})".format(fn_name, reason))
 
-def _try_start(fn_name, trigger="hotkey"):
-    """Start fn_name immediately if idle, otherwise queue it."""
+def _try_start(fn_name, trigger="hotkey", trigger_event=None, trigger_active_cb=None):
+    """Start fn_name immediately if idle, otherwise queue it.
+    When started from a detector, pass trigger_event and trigger_active_cb so steps like send_zalo
+    can repeat while the trigger is still active (e.g. alliance icon still visible).
+    """
     if not fn_enabled.get(fn_name, True):
         log.info("[Scheduler] {} is disabled, skipping ({})".format(fn_name, trigger))
         return
@@ -230,7 +233,7 @@ def _try_start(fn_name, trigger="hotkey"):
             log.info("[Scheduler] {} blocked by {} [{}] -> queued".format(fn_name, cur_name, trigger))
             _queue_add(fn_name, reason=trigger)
     else:
-        runner.start(fn_name, wincap)
+        runner.start(fn_name, wincap, trigger_event=trigger_event, trigger_active_cb=trigger_active_cb)
 
 def _process_queue():
     """Pop next FIFO item from queue and start it."""
@@ -413,6 +416,13 @@ treasure_detector = TreasureDetector(
     clear_sec=10.0,
 )
 
+# Callbacks for trigger-based functions: send_zalo with repeat_interval_sec uses these to repeat while detector still active.
+trigger_active_callbacks = {
+    "attacked": lambda: attack_detector._attacked,
+    "alliance_attacked": lambda: alliance_attack_detector._attacked,
+    "treasure_detected": lambda: treasure_detector._treasure_visible,
+}
+
 from exit_banner_detector import ExitBannerDetector
 exit_banner_detector = ExitBannerDetector(
     template_path="buttons_template/ExitGameBanner.png",
@@ -425,7 +435,7 @@ exit_banner_detector = ExitBannerDetector(
 # main thread blocks clicking. Instead, run them in a background thread every 2s
 # and post events to a queue for the main loop to handle.
 _detector_event_queue = queue.Queue()
-_DETECTOR_INTERVAL = 2.0  # background detectors check every 2s
+_DETECTOR_INTERVAL = 5.0  # background detectors check every 2s
 
 def _detector_loop():
     import mss as _mss_lib
@@ -454,32 +464,52 @@ def _detector_loop():
             log.warning("[Detector] #{} screenshot failed: {}".format(_tick, e))
             continue
 
-        attack_event = attack_detector.update(img, log)
-        if attack_event == "started":
-            log.info("[Detector] #{} → attacked, triggers={}".format(_tick, attacked_triggers))
-            _detector_event_queue.put(("attacked", list(attacked_triggers)))
+        # ── Attack detector ─────────────────────────────
+        try:
+            attack_event = attack_detector.update(img, log)
+            if attack_event == "started":
+                log.info("[Detector] #{} → attacked, triggers={}".format(_tick, attacked_triggers))
+                _detector_event_queue.put(("attacked", list(attacked_triggers)))
+        except Exception as e:
+            log.error("[Detector] #{} attack_detector crashed: {}".format(_tick, e))
+        
+        # ── Logout detector ─────────────────────────────
+        try:
+            logout_event = logout_detector.update(img, log)
+            if logout_event == "started":
+                log.info("[Detector] #{} → logged_out, triggers={}".format(_tick, logged_out_triggers))
+                _detector_event_queue.put(("logged_out", list(logged_out_triggers)))
+        except Exception as e:
+            log.error("[Detector] #{} logout_detector crashed: {}".format(_tick, e))
 
-        logout_event = logout_detector.update(img, log)
-        if logout_event == "started":
-            log.info("[Detector] #{} → logged_out, triggers={}".format(_tick, logged_out_triggers))
-            _detector_event_queue.put(("logged_out", list(logged_out_triggers)))
+        # ── Alliance attack detector ────────────────────
+        try:
+            alliance_attack_event = alliance_attack_detector.update(img, log)
+            if alliance_attack_event == "started":
+                log.info("[Detector] #{} → alliance_attacked, triggers={}".format(_tick, alliance_attacked_triggers))
+                _detector_event_queue.put(("alliance_attacked", list(alliance_attacked_triggers)))
+        except Exception as e:
+            log.error("[Detector] #{} alliance_attack_detector crashed: {}".format(_tick, e))
 
-        alliance_attack_event = alliance_attack_detector.update(img, log)
-        if alliance_attack_event == "started":
-            log.info("[Detector] #{} → alliance_attacked, triggers={}".format(_tick, alliance_attacked_triggers))
-            _detector_event_queue.put(("alliance_attacked", list(alliance_attacked_triggers)))
 
-        treasure_event = treasure_detector.update(img, log)
-        if treasure_event == "started":
-            log.info("[Detector] #{} → treasure_detected, triggers={}".format(_tick, treasure_detected_triggers))
-            _detector_event_queue.put(("treasure_detected", list(treasure_detected_triggers)))
+        # ── Treasure detector ───────────────────────────
+        try:
+            treasure_event = treasure_detector.update(img, log)
+            if treasure_event == "started":
+                log.info("[Detector] #{} → treasure_detected, triggers={}".format(_tick, treasure_detected_triggers))
+                _detector_event_queue.put(("treasure_detected", list(treasure_detected_triggers)))
+        except Exception as e:
+            log.error("[Detector] #{} treasure_detector crashed: {}".format(_tick, e))
 
-        # Check ExitGameBanner every N ticks — click corner to dismiss
-        if exit_banner_detector.update(img, wincap, log):
-            sx, sy = exit_banner_detector.corner_screen_pos(wincap)
-            pyautogui.click(sx, sy)
-            log.info("[Detector] #{} → ExitGameBanner detected, clicked corner ({}, {})".format(_tick, sx, sy))
-
+        # ── Exit banner detector ────────────────────────
+        try:
+            # Check ExitGameBanner every N ticks — click corner to dismiss
+            if exit_banner_detector.update(img, wincap, log):
+                sx, sy = exit_banner_detector.corner_screen_pos(wincap)
+                pyautogui.click(sx, sy)
+                log.info("[Detector] #{} → ExitGameBanner detected, clicked corner ({}, {})".format(_tick, sx, sy))
+        except Exception as e:
+            log.error("[Detector] #{} exit_banner_detector crashed: {}".format(_tick, e))
     log.info("[Detector] Background thread exited")
 
 _detector_thread = threading.Thread(target=_detector_loop, daemon=True)
@@ -489,10 +519,19 @@ _detector_thread.start()
 _CAPTURE_INTERVAL = 0.1   # 10 FPS cap
 _last_capture_time = 0.0
 last_stopped_key = None
-
+detector_lock = threading.Lock()
+_last_detector_restart = 0
+now = time.time()
 while running and not exit_requested:
     if exit_requested:
         break
+    # Watchdog detector thread
+    with detector_lock:
+        if not _detector_thread.is_alive() and now - _last_detector_restart > 5:
+            log.error("[Watchdog] Detector thread died! Restarting...")
+            _detector_thread = threading.Thread(target=_detector_loop, daemon=True)
+            _detector_thread.start()
+            _last_detector_restart = now
 
     # Process hotkey messages — quit always works, others blocked when paused
     try:
@@ -560,13 +599,16 @@ while running and not exit_requested:
                     _start_urgent(fn_name, trigger="logged_out")
             elif event_type == "attacked":
                 for fn_name in triggers:
-                    _try_start(fn_name, trigger="attacked")
+                    _try_start(fn_name, trigger="attacked", trigger_event="attacked",
+                               trigger_active_cb=trigger_active_callbacks.get("attacked"))
             elif event_type == "alliance_attacked":
                 for fn_name in triggers:
-                    _try_start(fn_name, trigger="alliance_attacked")
+                    _try_start(fn_name, trigger="alliance_attacked", trigger_event="alliance_attacked",
+                               trigger_active_cb=trigger_active_callbacks.get("alliance_attacked"))
             elif event_type == "treasure_detected":
                 for fn_name in triggers:
-                    _try_start(fn_name, trigger="treasure_detected")
+                    _try_start(fn_name, trigger="treasure_detected", trigger_event="treasure_detected",
+                               trigger_active_cb=trigger_active_callbacks.get("treasure_detected"))
     except queue.Empty:
         pass
 

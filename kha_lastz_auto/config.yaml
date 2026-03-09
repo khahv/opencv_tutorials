@@ -35,6 +35,12 @@ functions:
     key: t
     enabled: true
 
+  - name: CollectZGoldFull
+    enabled: true
+    key: z
+  - name: CollectKatrinaGasFull
+    enabled: true
+
   - name: CollectExplorationReward
     cron: "0 */2 * * *"
     enabled: true
@@ -59,10 +65,7 @@ functions:
     key: d
     enabled: true
 
-  - name: CollectZGoldFull
-    enabled: true
-    key: z
-
+    
   - name: TruckPlunder
     enabled: true
     key: x

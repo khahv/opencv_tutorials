@@ -7,6 +7,7 @@ class TreasureDetector:
 
     - Treasure appeared: icon found in any single frame.
     - Treasure gone:      icon absent for `clear_sec` consecutive seconds.
+    Zalo notification is configured in function YAML (event_type: send_zalo) and triggered by config.
     """
 
     def __init__(self, treasure_template_path: str,

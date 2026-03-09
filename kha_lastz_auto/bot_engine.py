@@ -1,7 +1,8 @@
 """
 Engine chay Function (YAML): load functions, thuc thi tung step.
-Step types: match_click, match_multi_click, match_count, sleep, click_position, wait_until_match, key_press, set_level, type_text, click_unless_visible.
+Step types: match_click, match_multi_click, match_count, sleep, send_zalo, click_position, wait_until_match, key_press, set_level, type_text, click_unless_visible.
 Each step returns true/false. Next step is blocked (function aborted) if previous returned false, unless run_always: true is set.
+send_zalo: message (required), repeat_interval_sec (optional; when set and trigger_active_cb provided, repeats while trigger active).
 """
 import os
 import re
@@ -20,6 +21,11 @@ from ocr_utils import (
 )
 
 log = logging.getLogger("kha_lastz")
+
+try:
+    import zalo_web_clicker as _zalo_web_clicker
+except ImportError:
+    _zalo_web_clicker = None
 
 
 def _save_debug_image(screenshot, raw_center, click_center, needle_w, needle_h, event_type, template_path,
@@ -218,7 +224,7 @@ class FunctionRunner:
     def load(self, functions_dict):
         self.functions = functions_dict
 
-    def start(self, function_name, wincap):
+    def start(self, function_name, wincap, trigger_event=None, trigger_active_cb=None):
         if function_name not in self.functions:
             log.info("[Runner] Function not found: {}".format(function_name))
             return False
@@ -230,6 +236,8 @@ class FunctionRunner:
         self.wincap = wincap
         self.state = "running"
         self.last_step_result = True
+        self.trigger_event = trigger_event
+        self.trigger_active_cb = trigger_active_cb
         self._step_retry_counts = {}
         self._tried_positions = []
         self._last_zero_refresh_t = 0
@@ -328,10 +336,6 @@ class FunctionRunner:
             debug_log    = step.get("debug_log", False)
             match_color  = step.get("match_color", False)   # True = BGR match (color-sensitive)
             color_match_tolerance  = step.get("color_match_tolerance")   # BGR mean-color distance cap
-            color_min_saturation   = step.get("color_min_saturation")    # HSV saturation minimum (0-255)
-            color_hue_range        = step.get("color_hue_range")          # [min_h, max_h] in OpenCV hue units (0-179)
-            color_hue_min_fraction = step.get("color_hue_min_fraction", 0.4)  # min fraction of pixels in hue_range
-            log_match_score        = step.get("log_match_score", False)  # log template correlation score when match
             ocr_name_region        = step.get("ocr_name_region")          # [x,y,w,h] ratios → OCR name to the left of truck
             cache_position = step.get("cache_position", False) or step.get("cache_frames", 0) > 0  # match once, reuse forever
 
@@ -343,17 +347,11 @@ class FunctionRunner:
                 dbg = 'info' if (debug_click or debug_log) else None
                 meta_list = None
                 if match_color:
-                    result = vision.find_color(screenshot, threshold=threshold, debug_mode=dbg,
-                                               color_tolerance=color_match_tolerance,
-                                               min_saturation=color_min_saturation,
-                                               hue_range=color_hue_range,
-                                               hue_min_fraction=color_hue_min_fraction,
-                                               log_match_score=log_match_score)
+                    result = vision.find(screenshot, threshold=threshold, debug_mode=dbg, is_color=True)
                     points = result[0] if isinstance(result, tuple) else result
                     meta_list = result[1] if isinstance(result, tuple) and len(result) > 1 else None
                 else:
                     points = vision.find(screenshot, threshold=threshold, debug_mode=dbg)
-                    scores = None
                 if points:
                     self._step_pos_cache = points[0]
                 elif debug_log:
@@ -758,6 +756,38 @@ class FunctionRunner:
             if now - self.step_start_time >= duration:
                 log.info("[Runner] {} → true".format(self._step_label(step)))
                 self._advance_step(True)
+            return "running"
+
+        if step_type == "send_zalo":
+            message = step.get("message") or ""
+            repeat_interval_sec = step.get("repeat_interval_sec") or 0
+            trigger_cb = getattr(self, "trigger_active_cb", None)
+
+            def _do_send():
+                if _zalo_web_clicker:
+                    _zalo_web_clicker.send_zalo_message(message, logger=log)
+                else:
+                    log.warning("[Runner] send_zalo: zalo_web_clicker not available, skip")
+
+            if repeat_interval_sec > 0 and trigger_cb and callable(trigger_cb):
+                def _repeat_loop():
+                    _do_send()
+                    while trigger_cb():
+                        time.sleep(repeat_interval_sec)
+                        if not trigger_cb():
+                            break
+                        _do_send()
+                        log.info("[Runner] send_zalo repeat (interval={}s)".format(repeat_interval_sec))
+                import threading
+                t = threading.Thread(target=_repeat_loop, daemon=True)
+                t.start()
+                log.info("[Runner] {} → started (repeat every {}s while trigger active)".format(
+                    self._step_label(step), repeat_interval_sec))
+            else:
+                import threading
+                threading.Thread(target=_do_send, daemon=True).start()
+                log.info("[Runner] {} → sent once".format(self._step_label(step)))
+            self._advance_step(True)
             return "running"
 
         if step_type == "click_position":

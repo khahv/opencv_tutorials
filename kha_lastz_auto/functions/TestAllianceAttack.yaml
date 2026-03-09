@@ -1,8 +1,11 @@
 # Function: TestAllianceAttack
 # Triggered by alliance_attacked event (AllianceBeingAttackedWarning icon detected).
-# Purpose: verify the alliance_attack_detector trigger is wired correctly.
-description: "Test alliance_attacked trigger: log detection and sleep briefly"
+# Action: send Zalo message (configurable message + repeat interval). Optional sleep for testing.
+description: "Alliance attacked: send Zalo alert, repeat every 300s while icon visible"
 
 steps:
+  - event_type: send_zalo
+    message: " @All Bớ làng nước ơi!, liên minh đang bị tấn công"
+    repeat_interval_sec: 300
   - event_type: sleep
     duration_sec: 3

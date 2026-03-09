@@ -17,12 +17,12 @@ steps:
 
 
   - event_type: match_click
-    template: buttons_template/TreasureTest.png
+    template: buttons_template/Treasure3.png
     threshold: 0.6
     run_always: true
     one_shot: false
     timeout_sec: 60
-    max_clicks: 500
+    max_clicks: 3000
     click_offset_y: 0.1
     cache_position: true
     click_storm_sec: 60         # detect once, storm for entire session (no detection gaps)

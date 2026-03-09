@@ -7,10 +7,11 @@ class AllianceAttackDetector:
 
     - Attack starts:  icon found in any single frame.
     - Attack ends:    icon absent for `clear_sec` consecutive seconds.
+    Zalo notification is configured in function YAML (event_type: send_zalo) and triggered by config.
     """
 
     def __init__(self, warning_template_path: str,
-                 threshold: float = 0.75, clear_sec: float = 10.0):
+                 threshold: float = 0.6, clear_sec: float = 10.0):
         self._vision = Vision(warning_template_path)
         self._threshold = threshold
         self._clear_sec = clear_sec

@@ -1,16 +1,22 @@
 import time
 from vision import Vision
 
+try:
+    import zalo_clicker
+except ImportError:
+    zalo_clicker = None
+
 
 class AttackDetector:
     """Detect being-attacked state by matching the BeingAttackedWarning icon.
 
     - Attack starts:  icon found in any single frame.
     - Attack ends:    icon absent for `clear_sec` consecutive seconds.
+    Zalo message is configured in function YAML (event_type: send_zalo) and triggered by config.
     """
 
     def __init__(self, warning_template_path: str,
-                 threshold: float = 0.75, clear_sec: float = 10.0):
+                 threshold: float = 0.6, clear_sec: float = 10.0):
         self._vision = Vision(warning_template_path)
         self._threshold = threshold
         self._clear_sec = clear_sec
@@ -33,6 +39,11 @@ class AttackDetector:
                 self._attacked = True
                 self._clear_since = None
                 log.info("[Alert] House is being attacked!")
+                if zalo_clicker:
+                    try:
+                        zalo_clicker.run_zalo_click(logger=log)
+                    except Exception as e:
+                        log.warning("[ZaloClicker] %s", e)
                 return "started"
         else:
             if icon:
