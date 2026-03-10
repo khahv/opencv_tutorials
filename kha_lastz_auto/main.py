@@ -274,14 +274,15 @@ for item in schedules:
     next_run_at[fn_name] = it.get_next(float)
 
 # ── FIFO queue (functions waiting to run) ─────────────────────────────────────
-pending_queue = []   # list of fn_name, FIFO order
+# Each item: (fn_name, trigger_event, trigger_active_cb) so dequeued trigger-based functions keep repeat (e.g. send_zalo).
+pending_queue = []   # list of (fn_name, trigger_event, trigger_active_cb)
 
-def _queue_add(fn_name, reason="cron"):
-    """Add fn_name to pending_queue if not already queued."""
-    if fn_name in pending_queue:
+def _queue_add(fn_name, reason="cron", trigger_event=None, trigger_active_cb=None):
+    """Add fn_name to pending_queue if not already queued. Store trigger_* so send_zalo repeat works when dequeued."""
+    if any(item[0] == fn_name for item in pending_queue):
         log.info("[Scheduler] {} already in queue, skip duplicate ({})".format(fn_name, reason))
         return
-    pending_queue.append(fn_name)
+    pending_queue.append((fn_name, trigger_event, trigger_active_cb))
     log.info("[Scheduler] {} queued (reason={})".format(fn_name, reason))
 
 def _try_start(fn_name, trigger="hotkey", trigger_event=None, trigger_active_cb=None):
@@ -304,21 +305,24 @@ def _try_start(fn_name, trigger="hotkey", trigger_event=None, trigger_active_cb=
             log.info("[Scheduler] {} stopped (same key toggle)".format(fn_name))
         else:
             log.info("[Scheduler] {} blocked by {} [{}] -> queued".format(fn_name, cur_name, trigger))
-            _queue_add(fn_name, reason=trigger)
+            _queue_add(fn_name, reason=trigger, trigger_event=trigger_event, trigger_active_cb=trigger_active_cb)
     else:
         runner.start(fn_name, wincap, trigger_event=trigger_event, trigger_active_cb=trigger_active_cb)
 
 def _process_queue():
-    """Pop next FIFO item from queue and start it."""
+    """Pop next FIFO item from queue and start it. Pass trigger_* so detector-triggered send_zalo can repeat."""
     while pending_queue:
-        fn_name = pending_queue.pop(0)
+        item = pending_queue.pop(0)
+        fn_name = item[0]
+        trigger_event = item[1] if len(item) > 1 else None
+        trigger_active_cb = item[2] if len(item) > 2 else None
         if not fn_enabled.get(fn_name, True):
             log.info("[Scheduler] {} dequeued but disabled, skipping".format(fn_name))
             continue
         if fn_name not in functions:
             continue
         log.info("[Scheduler] {} dequeued and starting".format(fn_name))
-        runner.start(fn_name, wincap)
+        runner.start(fn_name, wincap, trigger_event=trigger_event, trigger_active_cb=trigger_active_cb)
         return
 
 def _start_urgent(fn_name, trigger="logged_out"):
@@ -339,8 +343,8 @@ def _start_urgent(fn_name, trigger="logged_out"):
         interrupted = runner.function_name
         runner.stop()
         # Re-insert interrupted function at the front of the queue (skip duplicates)
-        if interrupted and interrupted != fn_name and interrupted not in pending_queue:
-            pending_queue.insert(0, interrupted)
+        if interrupted and interrupted != fn_name and not any(x[0] == interrupted for x in pending_queue):
+            pending_queue.insert(0, (interrupted, None, None))
             log.info("[Scheduler] {} interrupted by {} [{}], re-queued at front".format(
                 interrupted, fn_name, trigger))
 
@@ -364,11 +368,33 @@ if alliance_attacked_triggers:
         log.info("Cron next run: {} at {}".format(
             fn_name, datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")))
 if pending_queue:
-    log.info("Pending queue: {}".format(pending_queue))
+    log.info("Pending queue: {}".format([x[0] for x in pending_queue]))
 
 # ── UI ────────────────────────────────────────────────────────────────────────
 config_manager.init_if_missing(fn_configs, fn_enabled)
 bot_paused = {"paused": False}
+
+
+def _rebuild_trigger_lists():
+    """Rebuild detector trigger lists from fn_configs + fn_enabled so enable/disable in UI takes effect without restart."""
+    attacked_triggers.clear()
+    treasure_detected_triggers.clear()
+    logged_out_triggers.clear()
+    alliance_attacked_triggers.clear()
+    for fc in fn_configs:
+        name = fc.get("name")
+        trigger = fc.get("trigger")
+        enabled = fn_enabled.get(name, True)
+        if not name or not enabled:
+            continue
+        if trigger == "attacked":
+            attacked_triggers.append(name)
+        elif trigger == "treasure_detected":
+            treasure_detected_triggers.append(name)
+        elif trigger == "logged_out":
+            logged_out_triggers.append(name)
+        elif trigger == "alliance_attacked":
+            alliance_attacked_triggers.append(name)
 
 
 def _rebuild_schedules():
@@ -435,6 +461,7 @@ def _on_cron_change(fn_name, cron_expr):
 
 def _on_enabled_change(fn_name, enabled):
     """Called from UI when user toggles a function enabled/disabled."""
+    _rebuild_trigger_lists()
     _rebuild_schedules()
 
 
@@ -506,10 +533,18 @@ treasure_detector = TreasureDetector(
 )
 
 # Callbacks for trigger-based functions: send_zalo with repeat_interval_sec uses these to repeat while detector still active.
+# When game window is closed, detector can't run so _attacked/_treasure_visible never clear — we must return False so Zalo repeat stops.
+def _is_game_window_valid():
+    try:
+        import win32gui as _wg
+        return wincap.hwnd and _wg.IsWindow(wincap.hwnd)
+    except Exception:
+        return False
+
 trigger_active_callbacks = {
-    "attacked": lambda: attack_detector._attacked,
-    "alliance_attacked": lambda: alliance_attack_detector._attacked,
-    "treasure_detected": lambda: treasure_detector._treasure_visible,
+    "attacked": lambda: _is_game_window_valid() and attack_detector._attacked,
+    "alliance_attacked": lambda: _is_game_window_valid() and alliance_attack_detector._attacked,
+    "treasure_detected": lambda: _is_game_window_valid() and treasure_detector._treasure_visible,
 }
 
 from exit_banner_detector import ExitBannerDetector

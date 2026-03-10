@@ -16,7 +16,7 @@ steps:
     timeout_sec: 2
 
   - event_type: match_click
-    template: buttons_template/YellowTruckSmall.png
+    template: buttons_template/YellowTruckSmall2.png
     threshold: 0.70
     one_shot: true
     timeout_sec: 3
