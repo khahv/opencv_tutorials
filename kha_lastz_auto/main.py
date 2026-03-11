@@ -8,6 +8,7 @@ import threading
 import logging
 from datetime import datetime
 
+
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 from dotenv import load_dotenv
@@ -216,7 +217,19 @@ if _ref_w and _ref_h:
 else:
     log.info("Vision scale: 1.0 (reference_width/height not set — using current window size)")
 
-vision_module.set_global_scale(1.0)
+def update_vision_scale():
+    current_w = wincap.w 
+    # Dùng luôn biến _ref_w đã load ở trên
+    if _ref_w and current_w > 0:
+        new_scale = current_w / _ref_w
+        vision_module.set_global_scale(new_scale)
+        return new_scale
+    return 1.0
+
+# vision_module.set_global_scale(1.0)
+
+actual_scale = update_vision_scale()
+
 
 fn_settings = config_manager.load_fn_settings()
 runner = FunctionRunner(vision_cache, fn_settings=fn_settings)
@@ -480,6 +493,20 @@ _ui = BotUI(fn_enabled, fn_configs, runner, next_run_at,
 # ── Focus thread ──────────────────────────────────────────────────────────────
 running = True
 
+_highgui_warned = False
+
+def _safe_waitkey(ms=1):
+    """Yield time / pump HighGUI events if available. Works on OpenCV builds with GUI: NONE."""
+    global _highgui_warned
+    try:
+        return cv.waitKey(ms)
+    except Exception as e:
+        if not _highgui_warned:
+            log.warning("[OpenCV] HighGUI not available (waitKey failed): {}".format(e))
+            _highgui_warned = True
+        time.sleep(ms / 1000.0)
+        return -1
+
 def focus_loop():
     while running and not exit_requested:
         if not bot_paused["paused"]:
@@ -647,7 +674,7 @@ detector_lock = threading.Lock()
 _last_detector_restart = 0
 
 def _game_loop():
-    global _last_detector_restart, _detector_thread, running, _last_capture_time, last_stopped_key
+    global _last_detector_restart, _detector_thread, running, _last_capture_time, last_stopped_key, _show_preview
     now = time.time()
     while running and not exit_requested:
         if exit_requested:
@@ -686,7 +713,7 @@ def _game_loop():
             break
 
         if bot_paused["paused"]:
-            cv.waitKey(1)
+            _safe_waitkey(1)
             continue
 
         now = time.time()
@@ -703,9 +730,10 @@ def _game_loop():
         # Throttle to 10 FPS — hotkey/cron above still run every iteration
         _now = time.time()
         if _now - _last_capture_time < _CAPTURE_INTERVAL:
-            cv.waitKey(1)
+            _safe_waitkey(1)
             continue
         _last_capture_time = _now
+        update_vision_scale()
 
         # Get screenshot and update runner
         screenshot = wincap.get_screenshot()
@@ -743,10 +771,12 @@ def _game_loop():
 
         if _show_preview:
             cv.imshow("LastZ Capture", screenshot)
-            if cv.waitKey(1) == ord("q"):
+            if _safe_waitkey(1) == ord("q"):
                 break
+            if _highgui_warned:
+                _show_preview = False
         else:
-            cv.waitKey(1)
+            _safe_waitkey(1)
 
 # Start game loop in background, then run UI on main thread (blocks until window closed)
 game_thread = threading.Thread(target=_game_loop, daemon=True)

@@ -5,6 +5,7 @@ import threading
 import numpy as np
 import win32gui, win32ui, win32con
 import mss
+from pynput import mouse
 
 log = logging.getLogger("kha_lastz")
 
@@ -59,6 +60,32 @@ class WindowCapture:
             self.cropped_y = client_top  - window_rect[1]
             self.offset_x = client_left
             self.offset_y = client_top
+
+
+        # --- Add Mouse Debugger Logic Start ---
+        def on_click(x, y, button, pressed):
+            if pressed:
+                # Calculate based on current offsets
+                local_x = x - self.offset_x
+                local_y = y - self.offset_y
+                
+                # Calculate ratios
+                rel_x = local_x / self.w
+                rel_y = local_y / self.h
+                
+                # Check if click is inside the game window
+                if 0 <= rel_x <= 1 and 0 <= rel_y <= 1:
+                    print(f"\n[MOUSE-LOG] Inside Game Window:")
+                    print(f"  - Local Pixel: ({local_x}, {local_y})")
+                    print(f"  - Ratio:       x={rel_x:.4f}, y={rel_y:.4f}")
+                    print(f"  - YAML ROI:    x: {rel_x:.2f}, y: {rel_y:.2f}")
+                else:
+                    # Clicked outside the game window
+                    print(f"\n[MOUSE-LOG] Clicked Outside at: ({x}, {y})")
+
+        # Start the listener thread
+        self.listener = mouse.Listener(on_click=on_click)
+        self.listener.start()
 
         log.info('WindowCapture: client size = {}x{}, screen offset = ({}, {})'.format(self.w, self.h, self.offset_x, self.offset_y))
         # mss uses thread-local GDI handles on Windows; use per-thread instance so get_screenshot() works from any thread
