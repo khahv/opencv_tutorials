@@ -63,12 +63,9 @@ def get_global_scale():
 
 class Vision:
 
-    needle_img = None
-    needle_w = 0
-    needle_h = 0
-    method = None
-
     def __init__(self, needle_img_path, method=cv.TM_CCOEFF_NORMED):
+        # We ignore 'method' since we use SIFT now, keeping it for backward compatibility of signature
+        self.needle_img_path = needle_img_path
         self.needle_img = cv.imread(needle_img_path, cv.IMREAD_UNCHANGED)
         if self.needle_img is None:
             raise FileNotFoundError('Khong tim thay anh: {}'.format(needle_img_path))
@@ -77,15 +74,24 @@ class Vision:
 
         self.needle_w = self.needle_img.shape[1]
         self.needle_h = self.needle_img.shape[0]
-        self.method = method
-        # Pre-convert needle to grayscale — matchTemplate on 1-channel is ~3x faster than BGR
+
         if len(self.needle_img.shape) == 3:
             self.needle_gray = cv.cvtColor(self.needle_img, cv.COLOR_BGR2GRAY)
         else:
             self.needle_gray = self.needle_img
 
-    def exists(self, haystack_img, threshold=0.5) -> bool:
-        """Nhanh hon find(): chi kiem tra co match hay khong, khong tinh vi tri, khong groupRectangles."""
+        # Initialize SIFT
+        self.sift = cv.SIFT_create()
+        self.needle_kp, self.needle_des = self.sift.detectAndCompute(self.needle_gray, None)
+        
+        # FLANN Matcher
+        FLANN_INDEX_KDTREE = 1
+        index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
+        search_params = dict(checks=50)
+        self.flann = cv.FlannBasedMatcher(index_params, search_params)
+
+    def exists(self, haystack_img, min_match_count=10) -> bool:
+        """Kiem tra xem co the tim thay object hay khong bang SIFT."""
         scale = _global_scale
         if scale != 1.0:
             nw = max(4, int(haystack_img.shape[1] / scale))
@@ -94,15 +100,35 @@ class Vision:
             norm = cv.resize(haystack_img, (nw, nh), interpolation=interp)
         else:
             norm = haystack_img
+
         if self.needle_w > norm.shape[1] or self.needle_h > norm.shape[0]:
             return False
-        norm_gray = _get_gray(norm)
-        result = cv.matchTemplate(norm_gray, self.needle_gray, self.method)
-        _, max_val, _, _ = cv.minMaxLoc(result)
-        return max_val >= threshold
 
-    
-    def find(self, haystack_img, threshold=0.5, debug_mode=None, is_color=False):
+        norm_gray = _get_gray(norm)
+        kp, des = self.sift.detectAndCompute(norm_gray, None)
+
+        if des is None or self.needle_des is None:
+            return False
+            
+        if len(des) < 2 or len(self.needle_des) < 2:
+            return False
+
+        matches = self.flann.knnMatch(self.needle_des, des, k=2)
+
+        if not matches:
+            return False
+            
+        good_matches = 0
+        for match in matches:
+            if len(match) == 2:
+                m, n = match
+                if m.distance < 0.7 * n.distance:
+                    good_matches += 1
+
+        return good_matches >= min_match_count
+
+    def find(self, haystack_img, min_match_count=10, debug_mode=None, is_color=False):
+        """Tim vi tri cua ONE best match bang SIFT."""
         scale = _global_scale
         # Normalize screenshot
         if scale != 1.0:
@@ -112,62 +138,69 @@ class Vision:
             norm = cv.resize(haystack_img, (nw, nh), interpolation=interp)
         else:
             norm = haystack_img
+
         if self.needle_w > norm.shape[1] or self.needle_h > norm.shape[0]:
             return []
-        # ===== MATCH TEMPLATE =====
-        if not is_color:
-            norm_gray = _get_gray(norm)
-            result = cv.matchTemplate(norm_gray, self.needle_gray, self.method)
-        else:
-            if len(norm.shape) == 2:
-                norm = cv.cvtColor(norm, cv.COLOR_GRAY2BGR)
 
-            needle_bgr = self.needle_img if len(self.needle_img.shape) == 3 else \
-                cv.cvtColor(self.needle_img, cv.COLOR_GRAY2BGR)
+        # Convert to grayscale if not already
+        norm_gray = _get_gray(norm)
 
-            result = cv.matchTemplate(norm, needle_bgr, self.method)
-        # ===== FIND LOCATIONS =====
-        locs = list(zip(*np.where(result >= threshold)[::-1]))
-        if not locs:
+        kp, des = self.sift.detectAndCompute(norm_gray, None)
+
+        if des is None or self.needle_des is None:
             return []
-        # ===== GROUP RECTANGLES =====
-        rects = []
-        for loc in locs:
-            r = [int(loc[0]), int(loc[1]), self.needle_w, self.needle_h]
-            rects.append(r)
-            rects.append(r)
-
-        rects, _ = cv.groupRectangles(rects, groupThreshold=1, eps=0.5)
-
-        if not len(rects):
+            
+        if len(des) < 2 or len(self.needle_des) < 2:
             return []
 
-        # ===== CONVERT TO ORIGINAL COORD =====
-        points = []
+        matches = self.flann.knnMatch(self.needle_des, des, k=2)
 
-        for x, y, w, h in rects:
+        # Lowe's ratio test
+        good = []
+        for match in matches:
+            if len(match) == 2:
+                m, n = match
+                if m.distance < 0.7 * n.distance:
+                    good.append(m)
 
-            cx = int((x + w // 2) * scale)
-            cy = int((y + h // 2) * scale)
+        if debug_mode:
+            _log.info(f"[SIFT] {self.needle_img_path if hasattr(self, 'needle_img_path') else 'template'} -> {len(good)}/{min_match_count} good matches.")
 
-            points.append((cx, cy))
+        if len(good) >= min_match_count:
+            # Lấy tọa độ các điểm match
+            src_pts = np.float32([self.needle_kp[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
+            dst_pts = np.float32([kp[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
 
-            if debug_mode == "rectangles":
-                ox, oy = int(x * scale), int(y * scale)
-                cv.rectangle(haystack_img,
-                            (ox, oy),
-                            (ox + int(w * scale), oy + int(h * scale)),
-                            (0, 255, 0), 2)
-
-            elif debug_mode == "points":
-                cv.drawMarker(haystack_img,
-                            (cx, cy),
-                            (255, 0, 255),
-                            cv.MARKER_CROSS,
-                            40,
-                            2)
-
-        if debug_mode in ("rectangles", "points"):
-            cv.imshow("Matches", haystack_img)
-
-        return points
+            # Tính toán Homography matrix để tìm vùng chứa object
+            M, mask = cv.findHomography(src_pts, dst_pts, cv.RANSAC, 5.0)
+            
+            if M is not None:
+                if debug_mode:
+                    _log.debug(f"[SIFT] Homography matrix found. Emitting point.")
+                # Tọa độ 4 góc của template
+                h, w = self.needle_gray.shape
+                pts = np.float32([[0, 0], [0, h - 1], [w - 1, h - 1], [w - 1, 0]]).reshape(-1, 1, 2)
+                
+                # Ánh xạ 4 góc sang viền trên hình to
+                dst = cv.perspectiveTransform(pts, M)
+                
+                # Tính tâm của vùng được match (theo tọa độ đã scale 'norm')
+                cx_norm = int(np.mean(dst[:, 0, 0]))
+                cy_norm = int(np.mean(dst[:, 0, 1]))
+                
+                # Revert lại tọa độ original nếu có global_scale
+                cx = int(cx_norm * scale)
+                cy = int(cy_norm * scale)
+                
+                if debug_mode in ("rectangles", "points"):
+                    # Vẽ viền tìm đc
+                    if debug_mode == "rectangles":
+                        dst_scaled = np.int32(dst * scale)
+                        cv.polylines(haystack_img, [dst_scaled], True, (0, 255, 0), 3, cv.LINE_AA)
+                    elif debug_mode == "points":
+                        cv.drawMarker(haystack_img, (cx, cy), (255, 0, 255), cv.MARKER_CROSS, 40, 2)
+                    cv.imshow("Matches", haystack_img)
+                    
+                return [(cx, cy)]
+                
+        return []

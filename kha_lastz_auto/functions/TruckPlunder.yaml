@@ -5,19 +5,19 @@ steps:
 
   - event_type: match_click
     template: buttons_template/TruckIcon.png
-    threshold: 0.75
+    min_match_count: 0.75
     one_shot: true
     timeout_sec: 10
 
   - event_type: match_click
     template: buttons_template/HideTruckFromThisStateUnchecked.png
-    threshold: 0.99
+    min_match_count: 0.99
     one_shot: true
     timeout_sec: 2
 
   - event_type: match_click
     template: buttons_template/YellowTruckSmall2.png
-    threshold: 0.70
+    min_match_count: 0.70
     one_shot: true
     timeout_sec: 3
     run_always: true
@@ -47,7 +47,7 @@ steps:
   - event_type: match_count
     template: buttons_template/OrangeHeroFragment.png
     count: 2
-    threshold: 0.75
+    min_match_count: 0.75
     timeout_sec: 1
     run_always: true
     on_fail_goto: 2
@@ -57,7 +57,7 @@ steps:
   # If assertions fail → retry by jumping back to step 2 (click YellowTruck again)
   - event_type: ocr_log
     anchor_template: buttons_template/SPlunderTruckSmallBanner.png
-    threshold: 0.70
+    min_match_count: 0.70
     timeout_sec: 3
     require_new_click: true
     run_always: true
@@ -93,6 +93,6 @@ steps:
   # Reached only if server match AND power < 10,000,000 AND OrangeHeroFragment visible
   - event_type: match_click
     template: buttons_template/TruckLootButton.png
-    threshold: 0.75
+    min_match_count: 0.75
     one_shot: true
     timeout_sec: 5

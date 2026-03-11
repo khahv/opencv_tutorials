@@ -79,9 +79,6 @@ class WindowCapture:
                     print(f"  - Local Pixel: ({local_x}, {local_y})")
                     print(f"  - Ratio:       x={rel_x:.4f}, y={rel_y:.4f}")
                     print(f"  - YAML ROI:    x: {rel_x:.2f}, y: {rel_y:.2f}")
-                else:
-                    # Clicked outside the game window
-                    print(f"\n[MOUSE-LOG] Clicked Outside at: ({x}, {y})")
 
         # Start the listener thread
         self.listener = mouse.Listener(on_click=on_click)

@@ -286,7 +286,7 @@ class FunctionRunner:
 
         if step_type == "match_click":
             template = step.get("template")
-            threshold = step.get("threshold", 0.75)
+            min_match_count = step.get("min_match_count", 10)
             one_shot = step.get("one_shot", True)
             timeout_sec = step.get("timeout_sec") or 999
             refresh_sleep_sec = step.get("refresh_sleep_sec", 1.0)
@@ -347,11 +347,11 @@ class FunctionRunner:
                 dbg = 'info' if (debug_click or debug_log) else None
                 meta_list = None
                 if match_color:
-                    result = vision.find(screenshot, threshold=threshold, debug_mode=dbg, is_color=True)
+                    result = vision.find(screenshot, min_match_count=min_match_count, debug_mode=dbg, is_color=True)
                     points = result[0] if isinstance(result, tuple) else result
                     meta_list = result[1] if isinstance(result, tuple) and len(result) > 1 else None
                 else:
-                    points = vision.find(screenshot, threshold=threshold, debug_mode=dbg)
+                    points = vision.find(screenshot, min_match_count=min_match_count, debug_mode=dbg)
                 if points:
                     self._step_pos_cache = points[0]
                 elif debug_log:
@@ -360,7 +360,7 @@ class FunctionRunner:
                 # Fallback: debug_click YellowTruckSmall but 0 passed color filter → save best match anyway (once)
                 if not points and debug_click and "YellowTruckSmall" in (template or ""):
                     if not getattr(self, '_debug_yellow_fallback_saved', False):
-                        _fallback = vision.find(screenshot, threshold=0.5, debug_mode=None)
+                        _fallback = vision.find(screenshot, min_match_count=10, debug_mode=None)
                         if _fallback:
                             self._debug_yellow_fallback_saved = True
                             rc = _fallback[0]
@@ -377,7 +377,7 @@ class FunctionRunner:
                     _refresh_tpl = step.get("refresh_template")
                     _v_ref = self.vision_cache.get(_refresh_tpl) if _refresh_tpl else None
                     if _v_ref:
-                        _ref_pts = _v_ref.find(screenshot, threshold=step.get("threshold", 0.75), debug_mode=None)
+                        _ref_pts = _v_ref.find(screenshot, min_match_count=step.get("min_match_count", 10), debug_mode=None)
                         if _ref_pts:
                             _rsx, _rsy = wincap.get_screen_position(tuple(_ref_pts[0]))
                             pyautogui.click(_rsx, _rsy)
@@ -451,13 +451,13 @@ class FunctionRunner:
                             if _ok:
                                 _passed.append(_pt)
                         if _rtr_top_k:
-                            # top_k: skip threshold, pick the K trucks with highest edge density
+                            # top_k: skip min_match_count, pick the K trucks with highest edge density
                             _all_sorted = sorted(points, key=lambda p: _rtr_density_map.get(tuple(p), 0), reverse=True)
                             _passed = _all_sorted[:_rtr_top_k]
                         elif len(_passed) == 0:
-                            pass  # all filtered out by threshold
+                            pass  # all filtered out by min_match_count
                         if not self._rtr_page_logged:
-                            log.info("[Runner] {} → require_text_in_region ({} trucks, threshold={:.3f}): {}".format(
+                            log.info("[Runner] {} → require_text_in_region ({} trucks, min_match_count={:.3f}): {}".format(
                                 self._step_label(step), len(points), _rtr_density,
                                 " | ".join(_rtr_log_parts)))
                         self._rtr_cache[_rtr_key] = (_passed, _rtr_density_map)
@@ -545,7 +545,7 @@ class FunctionRunner:
                         _refresh_tpl = step.get("refresh_template")
                         _v_ref = self.vision_cache.get(_refresh_tpl) if _refresh_tpl else None
                         if _v_ref:
-                            _ref_pts = _v_ref.find(screenshot, threshold=threshold, debug_mode=None)
+                            _ref_pts = _v_ref.find(screenshot, min_match_count=min_match_count, debug_mode=None)
                             if _ref_pts:
                                 _rsx, _rsy = wincap.get_screen_position(tuple(_ref_pts[0]))
                                 pyautogui.click(_rsx, _rsy)
@@ -683,7 +683,7 @@ class FunctionRunner:
 
         if step_type == "match_move":
             template     = step.get("template")
-            threshold    = step.get("threshold", 0.75)
+            min_match_count    = step.get("min_match_count", 10)
             timeout_sec  = step.get("timeout_sec") or 999
             click_offset_x = step.get("click_offset_x") or 0.0
             click_offset_y = step.get("click_offset_y") or 0.0
@@ -694,7 +694,7 @@ class FunctionRunner:
             if not vision:
                 self._advance_step(True)
                 return "running"
-            points = vision.find(screenshot, threshold=threshold, debug_mode='info' if (debug_click or debug_log) else None)
+            points = vision.find(screenshot, min_match_count=min_match_count, debug_mode='info' if (debug_click or debug_log) else None)
             if points:
                 raw_center = points[0]
                 center = list(raw_center)
@@ -728,7 +728,7 @@ class FunctionRunner:
             # Find ALL visible instances of template and click each one, then advance.
             # If none found within timeout_sec, advance anyway.
             template           = step.get("template")
-            threshold          = step.get("threshold", 0.75)
+            min_match_count          = step.get("min_match_count", 10)
             timeout_sec        = step.get("timeout_sec") or 10
             click_interval_sec = step.get("click_interval_sec", 0.15)
 
@@ -736,7 +736,7 @@ class FunctionRunner:
             if not vision:
                 self._advance_step(True)
                 return "running"
-            points = vision.find(screenshot, threshold=threshold, debug_mode=None)
+            points = vision.find(screenshot, min_match_count=min_match_count, debug_mode=None)
             if points:
                 for pt in points:
                     sx, sy = wincap.get_screen_position(tuple(pt))
@@ -812,13 +812,13 @@ class FunctionRunner:
 
         if step_type == "wait_until_match":
             template = step.get("template")
-            threshold = step.get("threshold", 0.75)
+            min_match_count = step.get("min_match_count", 10)
             timeout_sec = step.get("timeout_sec") or 30
             vision = self.vision_cache.get(template)
             if not vision:
                 self._advance_step(True)
                 return "running"
-            points = vision.find(screenshot, threshold=threshold, debug_mode=None)
+            points = vision.find(screenshot, min_match_count=min_match_count, debug_mode=None)
             if points:
                 log.info("[Runner] {} → true".format(self._step_label(step)))
                 self._advance_step(True)
@@ -843,7 +843,7 @@ class FunctionRunner:
             level_anchor_offset = step.get("level_anchor_offset")
             plus_template = step.get("plus_template")
             minus_template = step.get("minus_template")
-            threshold = step.get("threshold", 0.75)
+            min_match_count = step.get("min_match_count", 10)
             timeout_sec = step.get("timeout_sec") or 30
             click_interval = step.get("click_interval_sec", 0.3)
             min_level      = step.get("min_level", 1)
@@ -865,7 +865,7 @@ class FunctionRunner:
             if level_anchor_template:
                 v_anchor = self.vision_cache.get(level_anchor_template)
                 if v_anchor:
-                    pts = v_anchor.find(screenshot, threshold=threshold, debug_mode=None)
+                    pts = v_anchor.find(screenshot, min_match_count=min_match_count, debug_mode=None)
                     if pts:
                         anchor_center = (int(pts[0][0]), int(pts[0][1]))
             # OCR: read current level
@@ -890,7 +890,7 @@ class FunctionRunner:
                 self._advance_step(True)
                 return "running"
             if current < target_level:
-                pts = vision_plus.find(screenshot, threshold=threshold, debug_mode=None)
+                pts = vision_plus.find(screenshot, min_match_count=min_match_count, debug_mode=None)
                 if pts:
                     sx, sy = wincap.get_screen_position(tuple(pts[0]))
                     pyautogui.click(sx, sy)
@@ -901,7 +901,7 @@ class FunctionRunner:
                     self._advance_step(True)
                 return "running"
             if current > target_level:
-                pts = vision_minus.find(screenshot, threshold=threshold, debug_mode=None)
+                pts = vision_minus.find(screenshot, min_match_count=min_match_count, debug_mode=None)
                 if pts:
                     sx, sy = wincap.get_screen_position(tuple(pts[0]))
                     pyautogui.click(sx, sy)
@@ -917,17 +917,17 @@ class FunctionRunner:
             # If NOT found -> click click_template to navigate there, then advance.
             visible_template = step.get("visible_template")
             click_template   = step.get("click_template")
-            threshold        = step.get("threshold", 0.75)
+            min_match_count        = step.get("min_match_count", 10)
             timeout_sec      = step.get("timeout_sec", 3)
             v_check = self.vision_cache.get(visible_template) if visible_template else None
-            if v_check and v_check.find(screenshot, threshold=threshold, debug_mode=None):
+            if v_check and v_check.find(screenshot, min_match_count=min_match_count, debug_mode=None):
                 log.info("[Runner] {} → true (visible, skip nav)".format(self._step_label(step)))
                 self._advance_step(True)
                 return "running"
             if now - self.step_start_time >= timeout_sec:
                 v_nav = self.vision_cache.get(click_template) if click_template else None
                 if v_nav:
-                    pts = v_nav.find(screenshot, threshold=threshold, debug_mode=None)
+                    pts = v_nav.find(screenshot, min_match_count=min_match_count, debug_mode=None)
                     if pts:
                         sx, sy = wincap.get_screen_position(tuple(pts[0]))
                         pyautogui.click(sx, sy)
@@ -973,14 +973,14 @@ class FunctionRunner:
             # Does NOT click anything.
             template    = step.get("template")
             count       = step.get("count", 1)
-            threshold   = step.get("threshold", 0.75)
+            min_match_count   = step.get("min_match_count", 10)
             timeout_sec = step.get("timeout_sec") or 10
             debug_save  = step.get("debug_save", False)
             vision = self.vision_cache.get(template)
             if not vision:
                 self._advance_step(True)
                 return "running"
-            points = vision.find(screenshot, threshold=threshold, debug_mode=None)
+            points = vision.find(screenshot, min_match_count=min_match_count, debug_mode=None)
             found = len(points) if points else 0
             if found >= count:
                 log.info("[Runner] {} → true (found {}/{})".format(self._step_label(step), found, count))
@@ -1034,7 +1034,7 @@ class FunctionRunner:
             # Neu tim thay template (HeadquartersButton) -> click vao -> scroll zoom out.
             # Neu khong tim thay -> chi scroll zoom out (co the da o world map roi).
             template        = step.get("template")
-            threshold       = step.get("threshold", 0.75)
+            min_match_count       = step.get("min_match_count", 10)
             scroll_times    = step.get("scroll_times", 5)
             scroll_interval = step.get("scroll_interval_sec", 0.1)
             timeout_sec     = step.get("timeout_sec", 5)
@@ -1042,7 +1042,7 @@ class FunctionRunner:
             vision = self.vision_cache.get(template) if template else None
             clicked_hq = False
             if vision:
-                points = vision.find(screenshot, threshold=threshold, debug_mode=None)
+                points = vision.find(screenshot, min_match_count=min_match_count, debug_mode=None)
                 if points:
                     sx, sy = wincap.get_screen_position(tuple(points[0]))
                     pyautogui.click(sx, sy)
@@ -1084,7 +1084,7 @@ class FunctionRunner:
             anchor_template = step.get("anchor_template") or step.get("template")
             roi_ratios      = step.get("roi_ratios")       # [x, y, w, h] 0-1 fractions
             ocr_regions     = step.get("ocr_regions")      # list of ratio-based region dicts
-            threshold       = step.get("threshold", 0.75)
+            min_match_count       = step.get("min_match_count", 10)
             anchor_offset   = step.get("anchor_offset")   # [ox, oy, w, h] px from anchor center
             char_whitelist  = step.get("char_whitelist")
             label           = step.get("label", "ocr_log")
@@ -1133,7 +1133,7 @@ class FunctionRunner:
                 self._advance_step(True)
                 return "running"
 
-            points = vision.find(screenshot, threshold=threshold, debug_mode=None)
+            points = vision.find(screenshot, min_match_count=min_match_count, debug_mode=None)
             if points:
                 cx, cy = int(points[0][0]), int(points[0][1])
                 tpl_name = os.path.splitext(os.path.basename(anchor_template))[0]

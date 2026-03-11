@@ -11,9 +11,9 @@ class TreasureDetector:
     """
 
     def __init__(self, treasure_template_path: str,
-                 threshold: float = 0.6, clear_sec: float = 10.0):
+                 min_match_count: int = 10, clear_sec: float = 10.0):
         self._vision = Vision(treasure_template_path)
-        self._threshold = threshold
+        self._threshold = min_match_count
         self._clear_sec = clear_sec
         self._treasure_visible = False
         self._clear_since = None
@@ -26,7 +26,7 @@ class TreasureDetector:
             "ended"    — treasure just disappeared this frame
             None       — no state change
         """
-        icon = self._vision.exists(screenshot, threshold=self._threshold)
+        icon = self._vision.exists(screenshot, min_match_count=self._threshold)
         now = time.time()
 
         if not self._treasure_visible:

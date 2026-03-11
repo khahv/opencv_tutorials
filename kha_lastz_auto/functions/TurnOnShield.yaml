@@ -9,7 +9,7 @@ steps:
 
   - event_type: match_click
     template: buttons_template/HeadquartersButton.png
-    threshold: 0.75
+    min_match_count: 0.75
     one_shot: true
     timeout_sec: 3
 
@@ -18,7 +18,7 @@ steps:
 
   - event_type: match_click
     template: buttons_template/WorldButton.png
-    threshold: 0.75
+    min_match_count: 0.75
     one_shot: true
     timeout_sec: 10
     run_always: true
@@ -35,7 +35,7 @@ steps:
 
   - event_type: match_click
     template: buttons_template/CityWallIcon.png
-    threshold: 0.75
+    min_match_count: 0.75
     one_shot: true
     timeout_sec: 10
 
@@ -49,7 +49,7 @@ steps:
   # debug_save: true -> lưu debug_ocr_PeaceShield_remaining.png để tinh chỉnh anchor_offset
   - event_type: ocr_log
     anchor_template: buttons_template/PeaceShieldActivated.png
-    threshold: 0.75
+    min_match_count: 0.75
     timeout_sec: 5
     anchor_offset: [-200, 55, 420, 28]
     char_whitelist: "0123456789:"
@@ -62,7 +62,7 @@ steps:
   # If you don't have PeaceShieldCard.png yet, capture it when shield is OFF (icon+title area only).
   - event_type: match_click
     template: buttons_template/PeaceShield.png
-    threshold: 0.75
+    min_match_count: 0.75
     one_shot: true
     timeout_sec: 10
     click_offset_x: 0.48
@@ -75,7 +75,7 @@ steps:
   # Click the Use button (right side of card, ~33% right of center)
   - event_type: match_move
     template: buttons_template/Use8HoursPeaceShield.png
-    threshold: 0.75
+    min_match_count: 0.75
     one_shot: true
     timeout_sec: 10
     click_offset_x: 0.33

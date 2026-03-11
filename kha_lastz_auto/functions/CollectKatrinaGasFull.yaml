@@ -5,12 +5,12 @@ steps:
 
   - event_type: base_zoomout
     template: buttons_template/HeadquartersButton.png
-    threshold: 0.6
+    min_match_count: 0.6
     scroll_times: 5
     scroll_interval_sec: 0.1
 
   - event_type: match_click
     template: buttons_template/KatrinaFullGas.png
-    threshold: 0.6
+    min_match_count: 0.6
     one_shot: true
     timeout_sec: 10

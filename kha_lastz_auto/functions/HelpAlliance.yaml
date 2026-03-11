@@ -4,6 +4,6 @@ description: "Click HelpAlliance button if visible"
 steps:
   - event_type: match_click
     template: buttons_template/HelpAlliance.png
-    threshold: 0.75
+    min_match_count: 0.75
     one_shot: true
     timeout_sec: 5

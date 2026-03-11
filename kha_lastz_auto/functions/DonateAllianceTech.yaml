@@ -5,28 +5,28 @@ steps:
   # Mo Alliance panel
   - event_type: match_click
     template: buttons_template/AllianceIconButton.png
-    threshold: 0.75
+    min_match_count: 0.75
     one_shot: true
     timeout_sec: 10
 
   # Vao tab Alliance Techs
   - event_type: match_click
     template: buttons_template/AllianceTechs.png
-    threshold: 0.8
+    min_match_count: 0.8
     one_shot: true
     timeout_sec: 10
 
   # Click Like de chon tech can donate
   - event_type: match_click
     template: buttons_template/AllianceTechLike.png
-    threshold: 0.75
+    min_match_count: 0.75
     one_shot: true
     timeout_sec: 10
 
   # Donate 20 lan
   - event_type: match_click
     template: buttons_template/AllianceTechDonate.png
-    threshold: 0.75
+    min_match_count: 0.75
     one_shot: false
     max_clicks: 20
     click_interval_sec: 0.03

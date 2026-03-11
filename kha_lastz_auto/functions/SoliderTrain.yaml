@@ -5,60 +5,60 @@ steps:
   # Zoom out ve world map truoc khi navigate
   - event_type: base_zoomout
     template: buttons_template/HeadquartersButton.png
-    threshold: 0.75
+    min_match_count: 0.75
     scroll_times: 5
     scroll_interval_sec: 0.1
 
   # All subsequent steps run regardless — each UI element may or may not be present
   - event_type: match_click
     template: buttons_template/ShooterCollect.png
-    threshold: 0.75
+    min_match_count: 0.75
     one_shot: true
     timeout_sec: 3
     run_always: true
 
   - event_type: match_click
     template: buttons_template/AssaultCollect.png
-    threshold: 0.75
+    min_match_count: 0.75
     one_shot: true
     timeout_sec: 5
     run_always: true
 
   - event_type: match_click
     template: buttons_template/RiderCollect.png
-    threshold: 0.75
+    min_match_count: 0.75
     one_shot: true
     timeout_sec: 5
     run_always: true
 
   - event_type: match_click
     template: buttons_template/SoliderTrain.png
-    threshold: 0.6
+    min_match_count: 0.6
     timeout_sec: 3
     click_interval_sec: 0.15
     run_always: true
 
   - event_type: match_click
     template: buttons_template/SoliderTrainButton.png
-    threshold: 0.75
+    min_match_count: 0.75
     timeout_sec: 3
     click_interval_sec: 0.15
 
   - event_type: match_click
     template: buttons_template/ReplenishAll.png
-    threshold: 0.75
+    min_match_count: 0.75
     timeout_sec: 3
     click_interval_sec: 0.15
 
   - event_type: match_click
     template: buttons_template/ConfirmYellow.png
-    threshold: 0.75
+    min_match_count: 0.75
     timeout_sec: 3
     click_interval_sec: 0.15
 
   - event_type: match_click
     template: buttons_template/SoliderTrainBackButton.png
-    threshold: 0.75
+    min_match_count: 0.75
     timeout_sec: 3
     click_interval_sec: 0.15
     run_always: true
@@ -67,21 +67,21 @@ steps:
 
   - event_type: match_click
     template: buttons_template/SoliderTrain.png
-    threshold: 0.6
+    min_match_count: 0.6
     timeout_sec: 10
     click_interval_sec: 0.15
     run_always: true
 
   - event_type: match_click
     template: buttons_template/SoliderTrainButton.png
-    threshold: 0.75
+    min_match_count: 0.75
     timeout_sec: 3
     click_interval_sec: 0.15
     run_always: true
 
   - event_type: match_click
     template: buttons_template/SoliderTrainBackButton.png
-    threshold: 0.75
+    min_match_count: 0.75
     timeout_sec: 3
     click_interval_sec: 0.15
     run_always: true
@@ -90,21 +90,21 @@ steps:
 
   - event_type: match_click
     template: buttons_template/SoliderTrain.png
-    threshold: 0.6
+    min_match_count: 0.6
     timeout_sec: 10
     click_interval_sec: 0.15
     run_always: true
 
   - event_type: match_click
     template: buttons_template/SoliderTrainButton.png
-    threshold: 0.75
+    min_match_count: 0.75
     timeout_sec: 3
     click_interval_sec: 0.15
     run_always: true
 
   - event_type: match_click
     template: buttons_template/SoliderTrainBackButton.png
-    threshold: 0.75
+    min_match_count: 0.75
     timeout_sec: 3
     click_interval_sec: 0.15
     run_always: true

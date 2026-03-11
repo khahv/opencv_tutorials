@@ -211,11 +211,11 @@ _show_preview = config.get("show_preview", False)
 
 # Resize window ve dung kich thuoc ngay khi khoi dong.
 # focus_loop se tiep tuc giu kich thuoc nay trong suot qua trinh chay.
-if _ref_w and _ref_h:
-    wincap.resize_to_client(_ref_w, _ref_h)
-    log.info("Vision scale: 1.0 (window {}x{})".format(wincap.w, wincap.h))
-else:
-    log.info("Vision scale: 1.0 (reference_width/height not set — using current window size)")
+# if _ref_w and _ref_h:
+#     wincap.resize_to_client(_ref_w, _ref_h)
+#     log.info("Vision scale: 1.0 (window {}x{})".format(wincap.w, wincap.h))
+# else:
+#     log.info("Vision scale: 1.0 (reference_width/height not set — using current window size)")
 
 def update_vision_scale():
     current_w = wincap.w 
@@ -507,17 +507,17 @@ def _safe_waitkey(ms=1):
         time.sleep(ms / 1000.0)
         return -1
 
-def focus_loop():
-    while running and not exit_requested:
-        if not bot_paused["paused"]:
-            wincap.focus_window()
-            if _ref_w and _ref_h and (wincap.w != _ref_w or wincap.h != _ref_h):
-                wincap.resize_to_client(_ref_w, _ref_h)
-                log.info("[focus_loop] Window resized back to {}x{}".format(wincap.w, wincap.h))
-        time.sleep(0.2)
+# def focus_loop():
+#     while running and not exit_requested:
+#         if not bot_paused["paused"]:
+#             wincap.focus_window()
+#             if _ref_w and _ref_h and (wincap.w != _ref_w or wincap.h != _ref_h):
+#                 wincap.resize_to_client(_ref_w, _ref_h)
+#                 log.info("[focus_loop] Window resized back to {}x{}".format(wincap.w, wincap.h))
+#         time.sleep(0.2)
 
-focus_thread = threading.Thread(target=focus_loop, daemon=True)
-focus_thread.start()
+# focus_thread = threading.Thread(target=focus_loop, daemon=True)
+# focus_thread.start()
 
 # Initial focus with timeout so SetForegroundWindow cannot hang startup (Windows can block here)
 def _focus_window_with_timeout(timeout_sec=2.0):
@@ -543,7 +543,7 @@ attack_detector = AttackDetector(
 
 logout_detector = LogoutDetector(
     template_path="buttons_template/PasswordSlot.png",
-    threshold=0.75,
+    min_match_count=10,
     confirm_sec=1.0,
     clear_sec=5.0,
 )
@@ -555,7 +555,7 @@ alliance_attack_detector = AllianceAttackDetector(
 
 treasure_detector = TreasureDetector(
     treasure_template_path="buttons_template/Treasure1.png",
-    threshold=0.6,
+    min_match_count=10,
     clear_sec=10.0,
 )
 
@@ -577,7 +577,7 @@ trigger_active_callbacks = {
 from exit_banner_detector import ExitBannerDetector
 exit_banner_detector = ExitBannerDetector(
     template_path="buttons_template/ExitGameBanner.png",
-    threshold=0.85,
+    min_match_count=15,
     check_every=5,   # 5 × 2s = 10s
 )
 

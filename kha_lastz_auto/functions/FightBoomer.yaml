@@ -5,20 +5,20 @@ steps:
   - event_type: click_unless_visible
     visible_template: buttons_template/MagnifierButton.png
     click_template: buttons_template/WorldButton.png
-    threshold: 0.75
+    min_match_count: 0.75
     timeout_sec: 3
 
   # Now click MagnifierButton (visible after navigation)
   - event_type: match_click
     template: buttons_template/MagnifierButton.png
-    threshold: 0.75
+    min_match_count: 0.75
     one_shot: true
     timeout_sec: 10
   - event_type: sleep
     duration_sec: 1
   - event_type: match_click
     template: buttons_template/BoomerButton.png
-    threshold: 0.75
+    min_match_count: 0.75
     one_shot: true
     timeout_sec: 10
   - event_type: sleep
@@ -32,27 +32,27 @@ steps:
     level_anchor_offset: [-45, -65, 110, 35]
     plus_template: buttons_template/PlusButton.png
     minus_template: buttons_template/MinusButton.png
-    threshold: 0.75
+    min_match_count: 0.75
     timeout_sec: 20
     debug_save_roi: true
   - event_type: sleep
     duration_sec: 0.5
   - event_type: match_click
     template: buttons_template/SearchButton.png
-    threshold: 0.75
+    min_match_count: 0.75
     one_shot: true
     timeout_sec: 10
   - event_type: sleep
     duration_sec: 0.5
   - event_type: match_click
     template: buttons_template/TeamUp.png
-    threshold: 0.75
+    min_match_count: 0.75
     one_shot: true
     timeout_sec: 10
   - event_type: sleep
     duration_sec: 0.5
   - event_type: match_click
     template: buttons_template/March.png
-    threshold: 0.75
+    min_match_count: 0.75
     one_shot: true
     timeout_sec: 10

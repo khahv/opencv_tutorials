@@ -6,7 +6,7 @@ steps:
   # Zoom out ve world map truoc khi navigate
   - event_type: base_zoomout
     template: buttons_template/HeadquartersButton.png
-    threshold: 0.75
+    min_match_count: 0.75
     scroll_times: 5
     scroll_interval_sec: 0.1
 
@@ -14,20 +14,20 @@ steps:
   # ExplorationReward must be clicked regardless of whether HQ nav succeeded
   - event_type: match_click
     template: buttons_template/ExplorationReward.png
-    threshold: 0.75
+    min_match_count: 0.75
     one_shot: true
     timeout_sec: 3
 
   - event_type: match_click
     template: buttons_template/ClaimButton.png
-    threshold: 0.75
+    min_match_count: 0.75
     one_shot: true
     timeout_sec: 3
 
   # Click the Collect button
   - event_type: match_click
     template: buttons_template/CollectButton.png
-    threshold: 0.75
+    min_match_count: 0.75
     one_shot: true
     timeout_sec: 10
     run_always: true

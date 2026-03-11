@@ -3,7 +3,7 @@ description: "Click lien tuc vao Treasure Helicopter khi match"
 steps:
   - event_type: match_click
     template: buttons_template/Treasure3.png
-    threshold: 0.6
+    min_match_count: 0.6
     run_always: true
     one_shot: false
     timeout_sec: 60

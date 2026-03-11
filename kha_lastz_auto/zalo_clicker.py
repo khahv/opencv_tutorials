@@ -32,14 +32,14 @@ DEFAULT_TEMPLATES_DIR = "zalo_templates"
 THRESHOLD = 0.7
 
 
-def run_zalo_click(template_path=None, threshold=THRESHOLD, click=True, logger=None):
+def run_zalo_click(template_path=None, min_match_count=THRESHOLD, click=True, logger=None):
     """
     Tim template trong cua so Zalo va click (neu click=True).
     Co the goi tu module khac (vd. attack_detector khi phat hien bi tan cong).
 
     Args:
         template_path: duong dan anh mau. None = lay file dau tien trong zalo_templates/
-        threshold: nguong match (0..1)
+        min_match_count: nguong match (0..1)
         click: True thi click, False chi tra ve toa do
         logger: logger de ghi log (neu None dung log mac dinh)
 
@@ -76,10 +76,10 @@ def run_zalo_click(template_path=None, threshold=THRESHOLD, click=True, logger=N
         return None
 
     vision = Vision(template_path)
-    return find_and_click(wincap, vision, threshold=threshold, click=click)
+    return find_and_click(wincap, vision, min_match_count=min_match_count, click=click)
 
 
-def find_and_click(wincap, vision, threshold=THRESHOLD, click=True):
+def find_and_click(wincap, vision, min_match_count=THRESHOLD, click=True):
     """
     Chup man hinh Zalo, tim template, neu thay thi click vao vi tri dau tien.
     Tra ve (sx, sy) neu tim thay va da click (hoac click=False thi van tra ve toa do), None neu khong thay.
@@ -90,7 +90,7 @@ def find_and_click(wincap, vision, threshold=THRESHOLD, click=True):
     if img is None:
         log.warning("Khong chup duoc man hinh Zalo.")
         return None
-    points = vision.find(img, threshold=threshold)
+    points = vision.find(img, min_match_count=min_match_count)
     if not points:
         return None
     cx, cy = points[0]
