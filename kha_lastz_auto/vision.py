@@ -2,6 +2,7 @@ import cv2 as cv
 import numpy as np
 import logging
 import threading
+import time
 _log = logging.getLogger("kha_lastz")
 
 
@@ -80,32 +81,34 @@ class Vision:
         else:
             self.needle_gray = self.needle_img
 
-        # Initialize SIFT
-        self.sift = cv.SIFT_create()
+        # Init SIFT and FLANN
+        # BỎ giới hạn nfeatures: vì ảnh template thì nhỏ, nhưng ảnh màn hình (haystack) rất to 1080p.
+        # Nếu giới hạn 500, SIFT sẽ chỉ lấy 500 điểm đặc trưng trên TOÀN MÀN HÌNH, dẫn đến việc bỏ sót hoàn toàn cái nút bé xíu!
+        self.sift = cv.SIFT_create(nfeatures=1000)
         self.needle_kp, self.needle_des = self.sift.detectAndCompute(self.needle_gray, None)
         
-        # FLANN Matcher
+        # FLANN parameters
         FLANN_INDEX_KDTREE = 1
         index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-        search_params = dict(checks=50)
+        search_params = dict(checks=30) # Trả lại 50 checks để đảm bảo tính chính xác
         self.flann = cv.FlannBasedMatcher(index_params, search_params)
 
     def exists(self, haystack_img, min_match_count=10) -> bool:
         """Kiem tra xem co the tim thay object hay khong bang SIFT."""
-        scale = _global_scale
-        if scale != 1.0:
-            nw = max(4, int(haystack_img.shape[1] / scale))
-            nh = max(4, int(haystack_img.shape[0] / scale))
-            interp = cv.INTER_AREA if scale > 1.0 else cv.INTER_LINEAR
-            norm = cv.resize(haystack_img, (nw, nh), interpolation=interp)
+        start_t = time.time()
+        
+        # Không cần resize haystack_img nữa vì SIFT có tính chất Scale-Invariant.
+        # Resize ảnh to tốn CPU hơn cả việc chạy SIFT.
+        # Tuy nhiên, vẫn cần chuyển sang grayscale.
+        if len(haystack_img.shape) == 3:
+            haystack_gray = cv.cvtColor(haystack_img, cv.COLOR_BGR2GRAY)
         else:
-            norm = haystack_img
+            haystack_gray = haystack_img
 
-        if self.needle_w > norm.shape[1] or self.needle_h > norm.shape[0]:
+        if self.needle_w > haystack_gray.shape[1] or self.needle_h > haystack_gray.shape[0]:
             return False
 
-        norm_gray = _get_gray(norm)
-        kp, des = self.sift.detectAndCompute(norm_gray, None)
+        kp, des = self.sift.detectAndCompute(haystack_gray, None)
 
         if des is None or self.needle_des is None:
             return False
@@ -125,32 +128,38 @@ class Vision:
                 if m.distance < 0.7 * n.distance:
                     good_matches += 1
 
+        elapsed_ms = (time.time() - start_t) * 1000
+        _log.debug(f"[SIFT exists] {self.needle_img_path if hasattr(self, 'needle_img_path') else 'template'} - Elapsed: {elapsed_ms:.1f}ms")
         return good_matches >= min_match_count
 
     def find(self, haystack_img, min_match_count=10, debug_mode=None, is_color=False):
         """Tim vi tri cua ONE best match bang SIFT."""
+        start_t = time.time()
+        
         scale = _global_scale
-        # Normalize screenshot
-        if scale != 1.0:
-            nw = max(4, int(haystack_img.shape[1] / scale))
-            nh = max(4, int(haystack_img.shape[0] / scale))
-            interp = cv.INTER_AREA if scale > 1.0 else cv.INTER_LINEAR
-            norm = cv.resize(haystack_img, (nw, nh), interpolation=interp)
+        # Save the color input for color matching later
+        haystack_color = haystack_img
+        
+        # Không cần resize haystack_img nữa vì SIFT có tính chất Scale-Invariant.
+        # Resize ảnh to tốn CPU hơn cả việc chạy SIFT.
+        # Tuy nhiên, vẫn cần chuyển sang grayscale.
+        if len(haystack_img.shape) == 3:
+            haystack_gray = cv.cvtColor(haystack_img, cv.COLOR_BGR2GRAY)
         else:
-            norm = haystack_img
+            haystack_gray = haystack_img
 
-        if self.needle_w > norm.shape[1] or self.needle_h > norm.shape[0]:
+        if self.needle_w > haystack_gray.shape[1] or self.needle_h > haystack_gray.shape[0]:
+            if debug_mode: _log.debug(f"[SIFT find] {self.needle_img_path if hasattr(self, 'needle_img_path') else 'template'} - Elapsed (fast reject): {(time.time() - start_t)*1000:.1f}ms")
             return []
 
-        # Convert to grayscale if not already
-        norm_gray = _get_gray(norm)
-
-        kp, des = self.sift.detectAndCompute(norm_gray, None)
+        kp, des = self.sift.detectAndCompute(haystack_gray, None)
 
         if des is None or self.needle_des is None:
+            if debug_mode: _log.debug(f"[SIFT find] {self.needle_img_path if hasattr(self, 'needle_img_path') else 'template'} - Elapsed (no features): {(time.time() - start_t)*1000:.1f}ms")
             return []
             
         if len(des) < 2 or len(self.needle_des) < 2:
+            if debug_mode: _log.debug(f"[SIFT find] {self.needle_img_path if hasattr(self, 'needle_img_path') else 'template'} - Elapsed (<2 features): {(time.time() - start_t)*1000:.1f}ms")
             return []
 
         matches = self.flann.knnMatch(self.needle_des, des, k=2)
@@ -166,6 +175,7 @@ class Vision:
         if debug_mode:
             _log.info(f"[SIFT] {self.needle_img_path if hasattr(self, 'needle_img_path') else 'template'} -> {len(good)}/{min_match_count} good matches.")
 
+        points = []
         if len(good) >= min_match_count:
             # Lấy tọa độ các điểm match
             src_pts = np.float32([self.needle_kp[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
@@ -184,23 +194,56 @@ class Vision:
                 # Ánh xạ 4 góc sang viền trên hình to
                 dst = cv.perspectiveTransform(pts, M)
                 
-                # Tính tâm của vùng được match (theo tọa độ đã scale 'norm')
-                cx_norm = int(np.mean(dst[:, 0, 0]))
-                cy_norm = int(np.mean(dst[:, 0, 1]))
+                # ------ BẮT ĐẦU KIỂM TRA CHỐNG NHẬN DIỆN SAI (FALSE POSITIVE) ------
+                # Do SIFT có thể nhặt điểm rác từ nhiều nơi ráp lại thành hình kỳ dị
+                dst_int = np.int32(dst)
+                if not cv.isContourConvex(dst_int):
+                    if debug_mode: _log.debug("[SIFT] False positive rejected (Not convex)")
+                    return []
+                    
+                area = cv.contourArea(dst_int)
+                needle_area = h * w
+                # Với UI Game, kích thước scale thường chỉ dao động từ 0.5x đến 2x. 
+                # Diện tích bình phương nên nằm trong khoảng 0.25x -> 4x
+                if area < needle_area * 0.2 or area > needle_area * 5.0:
+                    if debug_mode: _log.debug(f"[SIFT] False positive rejected (Area {area} vs {needle_area})")
+                    return []
+                # --------------------------------------------------------------------
                 
-                # Revert lại tọa độ original nếu có global_scale
-                cx = int(cx_norm * scale)
-                cy = int(cy_norm * scale)
+                # Tính tâm của bounding box
+                center_x = int(np.mean(dst[:, 0, 0]))
+                center_y = int(np.mean(dst[:, 0, 1]))
+                
+                # Trả về tọa độ pixel ĐÃ ĐƯỢC SCALE để bot_engine click đúng
+                if scale != 1.0:
+                    center_x = int(center_x * scale)
+                    center_y = int(center_y * scale)
+                
+                points.append((center_x, center_y))
                 
                 if debug_mode in ("rectangles", "points"):
                     # Vẽ viền tìm đc
                     if debug_mode == "rectangles":
-                        dst_scaled = np.int32(dst * scale)
+                        dst_scaled = np.int32(dst * scale) if scale != 1.0 else np.int32(dst)
                         cv.polylines(haystack_img, [dst_scaled], True, (0, 255, 0), 3, cv.LINE_AA)
                     elif debug_mode == "points":
-                        cv.drawMarker(haystack_img, (cx, cy), (255, 0, 255), cv.MARKER_CROSS, 40, 2)
+                        cv.drawMarker(haystack_img, (center_x, center_y), (255, 0, 255), cv.MARKER_CROSS, 40, 2)
                     cv.imshow("Matches", haystack_img)
                     
-                return [(cx, cy)]
+                if is_color and len(haystack_color.shape) == 3:
+                    # Trích xuất màu ở trung tâm match (trên ảnh đã scale)
+                    crop_w, crop_h = 10, 10
+                    rx = max(0, center_x - crop_w // 2)
+                    ry = max(0, center_y - crop_h // 2)
+                    crop = haystack_color[ry:ry+crop_h, rx:rx+crop_w]
+                    if crop.size > 0:
+                        mean_color = cv.mean(crop)[:3] # B, G, R
+                        if debug_mode: _log.debug(f"[SIFT find] {self.needle_img_path if hasattr(self, 'needle_img_path') else 'template'} - Elapsed (color): {(time.time() - start_t)*1000:.1f}ms")
+                        return [(center_x, center_y)], [{"region_bgr": mean_color}]
                 
+                if debug_mode: _log.debug(f"[SIFT find] {self.needle_img_path if hasattr(self, 'needle_img_path') else 'template'} - Elapsed (found): {(time.time() - start_t)*1000:.1f}ms")
+                return [(center_x, center_y)]
+                
+        if debug_mode: _log.debug(f"[SIFT find] {self.needle_img_path if hasattr(self, 'needle_img_path') else 'template'} - Elapsed (not found): {(time.time() - start_t)*1000:.1f}ms")
+        if is_color: return [], []
         return []

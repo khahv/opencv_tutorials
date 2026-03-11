@@ -507,17 +507,17 @@ def _safe_waitkey(ms=1):
         time.sleep(ms / 1000.0)
         return -1
 
-# def focus_loop():
-#     while running and not exit_requested:
-#         if not bot_paused["paused"]:
-#             wincap.focus_window()
-#             if _ref_w and _ref_h and (wincap.w != _ref_w or wincap.h != _ref_h):
-#                 wincap.resize_to_client(_ref_w, _ref_h)
-#                 log.info("[focus_loop] Window resized back to {}x{}".format(wincap.w, wincap.h))
-#         time.sleep(0.2)
+def focus_loop():
+    while running and not exit_requested:
+        if not bot_paused["paused"]:
+            wincap.focus_window()
+            if _ref_w and _ref_h and (wincap.w != _ref_w or wincap.h != _ref_h):
+                wincap.resize_to_client(_ref_w, _ref_h)
+                log.info("[focus_loop] Window resized back to {}x{}".format(wincap.w, wincap.h))
+        time.sleep(0.2)
 
-# focus_thread = threading.Thread(target=focus_loop, daemon=True)
-# focus_thread.start()
+focus_thread = threading.Thread(target=focus_loop, daemon=True)
+focus_thread.start()
 
 # Initial focus with timeout so SetForegroundWindow cannot hang startup (Windows can block here)
 def _focus_window_with_timeout(timeout_sec=2.0):
