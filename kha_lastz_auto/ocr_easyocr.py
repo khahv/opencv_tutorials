@@ -21,16 +21,18 @@ _log = logging.getLogger("kha_lastz")
 _reader = None
 EASYOCR_OK = False
 _tried = False
+_loading = False
 
 def preload():
     """Call at app startup to load the EasyOCR model eagerly (avoids delay on first OCR)."""
     _ensure_reader()
 
 def _ensure_reader():
-    global _reader, EASYOCR_OK, _tried
-    if _tried:
+    global _reader, EASYOCR_OK, _tried, _loading
+    if _tried or _loading:
         return _reader
-    _tried = True
+    
+    _loading = True
     try:
         import easyocr
         _log.info("[EasyOCR] Loading model (first time ~2s)...")
@@ -41,6 +43,9 @@ def _ensure_reader():
         _log.warning("[EasyOCR] Not installed. Run:  pip install easyocr")
     except Exception as e:
         _log.warning("[EasyOCR] Failed to load: {}".format(e))
+    finally:
+        _loading = False
+        _tried = True
     return _reader
 
 

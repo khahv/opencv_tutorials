@@ -790,7 +790,10 @@ except KeyboardInterrupt:
     sys.exit(0)
 
 listener.stop()
-cv.destroyAllWindows()
+try:
+    cv.destroyAllWindows()
+except Exception:
+    pass
 # Reset ve trang thai mac dinh khi thoat
 ctypes.windll.kernel32.SetThreadExecutionState(_ES_CONTINUOUS)
 log.info("=== End ===")

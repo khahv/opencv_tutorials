@@ -7,6 +7,7 @@ from datetime import datetime
 from croniter import croniter
 from fn_settings_schema import SCHEMA as _FN_SETTINGS_SCHEMA
 
+import ocr_easyocr
 _log = logging.getLogger("kha_lastz")
 
 BG     = "#1e1e2e"
@@ -62,7 +63,16 @@ class BotUI:
         self._play_lbls  = {}   # fn_name → play ▶ tk.Label
         self._rebinding  = None
         self._rebind_lbl = None
+        self._ocr_ready  = False
         self._root       = None
+        self._running_var = None
+        self._running_cb  = None
+        self._status_lbl  = None
+        self._fn_objs     = {}
+        self._kv_objs     = {}
+        self._play_btns   = {}
+        self._play_icons  = {}
+        self._play_lbls   = {}
 
     def start(self):
         """Start UI in a background thread (legacy). Prefer run_main() on main thread to avoid hangs."""
@@ -96,24 +106,32 @@ class BotUI:
         tk.Label(hf, text="KhaLastZ Bot", font=("Segoe UI", 14, "bold"),
                  bg=BG3, fg=ACCENT).pack(side="left")
 
-        # Is Running toggle
-        self._running_var = tk.BooleanVar(value=True)
+        # Is Running toggle — starts OFF, enabled only after EasyOCR preloads
+        self._running_var = tk.BooleanVar(value=False)
         self._running_cb  = tk.Checkbutton(
             hf, text="Is Running",
             variable=self._running_var,
             command=self._on_running_toggle,
             font=("Segoe UI", 10, "bold"),
             bg=BG3, activebackground=BG3,
-            fg=GREEN, activeforeground=GREEN,
-            selectcolor=GRAY2, cursor="hand2",
+            fg=RED, activeforeground=RED,
+            selectcolor=GRAY2, cursor="arrow",
+            state="disabled",
             relief="flat", bd=0, highlightthickness=0)
         self._running_cb.pack(side="right")
 
         # Status bar
         sf = tk.Frame(r, bg=BG2, padx=16, pady=8)
         sf.pack(fill="x", pady=(1, 0))
-        self._status_lbl = tk.Label(sf, text="◼  Idle",
-                                    font=("Segoe UI", 10), bg=BG2, fg=FG, anchor="w")
+
+        init_text = "◼  Idle"
+        init_fg   = FG
+        if not ocr_easyocr.EASYOCR_OK:
+            init_text = "⚙  Initializing EasyOCR engines..."
+            init_fg   = ACCENT
+
+        self._status_lbl = tk.Label(sf, text=init_text,
+                                    font=("Segoe UI", 10), bg=BG2, fg=init_fg, anchor="w")
         self._status_lbl.pack(fill="x")
 
         # Section header
@@ -981,7 +999,36 @@ class BotUI:
         if self._quit_check and self._quit_check():
             self._root.quit()
             return
-        if self._rebinding or self._bot_paused["paused"]:
+        if self._rebinding:
+            self._root.after(500, self._tick)
+            return
+
+        # ── EasyOCR dynamic state check ───────────────────────────────────────
+        if not self._ocr_ready:
+            if ocr_easyocr.EASYOCR_OK:
+                # Success: first time ready
+                self._ocr_ready = True
+                self._running_cb.config(state="normal", cursor="hand2", fg=GREEN, activeforeground=GREEN)
+                self._running_var.set(True)
+                self._on_running_toggle()  # resumes bot
+                _log.info("[UI] EasyOCR loaded. Bot resumed.")
+            elif ocr_easyocr._loading:
+                # Still actively loading
+                self._status_lbl.config(text="⚙  Initializing EasyOCR engines...", fg=ACCENT)
+                self._root.after(500, self._tick)
+                return
+            elif ocr_easyocr._tried:
+                # Finished trying and failed
+                self._status_lbl.config(text="⚠  EasyOCR failed to load. Bot cannot run OCR functions.", fg=RED)
+                self._root.after(2000, self._tick)
+                return
+            else:
+                # Hasn't started loading yet (wait for main thread)
+                self._status_lbl.config(text="⚙  Initializing EasyOCR engines...", fg=ACCENT)
+                self._root.after(500, self._tick)
+                return
+
+        if self._bot_paused["paused"]:
             self._root.after(500, self._tick)
             return
         try:
