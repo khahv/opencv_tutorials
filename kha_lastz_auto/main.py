@@ -205,17 +205,19 @@ if not _wincap_result:
     sys.exit(1)
 wincap = _wincap_result[0]
 
-_ref_w = config.get("reference_width")
+_ref_w = config.get("reference_width")   # template capture resolution → vision scale
 _ref_h = config.get("reference_height")
+_win_w = config.get("window_width")       # game window resize target (can differ from reference)
+_win_h = config.get("window_height")
 _show_preview = config.get("show_preview", False)
 
-# Resize window ve dung kich thuoc ngay khi khoi dong.
-# focus_loop se tiep tuc giu kich thuoc nay trong suot qua trinh chay.
-if _ref_w and _ref_h:
-    wincap.resize_to_client(_ref_w, _ref_h)
-    log.info("Vision scale: 1.0 (window {}x{})".format(wincap.w, wincap.h))
+# Resize window to desired size on startup.
+# focus_loop will keep enforcing this size throughout the session.
+if _win_w and _win_h:
+    wincap.resize_to_client(_win_w, _win_h)
+    log.info("Window resized to {}x{} (target)".format(wincap.w, wincap.h))
 else:
-    log.info("Vision scale: 1.0 (reference_width/height not set — using current window size)")
+    log.info("window_width/height not set — keeping current window size {}x{}".format(wincap.w, wincap.h))
 
 def update_vision_scale():
     current_w = wincap.w 
@@ -511,8 +513,8 @@ def focus_loop():
     while running and not exit_requested:
         if not bot_paused["paused"]:
             wincap.focus_window()
-            if _ref_w and _ref_h and (wincap.w != _ref_w or wincap.h != _ref_h):
-                wincap.resize_to_client(_ref_w, _ref_h)
+            if _win_w and _win_h and (wincap.w != _win_w or wincap.h != _win_h):
+                wincap.resize_to_client(_win_w, _win_h)
                 log.info("[focus_loop] Window resized back to {}x{}".format(wincap.w, wincap.h))
         time.sleep(0.2)
 

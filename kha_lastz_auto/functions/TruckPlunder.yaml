@@ -46,7 +46,7 @@ steps:
   # Template match is instant; avoids expensive EasyOCR on irrelevant trucks
   - event_type: match_count
     template: buttons_template/OrangeHeroFragment.png
-    count: 2
+    count: 1
     threshold: 0.75
     timeout_sec: 1
     run_always: true

@@ -1,9 +1,13 @@
-# Kich thuoc client area cua so game luc chup template images.
-# Bot se tu dong resize window ve dung kich thuoc nay khi khoi dong
-# -> scale = 1.0, khong can normalize, match nhanh nhat co the.
-# Neu resize that bai (fullscreen/bi khoa), bot fallback normalize theo scale.
+# Kich thuoc client area cua so game luc chup template images (resolution cua template).
+# Vision scale = window_width / reference_width. Khong thay doi tru khi chup lai template.
 reference_width: 1080
 reference_height: 1920
+
+# Kich thuoc cua so game muon resize ve khi khoi dong bot.
+# De trong (hoac xoa 2 dong nay) neu khong muon bot tu resize window.
+# Vi du: chay game o 540x960 de giam tai CPU trong khi template chup o 1080x1920.
+window_width: 540
+window_height: 960
 show_preview: false   # hien thi cua so debug screenshot (true = bat, false = tat)
 
 # Function list: key, cron, enabled

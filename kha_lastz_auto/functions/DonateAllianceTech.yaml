@@ -5,9 +5,10 @@ steps:
   # Mo Alliance panel
   - event_type: match_click
     template: buttons_template/AllianceIconButton.png
-    threshold: 0.75
+    threshold: 0.7
     one_shot: true
     timeout_sec: 10
+    debug_log: true
 
   # Vao tab Alliance Techs
   - event_type: match_click
@@ -25,8 +26,8 @@ steps:
 
   # Donate 20 lan
   - event_type: match_click
-    template: buttons_template/AllianceTechDonate.png
-    threshold: 0.75
+    template: buttons_template/AllianceTechDonate1.png
+    threshold: 0.8
     one_shot: false
     max_clicks: 20
     click_interval_sec: 0.03

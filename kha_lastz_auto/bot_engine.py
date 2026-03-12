@@ -351,7 +351,7 @@ class FunctionRunner:
                     points = result[0] if isinstance(result, tuple) else result
                     meta_list = result[1] if isinstance(result, tuple) and len(result) > 1 else None
                 else:
-                    points = vision.find(screenshot, threshold=threshold, debug_mode=dbg)
+                    points = vision.find(screenshot, threshold=threshold, debug_mode=dbg, debug_log=debug_log)
                 if points:
                     self._step_pos_cache = points[0]
                 elif debug_log:
@@ -364,9 +364,10 @@ class FunctionRunner:
                         if _fallback:
                             self._debug_yellow_fallback_saved = True
                             rc = _fallback[0]
-                            rcenter = (rc[0] + int(click_offset_x * vision.needle_w),
-                                       rc[1] + int(click_offset_y * vision.needle_h))
-                            _save_debug_image(screenshot, rc, rcenter, vision.needle_w, vision.needle_h,
+                            mw, mh = (rc[2], rc[3]) if len(rc) >= 4 else (vision.needle_w, vision.needle_h)
+                            rcenter = (rc[0] + int(click_offset_x * mw),
+                                       rc[1] + int(click_offset_y * mh))
+                            _save_debug_image(screenshot, rc[:2], rcenter, mw, mh,
                                              "match_click", template)
                             log.info("[Runner] {} → 0 passed color filter, saved best match → debug_ocr/".format(
                                 self._step_label(step)))
@@ -395,9 +396,11 @@ class FunctionRunner:
                 if ocr_name_region and len(ocr_name_region) == 4:
                     _onr_x, _onr_y, _onr_w, _onr_h = ocr_name_region
                     for _pt in points:
+                        cx, cy = _pt[0], _pt[1]
+                        mw, mh = (_pt[2], _pt[3]) if len(_pt) >= 4 else (vision.needle_w, vision.needle_h)
                         _name = read_region_relative(
-                            screenshot, _pt[0], _pt[1],
-                            vision.needle_w, vision.needle_h,
+                            screenshot, cx, cy,
+                            mw, mh,
                             x=_onr_x, y=_onr_y, w=_onr_w, h=_onr_h,
                         )
                         _point_names[tuple(_pt)] = (_name or "").strip()
@@ -426,8 +429,10 @@ class FunctionRunner:
                         _rtr_density_map = {}
                         _rtr_log_parts = []
                         for _pt in points:
-                            _crop = _crop_region_relative(screenshot, _pt[0], _pt[1],
-                                                          vision.needle_w, vision.needle_h,
+                            cx, cy = _pt[0], _pt[1]
+                            mw, mh = (_pt[2], _pt[3]) if len(_pt) >= 4 else (vision.needle_w, vision.needle_h)
+                            _crop = _crop_region_relative(screenshot, cx, cy,
+                                                          mw, mh,
                                                           _rtr_x, _rtr_y, _rtr_w, _rtr_h)
                             if _crop is None:
                                 continue
@@ -476,8 +481,10 @@ class FunctionRunner:
                     _rbr_min = _rbr.get("min_mean", 160)
                     _passed = []
                     for _pt in points:
-                        _crop = _crop_region_relative(screenshot, _pt[0], _pt[1],
-                                                      vision.needle_w, vision.needle_h,
+                        cx, cy = _pt[0], _pt[1]
+                        mw, mh = (_pt[2], _pt[3]) if len(_pt) >= 4 else (vision.needle_w, vision.needle_h)
+                        _crop = _crop_region_relative(screenshot, cx, cy,
+                                                      mw, mh,
                                                       _rbr_x, _rbr_y, _rbr_w, _rbr_h)
                         if _crop is None:
                             continue
@@ -562,28 +569,29 @@ class FunctionRunner:
                         return "running"
                     points = untried
                 # ─────────────────────────────────────────────────────────────────────
-                center = list(points[0])
-                # click_offset_x/y and click_random_offset_x/y are ratios of template size (0.5 = 50% width/height)
-                center[0] += int(click_offset_x * vision.needle_w)
-                center[1] += int(click_offset_y * vision.needle_h)
+                # matched mw and mh are used to scale click_offset_x/y
+                cx, cy, mw, mh = (points[0][0], points[0][1], points[0][2], points[0][3]) if len(points[0]) >= 4 else (points[0][0], points[0][1], vision.needle_w, vision.needle_h)
+                center = [cx, cy]
+                center[0] += int(click_offset_x * mw)
+                center[1] += int(click_offset_y * mh)
                 if click_random_offset_x is not None:
-                    rx = int(click_random_offset_x * vision.needle_w)
+                    rx = int(click_random_offset_x * mw)
                     if rx > 0:
                         center[0] += random.randint(-rx, rx)
                 elif click_random_offset > 0:
                     center[0] += random.randint(-click_random_offset, click_random_offset)
                 if click_random_offset_y is not None:
-                    ry = int(click_random_offset_y * vision.needle_h)
+                    ry = int(click_random_offset_y * mh)
                     if ry > 0:
                         center[1] += random.randint(-ry, ry)
                 elif click_random_offset > 0:
                     center[1] += random.randint(-click_random_offset, click_random_offset)
                 sx, sy = wincap.get_screen_position(tuple(center))
-                raw_center = points[0]
+                raw_center = (cx, cy)
                 if debug_log:
-                    log.info("[Runner] {} | raw_center=({},{}) needle=({}x{}) offset=({},{}) after_offset=({},{}) screen=({},{})".format(
+                    log.info("[Runner] {} | raw_center=({},{}) needle=({}x{}) matched=({}x{}) offset=({},{}) after_offset=({},{}) screen=({},{})".format(
                         self._step_label(step), raw_center[0], raw_center[1],
-                        vision.needle_w, vision.needle_h,
+                        vision.needle_w, vision.needle_h, mw, mh,
                         click_offset_x, click_offset_y,
                         center[0], center[1], sx, sy))
                 # For YellowTruckSmall: save every truck click (timestamp in filename prevents overwrite)
@@ -594,7 +602,7 @@ class FunctionRunner:
                         if not _is_yellow_truck:
                             self._debug_click_saved = True
                         _crop_path = _save_debug_image(screenshot, raw_center, tuple(center),
-                                          vision.needle_w, vision.needle_h, "match_click", template)
+                                          mw, mh, "match_click", template)
                         if _is_yellow_truck and _crop_path:
                             self._last_truck_crop_path = _crop_path
                 # click_storm: start FastClicker once, then return immediately every tick.
@@ -696,21 +704,23 @@ class FunctionRunner:
                 return "running"
             points = vision.find(screenshot, threshold=threshold, debug_mode='info' if (debug_click or debug_log) else None)
             if points:
-                raw_center = points[0]
-                center = list(raw_center)
-                center[0] += int(click_offset_x * vision.needle_w)
-                center[1] += int(click_offset_y * vision.needle_h)
+                rc = points[0]
+                cx, cy, mw, mh = (rc[0], rc[1], rc[2], rc[3]) if len(rc) >= 4 else (rc[0], rc[1], vision.needle_w, vision.needle_h)
+                raw_center = (cx, cy)
+                center = [cx, cy]
+                center[0] += int(click_offset_x * mw)
+                center[1] += int(click_offset_y * mh)
                 sx, sy = wincap.get_screen_position(tuple(center))
                 if debug_log:
-                    log.info("[Runner] {} | raw_center=({},{}) needle=({}x{}) offset=({},{}) after_offset=({},{}) screen=({},{})".format(
+                    log.info("[Runner] {} | raw_center=({},{}) needle=({}x{}) matched=({}x{}) offset=({},{}) after_offset=({},{}) screen=({},{})".format(
                         self._step_label(step), raw_center[0], raw_center[1],
-                        vision.needle_w, vision.needle_h,
+                        vision.needle_w, vision.needle_h, mw, mh,
                         click_offset_x, click_offset_y,
                         center[0], center[1], sx, sy))
                 if debug_click and not getattr(self, '_debug_click_saved', False):
                     self._debug_click_saved = True
                     _save_debug_image(screenshot, raw_center, tuple(center),
-                                      vision.needle_w, vision.needle_h, "match_move", template)
+                                      mw, mh, "match_move", template)
                 pyautogui.moveTo(sx, sy)
                 if debug_log:
                     actual = pyautogui.position()
@@ -739,7 +749,7 @@ class FunctionRunner:
             points = vision.find(screenshot, threshold=threshold, debug_mode=None)
             if points:
                 for pt in points:
-                    sx, sy = wincap.get_screen_position(tuple(pt))
+                    sx, sy = wincap.get_screen_position((pt[0], pt[1]))
                     pyautogui.click(sx, sy)
                     if click_interval_sec > 0:
                         time.sleep(click_interval_sec)
@@ -892,7 +902,7 @@ class FunctionRunner:
             if current < target_level:
                 pts = vision_plus.find(screenshot, threshold=threshold, debug_mode=None)
                 if pts:
-                    sx, sy = wincap.get_screen_position(tuple(pts[0]))
+                    sx, sy = wincap.get_screen_position((pts[0][0], pts[0][1]))
                     pyautogui.click(sx, sy)
                     log.info("[Runner] set_level: Lv.{} -> click Plus (target Lv.{})".format(current, target_level))
                     time.sleep(click_interval)
@@ -903,7 +913,7 @@ class FunctionRunner:
             if current > target_level:
                 pts = vision_minus.find(screenshot, threshold=threshold, debug_mode=None)
                 if pts:
-                    sx, sy = wincap.get_screen_position(tuple(pts[0]))
+                    sx, sy = wincap.get_screen_position((pts[0][0], pts[0][1]))
                     pyautogui.click(sx, sy)
                     log.info("[Runner] set_level: Lv.{} -> click Minus (target Lv.{})".format(current, target_level))
                     time.sleep(click_interval)
@@ -929,7 +939,7 @@ class FunctionRunner:
                 if v_nav:
                     pts = v_nav.find(screenshot, threshold=threshold, debug_mode=None)
                     if pts:
-                        sx, sy = wincap.get_screen_position(tuple(pts[0]))
+                        sx, sy = wincap.get_screen_position((pts[0][0], pts[0][1]))
                         pyautogui.click(sx, sy)
                         log.info("[Runner] {} → true (not visible, clicked nav)".format(self._step_label(step)))
                     else:
@@ -1044,7 +1054,7 @@ class FunctionRunner:
             if vision:
                 points = vision.find(screenshot, threshold=threshold, debug_mode=None)
                 if points:
-                    sx, sy = wincap.get_screen_position(tuple(points[0]))
+                    sx, sy = wincap.get_screen_position((points[0][0], points[0][1]))
                     pyautogui.click(sx, sy)
                     time.sleep(0.3)
                     clicked_hq = True
@@ -1135,7 +1145,8 @@ class FunctionRunner:
 
             points = vision.find(screenshot, threshold=threshold, debug_mode=None)
             if points:
-                cx, cy = int(points[0][0]), int(points[0][1])
+                pt = points[0]
+                cx, cy, mw, mh = (pt[0], pt[1], pt[2], pt[3]) if len(pt) >= 4 else (pt[0], pt[1], vision.needle_w, vision.needle_h)
                 tpl_name = os.path.splitext(os.path.basename(anchor_template))[0]
 
                 # ── require_new_click: gate OCR on a fresh truck click ────────────
@@ -1182,7 +1193,7 @@ class FunctionRunner:
                         dbg_lbl = "{}_{}".format(tpl_name, rname) if debug_save else None
                         text = read_region_relative(
                             screenshot, cx, cy,
-                            vision.needle_w, vision.needle_h,
+                            mw, mh,
                             x           = region.get("x", 0.0),
                             y           = region.get("y", 0.0),
                             w           = region.get("w", 1.0),

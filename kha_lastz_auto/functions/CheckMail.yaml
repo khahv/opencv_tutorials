@@ -3,37 +3,42 @@ description: "Mo Mail -> Alliance -> Claim All -> System -> Claim All -> dong po
 steps:
   - event_type: match_click
     template: buttons_template/Mail.png
-    threshold: 0.75
+    threshold: 0.5
     one_shot: true
     timeout_sec: 5
+    debug_log: true
   - event_type: sleep
     duration_sec: 1
   - event_type: match_click
     template: buttons_template/AllianceButton.png
-    threshold: 0.75
+    threshold: 0.7
     one_shot: true
     timeout_sec: 5
+    debug_log: true
   - event_type: sleep
     duration_sec: 0.5
   - event_type: match_click
     template: buttons_template/ClaimAll.png
-    threshold: 0.75
+    threshold: 0.5
     one_shot: true
+    debug_log: true
     timeout_sec: 5
   - event_type: sleep
     duration_sec: 0.5
   - event_type: match_click
     template: buttons_template/SystemButton.png
-    threshold: 0.75
+    threshold: 0.5
     one_shot: true
     timeout_sec: 5
+    debug_log: true
   - event_type: sleep
     duration_sec: 0.5
   - event_type: match_click
     template: buttons_template/ClaimAll.png
-    threshold: 0.75
+    threshold: 0.5
     one_shot: true
     timeout_sec: 5
+    debug_log: true
   - event_type: sleep
     duration_sec: 2
   - event_type: click_position
