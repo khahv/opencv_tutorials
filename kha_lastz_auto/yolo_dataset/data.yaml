@@ -1,0 +1,30 @@
+# YOLO dataset configuration
+# Generated from buttons_template folder (20 classes)
+
+path: ./yolo_dataset          # dataset root dir
+train: train/images           # train images
+val: valid/images             # validation images
+
+nc: 20  # number of classes
+
+names:
+  0: AllianceBeingAttackedWarning
+  1: AllianceButton
+  2: AllianceIconButton
+  3: AllianceIconButton2
+  4: AllianceTechDonate
+  5: AllianceTechLike
+  6: AllianceTechs
+  7: BeingAttackedWarning
+  8: ClaimAll
+  9: ExitGameBanner
+  10: HelpAlliance
+  11: Mail
+  12: PasswordSlot
+  13: Plunder
+  14: SystemButton
+  15: Treasure1
+  16: TruckIcon
+  17: TruckLootButton
+  18: TruckRefresh
+  19: YellowTruckSmall2

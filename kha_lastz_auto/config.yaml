@@ -6,6 +6,13 @@ reference_width: 1080
 reference_height: 1920
 show_preview: false   # hien thi cua so debug screenshot (true = bat, false = tat)
 
+# YOLO Configuration (optional)
+# Neu load model thanh cong, bot se tu dong dung YOLO cho tat ca buttons.
+# Neu de trong hoac file khong ton tai, bot fallback ve SIFT.
+yolo_model_path: "runs/detect/game_buttons_v14/weights/best.pt"    # vi du: "runs/detect/game_buttons_v1/weights/best.pt"
+yolo_confidence: 0.015
+auto_label: false      # Tu dong luu anh + label khi SIFT match tot (giup tao dataset)
+
 # Function list: key, cron, enabled
 # https://crontab.guru/ for cron syntax
 # Functions run in FIFO order: whoever triggers first runs first.

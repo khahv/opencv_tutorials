@@ -224,9 +224,10 @@ def build_vision_cache(template_paths):
 class FunctionRunner:
     """Chay 1 function: giu state step hien tai, xu ly tung step theo type."""
 
-    def __init__(self, vision_cache, fn_settings=None):
+    def __init__(self, vision_cache, fn_settings=None, auto_label=False):
         self.vision_cache = vision_cache
         self.fn_settings = fn_settings if fn_settings is not None else {}
+        self.auto_label = auto_label
         self.functions = {}
         self.state = "idle"  # idle | running
         self.function_name = None
@@ -373,11 +374,11 @@ class FunctionRunner:
                 meta_list = None
                 roi = _get_step_roi(step, screenshot)
                 if match_color:
-                    result = vision.find(screenshot, min_match_count=min_match_count, debug_mode=dbg, is_color=True, roi=roi)
+                    result = vision.find(screenshot, min_match_count=min_match_count, debug_mode=dbg, is_color=True, roi=roi, auto_label=self.auto_label)
                     points = result[0] if isinstance(result, tuple) else result
                     meta_list = result[1] if isinstance(result, tuple) and len(result) > 1 else None
                 else:
-                    points = vision.find(screenshot, min_match_count=min_match_count, debug_mode=dbg, roi=roi)
+                    points = vision.find(screenshot, min_match_count=min_match_count, debug_mode=dbg, roi=roi, auto_label=self.auto_label)
                 if points:
                     self._step_pos_cache = points[0]
                 elif debug_log:
@@ -403,7 +404,7 @@ class FunctionRunner:
                     _refresh_tpl = step.get("refresh_template")
                     _v_ref = self.vision_cache.get(_refresh_tpl) if _refresh_tpl else None
                     if _v_ref:
-                        _ref_pts = _v_ref.find(screenshot, min_match_count=step.get("min_match_count", 10), debug_mode=None)
+                        _ref_pts = _v_ref.find(screenshot, min_match_count=step.get("min_match_count", 10), debug_mode=None, auto_label=self.auto_label)
                         if _ref_pts:
                             _rsx, _rsy = wincap.get_screen_position(tuple(_ref_pts[0]))
                             pyautogui.click(_rsx, _rsy)
@@ -571,7 +572,7 @@ class FunctionRunner:
                         _refresh_tpl = step.get("refresh_template")
                         _v_ref = self.vision_cache.get(_refresh_tpl) if _refresh_tpl else None
                         if _v_ref:
-                            _ref_pts = _v_ref.find(screenshot, min_match_count=min_match_count, debug_mode=None)
+                            _ref_pts = _v_ref.find(screenshot, min_match_count=min_match_count, debug_mode=None, auto_label=self.auto_label)
                             if _ref_pts:
                                 _rsx, _rsy = wincap.get_screen_position(tuple(_ref_pts[0]))
                                 pyautogui.click(_rsx, _rsy)

@@ -6,8 +6,12 @@ import time
 import queue
 import threading
 import logging
+import argparse
 from datetime import datetime
 
+# Placeholders for heavy imports (injected via _do_heavy_imports)
+vision_module = None
+cv = None
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
@@ -141,10 +145,41 @@ if _dotenv_keys:
 else:
     log.info("[Env] .env not found or empty — set secrets as environment variables")
 
+# ── CLI Arguments ────────────────────────────────────────────────────────────
+parser = argparse.ArgumentParser(description="Kha LastZ Auto Bot")
+parser.add_argument("--mode", type=str, choices=["sift", "yolo"], default=None,
+                    help="Mode chạy: sift (thu thập dữ liệu) hoặc yolo (chạy thật)")
+args = parser.parse_args()
+
 # ── Load config ──────────────────────────────────────────────────────────────
 config = load_config("config.yaml")
 fn_configs = config.get("functions") or []
-config_manager.apply_overrides(fn_configs)  # .env_config overrides config.yaml
+config_manager.apply_overrides(fn_configs)
+
+# Quyết định mode: Ưu tiên CLI, sau đó tự động dựa trên config
+yolo_path = config.get("yolo_model_path")
+mode = args.mode
+if mode is None:
+    mode = "yolo" if yolo_path else "sift"
+
+log.info(f"[Main] Khởi động với MODE: {mode.upper()}")
+
+# Load YOLO model nếu ở mode yolo và có config
+if mode == "yolo" and yolo_path and vision_module:
+    yolo_conf = config.get("yolo_confidence", 0.25)
+    vision_module.Vision.load_yolo_model(yolo_path, conf=yolo_conf)
+
+# Auto-label mặc định True nếu chạy mode sift để gom data
+auto_label = True if mode == "sift" else False
+# Nếu trong config có ghi đè thì lấy theo config (optional)
+if config.get("auto_label") is not None:
+    auto_label = config.get("auto_label")
+
+if auto_label:
+    log.info("[Main] Auto-Labeler ĐANG BẬT. Ảnh sẽ được lưu vào yolo_dataset/auto_labeled/")
+
+if vision_module:
+    vision_module.Vision._auto_label = auto_label
 
 key_bindings      = {}   # key_char -> fn_name
 fn_enabled        = {}   # fn_name  -> bool
@@ -232,7 +267,7 @@ actual_scale = update_vision_scale()
 
 
 fn_settings = config_manager.load_fn_settings()
-runner = FunctionRunner(vision_cache, fn_settings=fn_settings)
+runner = FunctionRunner(vision_cache, fn_settings=fn_settings, auto_label=auto_label)
 runner.load(functions)
 
 # ── Ctrl+C / SIGINT ──────────────────────────────────────────────────────────

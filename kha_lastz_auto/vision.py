@@ -3,6 +3,10 @@ import numpy as np
 import logging
 import threading
 import time
+import os
+import random
+import yaml
+from pathlib import Path
 _log = logging.getLogger("kha_lastz")
 
 
@@ -63,6 +67,43 @@ def get_global_scale():
 
 
 class Vision:
+    # ------------------------------------------------------------------ #
+    # YOLO shared model (optional) — load một lần, dùng cho tất cả instance
+    # ------------------------------------------------------------------ #
+    _yolo_model   = None   # ultralytics YOLO instance
+    _yolo_classes = {}     # {class_name: class_id}
+    _auto_label   = False  # Global toggle for SIFT-to-YOLO bootstrapping
+
+    @classmethod
+    def load_yolo_model(cls, model_path: str, conf: float = 0.25):
+        """Load YOLOv8 model. Gọi 1 lần trong main.py trước khi tạo vision cache."""
+        try:
+            from ultralytics import YOLO
+            _log.info(f"[YOLO] Loading model: {model_path}")
+            model = YOLO(model_path)
+            model.conf = conf
+            cls._yolo_model = model
+            cls._yolo_classes = {v: k for k, v in model.names.items()}  # name → id
+            _log.info(f"[YOLO] Model ready. Classes: {list(model.names.values())}")
+        except Exception as e:
+            _log.error(f"[YOLO] Failed to load model '{model_path}': {e}")
+
+    @classmethod
+    def _ensure_yolo_classes(cls):
+        """Load class names from data.yaml if _yolo_classes is empty."""
+        if cls._yolo_classes:
+            return
+        data_yaml_path = os.path.join(os.path.dirname(__file__), "yolo_dataset", "data.yaml")
+        if os.path.exists(data_yaml_path):
+            try:
+                with open(data_yaml_path, 'r') as f:
+                    data = yaml.safe_load(f)
+                    names = data.get("names", {})
+                    # Chuyển từ {id: name} sang {name: id}
+                    cls._yolo_classes = {str(v): int(k) for k, v in names.items()}
+                    _log.info(f"[Auto-Label] Loaded {len(cls._yolo_classes)} classes from data.yaml")
+            except Exception as e:
+                _log.error(f"[Auto-Label] Failed to load data.yaml: {e}")
 
     def __init__(self, needle_img_path, method=cv.TM_CCOEFF_NORMED):
         # We ignore 'method' since we use SIFT now, keeping it for backward compatibility of signature
@@ -102,10 +143,98 @@ class Vision:
             self.matcher = cv.FlannBasedMatcher(index_params, search_params)
             self._use_bf = False
 
-    def exists(self, haystack_img, min_match_count=10, roi=None) -> bool:
-        """Kiem tra xem co the tim thay object hay khong bang SIFT.
-        roi: (x, y, w, h) pixel coords to restrict search area. None = full image.
+    def _yolo_find(self, haystack_img, conf=None, roi=None):
+        """YOLO inference: trả về [(cx, cy), ...] của tất cả detection ứng với class này."""
+        model = self._yolo_model
+        if model is None:
+            return []
+        start_t = time.time()
+
+        # Luôn infer trên ảnh gốc (fullscreen) vì YOLO đã học tỷ lệ nút bấm dựa trên ảnh gốc.
+        # Nếu crop nhỏ lại, nút sẽ bị phóng to tương đối so với ảnh, làm YOLO nhận diện sai.
+        results = model(haystack_img, verbose=False, conf=conf or model.conf)[0]
+        points = []
+        class_name = Path(self.needle_img_path).stem  # filename without .png
+        
+        rx, ry, rw, rh = 0, 0, 0, 0
+        if roi is not None:
+            rx, ry, rw, rh = int(roi[0]), int(roi[1]), int(roi[2]), int(roi[3])
+
+        for box in results.boxes:
+            cls_name = results.names[int(box.cls)]
+            if cls_name == class_name:
+                x1, y1, x2, y2 = box.xyxy[0].tolist()
+                cx = int((x1 + x2) / 2)
+                cy = int((y1 + y2) / 2)
+                
+                # Nếu có ROI, chỉ lấy các điểm nằm TRONG vùng ROI
+                if roi is not None:
+                    if not (rx <= cx <= rx + rw and ry <= cy <= ry + rh):
+                        continue
+                points.append((cx, cy))
+
+        elapsed_ms = (time.time() - start_t) * 1000
+        _log.debug(f"[YOLO find] {self.needle_img_path} → {len(points)} hit(s) - {elapsed_ms:.1f}ms")
+        return points
+
+
+    def _save_yolo_label(self, haystack_img, dst):
+        """Saves YOLO format label for the detected object."""
+        if not self._auto_label:
+            return
+
+        self._ensure_yolo_classes()
+        class_name = Path(self.needle_img_path).stem
+        if class_name not in self._yolo_classes:
+            _log.warning(f"[Auto-Label] Class '{class_name}' not in data.yaml. Skipping.")
+            return
+        
+        class_id = self._yolo_classes[class_name]
+        img_h, img_w = haystack_img.shape[:2]
+
+        # Calculate bounding box
+        min_x, min_y = np.min(dst[:, 0, :], axis=0)
+        max_x, max_y = np.max(dst[:, 0, :], axis=0)
+        
+        # Clamp to image bounds
+        min_x, max_x = max(0, min_x), min(img_w - 1, max_x)
+        min_y, max_y = max(0, min_y), min(img_h - 1, max_y)
+
+        bw, bh = (max_x - min_x), (max_y - min_y)
+        if bw < 5 or bh < 5: return # Quá nhỏ
+
+        cx, cy = (min_x + bw/2.0) / img_w, (min_y + bh/2.0) / img_h
+        nw, nh = bw / img_w, bh / img_h
+
+        # Save files
+        base_dir = os.path.join(os.path.dirname(__file__), "yolo_dataset", "auto_labeled")
+        img_dir = os.path.join(base_dir, "images")
+        lbl_dir = os.path.join(base_dir, "labels")
+        os.makedirs(img_dir, exist_ok=True)
+        os.makedirs(lbl_dir, exist_ok=True)
+
+        ts = int(time.time() * 1000)
+        fname = f"{class_name}_{ts}"
+        
+        img_path = os.path.join(img_dir, f"{fname}.jpg")
+        lbl_path = os.path.join(lbl_dir, f"{fname}.txt")
+
+        try:
+            cv.imwrite(img_path, haystack_img)
+            with open(lbl_path, "w") as f:
+                f.write(f"{class_id} {cx:.6f} {cy:.6f} {nw:.6f} {nh:.6f}\n")
+            _log.info(f"[Auto-Label] Saved: {fname}.jpg (Class {class_id})")
+        except Exception as e:
+            _log.error(f"[Auto-Label] Failed to save: {e}")
+
+
+    def exists(self, haystack_img, min_match_count=10, roi=None, auto_label=None) -> bool:
+        """Kiem tra needle co ton tai trong haystack khong.
+        auto_label: None = dung class setting, True/False = ghi de.
         """
+        if auto_label is None:
+            auto_label = self._auto_label
+
         start_t = time.time()
         
         # Crop to ROI if specified
@@ -123,8 +252,22 @@ class Vision:
         # Chuyển sang grayscale.
         if len(haystack_img.shape) == 3:
             haystack_gray = cv.cvtColor(haystack_img, cv.COLOR_BGR2GRAY)
+        search_img_for_sift = haystack_img # Keep original for auto_label if needed
+        if roi is not None:
+            rx, ry, rw, rh = int(roi[0]), int(roi[1]), int(roi[2]), int(roi[3])
+            img_h, img_w = haystack_img.shape[:2]
+            rx = max(0, min(rx, img_w - 1))
+            ry = max(0, min(ry, img_h - 1))
+            rw = max(1, min(rw, img_w - rx))
+            rh = max(1, min(rh, img_h - ry))
+            search_img_for_sift = haystack_img[ry:ry+rh, rx:rx+rw]
+            roi_x, roi_y = rx, ry
+
+        # Chuyển sang grayscale.
+        if len(search_img_for_sift.shape) == 3:
+            haystack_gray = cv.cvtColor(search_img_for_sift, cv.COLOR_BGR2GRAY)
         else:
-            haystack_gray = haystack_img
+            haystack_gray = search_img_for_sift
 
         if self.needle_w > haystack_gray.shape[1] or self.needle_h > haystack_gray.shape[0]:
             return False
@@ -142,22 +285,46 @@ class Vision:
         if not matches:
             return False
             
-        good_matches = 0
+        good = []
         for match in matches:
             if len(match) == 2:
                 m, n = match
                 if m.distance < 0.65 * n.distance:  # 0.65 chặt hơn chuẩn (0.7), ít false match hơn
-                    good_matches += 1
+                    good.append(m)
+
+        good_matches_count = len(good)
+
+        # --- AUTO LABELER LOGIC (Bootstrap cho YOLO) ---
+        if auto_label and good_matches_count >= 20: # Chỉ lưu nếu match cực mạnh
+            # findHomography yêu cầu TỐI THIỂU 4 cặp điểm, không thì sẽ crash
+            if good_matches_count >= 4:
+                src_pts = np.float32([self.needle_kp[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
+                dst_pts = np.float32([kp[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
+                M, mask = cv.findHomography(src_pts, dst_pts, cv.RANSAC, 3.0)
+                if M is not None:
+                    h, w = self.needle_gray.shape
+                    pts_corners = np.float32([[0, 0], [0, h - 1], [w - 1, h - 1], [w - 1, 0]]).reshape(-1, 1, 2)
+                    dst = cv.perspectiveTransform(pts_corners, M)
+                    # Add ROI offset back to dst points before saving label
+                    dst[:, 0, 0] += roi_x
+                    dst[:, 0, 1] += roi_y
+                    self._save_yolo_label(haystack_img, dst)
 
         elapsed_ms = (time.time() - start_t) * 1000
         _log.debug(f"[SIFT exists] {self.needle_img_path if hasattr(self, 'needle_img_path') else 'template'} - Elapsed: {elapsed_ms:.1f}ms")
-        return good_matches >= min_match_count
+        return good_matches_count >= min_match_count
 
-    def find(self, haystack_img, min_match_count=10, debug_mode=None, is_color=False, roi=None):
-        """Tim vi tri cua ONE best match bang SIFT.
+    def find(self, haystack_img, min_match_count=10, debug_mode=None, is_color=False, roi=None, auto_label=None):
+        """Tim vi tri cua ONE best match bang SIFT hoac YOLO.
         roi: (x, y, w, h) pixel coords to restrict search area. None = full image.
-        Returned coordinates are always in full-image pixel space.
+        auto_label: None = dung class setting, True/False = ghi de.
         """
+        # --- Route qua YOLO nếu model đã được load ---
+        if self._yolo_model is not None:
+            pts = self._yolo_find(haystack_img, roi=roi)
+            # YOLO không cần scale vì nó train trắn lên ảnh gốc
+            return (pts, []) if is_color else pts
+
         start_t = time.time()
         
         scale = _global_scale
@@ -210,12 +377,13 @@ class Vision:
             _log.info(f"[SIFT] {self.needle_img_path if hasattr(self, 'needle_img_path') else 'template'} -> {len(good)}/{min_match_count} good matches.")
 
         points = []
+        dominant_colors = [] # Added for consistency with the new return
         if len(good) >= min_match_count:
             # findHomography yêu cầu TỐI THIỂU 4 cặp điểm, không thì sẽ crash
             if len(good) < 4:
                 if debug_mode: _log.debug(f"[SIFT find] {self.needle_img_path if hasattr(self, 'needle_img_path') else 'template'} - not enough good matches for homography ({len(good)}<4)")
-                if is_color: return [], []
-                return []
+                if is_color: return points, dominant_colors
+                return points
             # Lấy tọa độ các điểm match
             src_pts = np.float32([self.needle_kp[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
             dst_pts = np.float32([kp[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
@@ -224,14 +392,19 @@ class Vision:
             M, mask = cv.findHomography(src_pts, dst_pts, cv.RANSAC, 3.0)
             
             if M is not None:
-                if debug_mode:
-                    _log.debug(f"[SIFT] Homography matrix found. Emitting point.")
                 # Tọa độ 4 góc của template
                 h, w = self.needle_gray.shape
-                pts = np.float32([[0, 0], [0, h - 1], [w - 1, h - 1], [w - 1, 0]]).reshape(-1, 1, 2)
+                pts_corners = np.float32([[0, 0], [0, h - 1], [w - 1, h - 1], [w - 1, 0]]).reshape(-1, 1, 2)
                 
                 # Ánh xạ 4 góc sang viền trên hình to
-                dst = cv.perspectiveTransform(pts, M)
+                dst = cv.perspectiveTransform(pts_corners, M)
+
+                # --- AUTO LABELER LOGIC (Bootstrap cho YOLO) ---
+                if auto_label and len(good) >= 20: # Chỉ lưu nếu match cực mạnh
+                    self._save_yolo_label(haystack_img, dst)
+
+                if debug_mode:
+                    _log.debug(f"[SIFT find] {self.needle_img_path} - Homography found. Emitting point.")
                 
                 # Tính tâm của bounding box
                 center_x = int(np.mean(dst[:, 0, 0]))
