@@ -5,24 +5,25 @@ steps:
 
   - event_type: match_click
     template: buttons_template/TruckIcon.png
-    min_match_count: 0.75
+    min_match_count: 10
     one_shot: true
     timeout_sec: 10
 
   - event_type: match_click
     template: buttons_template/HideTruckFromThisStateUnchecked.png
-    min_match_count: 0.99
+    min_match_count: 10
     one_shot: true
     timeout_sec: 2
 
   - event_type: match_click
     template: buttons_template/YellowTruckSmall2.png
-    min_match_count: 0.70
+    min_match_count: 10
     one_shot: true
     timeout_sec: 3
     run_always: true
     match_color: true 
     track_tried: true
+    debug_log: true
     debug_click: false
     refresh_template: buttons_template/TruckRefresh.png
     refresh_sleep_sec: 1.5   # wait for new truck list to render after refresh
@@ -47,7 +48,7 @@ steps:
   - event_type: match_count
     template: buttons_template/OrangeHeroFragment.png
     count: 2
-    min_match_count: 0.75
+    min_match_count: 10
     timeout_sec: 1
     run_always: true
     on_fail_goto: 2
@@ -93,6 +94,6 @@ steps:
   # Reached only if server match AND power < 10,000,000 AND OrangeHeroFragment visible
   - event_type: match_click
     template: buttons_template/TruckLootButton.png
-    min_match_count: 0.75
+    min_match_count: 10
     one_shot: true
     timeout_sec: 5

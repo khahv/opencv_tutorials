@@ -3,10 +3,11 @@ description: "Mo Mail -> Alliance -> Claim All -> System -> Claim All -> dong po
 steps:
   - event_type: match_click
     template: buttons_template/Mail.png
-    min_match_count: 6
+    min_match_count: 10
     one_shot: true
     timeout_sec: 5
     debug_log: true
+   
   - event_type: sleep
     duration_sec: 1
   - event_type: match_click
@@ -23,6 +24,10 @@ steps:
     one_shot: true
     timeout_sec: 5
     debug_log: true
+    roi_x: 0.0
+    roi_y: 0.7
+    roi_w: 1.0
+    roi_h: 0.3
   - event_type: sleep
     duration_sec: 0.5
   - event_type: match_click
@@ -37,6 +42,10 @@ steps:
     min_match_count: 6
     one_shot: true
     timeout_sec: 5
+    roi_x: 0.0
+    roi_y: 0.7
+    roi_w: 1.0
+    roi_h: 0.3
   - event_type: sleep
     duration_sec: 2
   - event_type: click_position

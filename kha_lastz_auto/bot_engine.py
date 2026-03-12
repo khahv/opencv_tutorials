@@ -153,6 +153,31 @@ def _crop_region_relative(screenshot, cx, cy, needle_w, needle_h,
     return crop if crop.size > 0 else None
 
 
+def _get_step_roi(step, screenshot):
+    """Parse ROI from a YAML step and return (x, y, w, h) in pixels or None.
+    YAML params: roi_x, roi_y, roi_w, roi_h as ratio (0.0-1.0) of screenshot size.
+    Example:
+        roi_x: 0.5   # start from center-x
+        roi_y: 0.8   # start from bottom 80%
+        roi_w: 0.5   # half screen width
+        roi_h: 0.2   # 20% screen height
+    """
+    if screenshot is None:
+        return None
+    rx = step.get("roi_x")
+    ry = step.get("roi_y")
+    rw = step.get("roi_w")
+    rh = step.get("roi_h")
+    if rx is None and ry is None and rw is None and rh is None:
+        return None
+    img_h, img_w = screenshot.shape[:2]
+    rx = int((rx or 0.0) * img_w)
+    ry = int((ry or 0.0) * img_h)
+    rw = int((rw or 1.0) * img_w)
+    rh = int((rh or 1.0) * img_h)
+    return (rx, ry, rw, rh)
+
+
 def collect_templates(functions_dict):
     """Lay danh sach duong dan template tu tat ca steps de tao vision cache."""
     templates = set()
@@ -346,12 +371,13 @@ class FunctionRunner:
             else:
                 dbg = 'info' if (debug_click or debug_log) else None
                 meta_list = None
+                roi = _get_step_roi(step, screenshot)
                 if match_color:
-                    result = vision.find(screenshot, min_match_count=min_match_count, debug_mode=dbg, is_color=True)
+                    result = vision.find(screenshot, min_match_count=min_match_count, debug_mode=dbg, is_color=True, roi=roi)
                     points = result[0] if isinstance(result, tuple) else result
                     meta_list = result[1] if isinstance(result, tuple) and len(result) > 1 else None
                 else:
-                    points = vision.find(screenshot, min_match_count=min_match_count, debug_mode=dbg)
+                    points = vision.find(screenshot, min_match_count=min_match_count, debug_mode=dbg, roi=roi)
                 if points:
                     self._step_pos_cache = points[0]
                 elif debug_log:
@@ -694,7 +720,8 @@ class FunctionRunner:
             if not vision:
                 self._advance_step(True)
                 return "running"
-            points = vision.find(screenshot, min_match_count=min_match_count, debug_mode='info' if (debug_click or debug_log) else None)
+            roi = _get_step_roi(step, screenshot)
+            points = vision.find(screenshot, min_match_count=min_match_count, debug_mode='info' if (debug_click or debug_log) else None, roi=roi)
             if points:
                 raw_center = points[0]
                 center = list(raw_center)
