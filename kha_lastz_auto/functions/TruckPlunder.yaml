@@ -9,6 +9,12 @@ steps:
     one_shot: true
     timeout_sec: 10
     match_color: true
+    roi_center_x: 0.07
+    roi_center_y: 0.61
+    roi_padding: 2
+
+  - event_type: sleep
+    duration_sec: 2
 
   - event_type: match_click
     template: buttons_template/HideTruckFromThisStateUnchecked.png
@@ -19,12 +25,12 @@ steps:
 
   - event_type: match_click
     template: buttons_template/YellowTruckSmall2.png
-    threshold: 0.5
+    threshold: 0.4
     one_shot: true
     timeout_sec: 3
     run_always: true
     match_color: true
-    color_match_tolerance: 40   # max mean-BGR distance (0-255); reject matches that are wrong colour
+    color_match_tolerance: 30   # max mean-BGR distance (0-255); reject matches that are wrong colour
     debug_log: true
     track_tried: true
     debug_click: false

@@ -144,7 +144,12 @@ else:
 # ── Load config ──────────────────────────────────────────────────────────────
 config = load_config("config.yaml")
 fn_configs = config.get("functions") or []
-config_manager.apply_overrides(fn_configs)  # .env_config overrides config.yaml
+general_settings_ov = config_manager.apply_overrides(fn_configs)  # .env_config overrides config.yaml
+
+# Auto Focus setting
+auto_focus = config.get("auto_focus", False)
+if "auto_focus" in general_settings_ov:
+    auto_focus = bool(general_settings_ov["auto_focus"])
 
 key_bindings      = {}   # key_char -> fn_name
 fn_enabled        = {}   # fn_name  -> bool
@@ -210,6 +215,9 @@ _ref_h = config.get("reference_height")
 _win_w = config.get("window_width")       # game window resize target (can differ from reference)
 _win_h = config.get("window_height")
 _show_preview = config.get("show_preview", False)
+
+# Apply initial auto_focus to wincap
+wincap.auto_focus = auto_focus
 
 # Resize window to desired size on startup.
 # focus_loop will keep enforcing this size throughout the session.
@@ -480,17 +488,26 @@ def _on_enabled_change(fn_name, enabled):
     _rebuild_schedules()
 
 
+def _on_general_setting_change(key, value):
+    global auto_focus
+    if key == "auto_focus":
+        auto_focus = value
+        wincap.auto_focus = value
+    config_manager.save(fn_configs, fn_enabled, general_settings={"auto_focus": auto_focus})
+
 # UI will run on main thread via .run_main() after game loop thread is started (reduces startup hang)
 _ui = BotUI(fn_enabled, fn_configs, runner, next_run_at,
             key_bindings=key_bindings,
-            save_callback=lambda: config_manager.save(fn_configs, fn_enabled),
+            save_callback=lambda: config_manager.save(fn_configs, fn_enabled, general_settings={"auto_focus": auto_focus}),
             bot_paused=bot_paused,
             cron_callback=_on_cron_change,
             fn_settings=fn_settings,
             settings_save_callback=config_manager.save_fn_settings,
             run_callback=lambda fn_name: _try_start(fn_name, trigger="ui_play"),
             enabled_callback=_on_enabled_change,
-            quit_check=lambda: exit_requested)
+            quit_check=lambda: exit_requested,
+            general_settings={"auto_focus": auto_focus},
+            general_settings_callback=_on_general_setting_change)
 
 # ── Focus thread ──────────────────────────────────────────────────────────────
 running = True
@@ -765,7 +782,11 @@ def _game_loop():
             pass
 
         was_running = runner.state == "running"
-        runner.update(screenshot, wincap)
+        try:
+            runner.update(screenshot, wincap)
+        except Exception as e:
+            log.error("[Runner] CRASH in update: {}".format(e), exc_info=True)
+            runner.state = "idle"
 
         # After function finishes, process pending queue
         if was_running and runner.state == "idle":

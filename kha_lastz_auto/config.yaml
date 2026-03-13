@@ -9,6 +9,7 @@ reference_height: 1920
 window_width: 1080
 window_height: 1920
 show_preview: false   # hien thi cua so debug screenshot (true = bat, false = tat)
+auto_focus: false     # tự động chiếm quyền focus khi click (mặc định tắt)
 
 # Function list: key, cron, enabled
 # https://crontab.guru/ for cron syntax

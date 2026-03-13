@@ -34,15 +34,32 @@ def _parse_level(text, level_range):
     text_s = text.strip()
     if not text_s:
         return None
+    
+    # Pre-clean: common misreads for '0' in a level context
+    # If we see digit + [UoO], it's very likely a '0'.
+    text_s = re.sub(r"(\d)[UoO]", r"\1 0", text_s)
+    # Also handle standalone [UoO] if we are expecting a number (more risky, so we use regex later)
+
     m = re.search(r"[Ll][Vv]\.?\s*(\d{1,2})", text_s)
+    if not m:
+        # Try to match after resolving possible misreads in the digits
+        cleaned = text_s.replace('U', '0').replace('O', '0').replace('o', '0')
+        m = re.search(r"[Ll][Vv]\.?\s*(\d{1,2})", cleaned)
+    
     if not m:
         m = re.search(r"[.,]\s*(\d{1,2})\b", text_s)
     if not m:
-        m = re.search(r"\b(\d{1,2})\b", text_s)
+        # Pure digits or fixed misreads
+        cleaned = text_s.replace('U', '0').replace('O', '0').replace('o', '0')
+        m = re.search(r"\b(\d{1,2})\b", cleaned)
+        
     if m:
-        num = int(m.group(1))
-        if level_range[0] <= num <= level_range[1]:
-            return num
+        try:
+            num = int(m.group(1))
+            if level_range[0] <= num <= level_range[1]:
+                return num
+        except:
+            pass
     return None
 
 

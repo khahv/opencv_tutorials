@@ -27,6 +27,7 @@ class WindowCapture:
     cropped_y = 0
     offset_x = 0
     offset_y = 0
+    auto_focus = False  # Flag to control automatic window focus
 
     # constructor
     def __init__(self, window_name=None):
@@ -78,7 +79,9 @@ class WindowCapture:
                     print(f"\n[MOUSE-LOG] Inside Game Window:")
                     print(f"  - Local Pixel: ({local_x}, {local_y})")
                     print(f"  - Ratio:       x={rel_x:.4f}, y={rel_y:.4f}")
-                    print(f"  - YAML ROI:    x: {rel_x:.2f}, y: {rel_y:.2f}")
+                    print(f"  - YAML ROI (copy this):")
+                    print(f"    roi_center_x: {rel_x:.2f}")
+                    print(f"    roi_center_y: {rel_y:.2f}")
                 else:
                     # Clicked outside the game window
                     print(f"\n[MOUSE-LOG] Clicked Outside at: ({x}, {y})")
@@ -139,14 +142,21 @@ class WindowCapture:
         except Exception:
             return False
 
-    def focus_window(self):
+    def focus_window(self, force=False):
         """Dua cua so len truoc va phuc hoi neu dang minimize. Goi truoc get_screenshot de ket qua chuan hon."""
+        if not self.auto_focus and not force:
+            return
         if self._is_desktop or not self.hwnd or not win32gui.IsWindow(self.hwnd):
             return
         try:
+            # Neu da dang o foreground thi thoi, khong can lam phien game
+            if win32gui.GetForegroundWindow() == self.hwnd:
+                return
+
             was_minimized = win32gui.IsIconic(self.hwnd)
             if was_minimized:
                 win32gui.ShowWindow(self.hwnd, win32con.SW_RESTORE)
+            
             # Windows chi cho SetForegroundWindow khi process da nhan input gan day. Trick: nhan Alt truoc
             # thi Windows "mo khoa" (LockSetForegroundWindow) -> focus hoat dong ngay ca luc chua chay function.
             user32 = ctypes.windll.user32
@@ -156,7 +166,10 @@ class WindowCapture:
                 win32gui.SetForegroundWindow(self.hwnd)
             finally:
                 user32.keybd_event(win32con.VK_MENU, 0, KEYEVENTF_KEYUP, 0)  # Alt up
-            # Chi sleep + refresh geometry khi vua restore tu minimize (tranh size 0, offset -32000)
+            
+            # Sleep mot chut de OS tieu thu het tin hieu phim Alt truoc khi bot click chuột
+            time.sleep(0.05)
+            
             if was_minimized:
                 time.sleep(0.15)
                 self.refresh_geometry()

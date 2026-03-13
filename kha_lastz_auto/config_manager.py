@@ -35,6 +35,7 @@ def apply_overrides(fn_configs: list) -> None:
     kb_ov   = env.get("key_bindings",   {})
     cr_ov   = env.get("cron_overrides", {})
     en_ov   = env.get("fn_enabled",     {})
+    gs_ov   = env.get("general_settings", {})
 
     for fc in fn_configs:
         name = fc.get("name")
@@ -49,9 +50,11 @@ def apply_overrides(fn_configs: list) -> None:
                 fc.pop("cron", None)
         if name in en_ov:
             fc["enabled"] = bool(en_ov[name])
+    
+    return gs_ov
 
 
-def save(fn_configs: list, fn_enabled: dict) -> None:
+def save(fn_configs: list, fn_enabled: dict, general_settings: dict = None) -> None:
     """Persist key bindings, cron overrides, and enabled states to .env_config.
     Preserves all other sections (fn_settings, etc.) already in the file."""
     # Read existing file to preserve sections we don't manage here (e.g. fn_settings)
@@ -75,6 +78,8 @@ def save(fn_configs: list, fn_enabled: dict) -> None:
     data["key_bindings"]   = kb
     data["cron_overrides"] = cr
     data["fn_enabled"]     = {k: bool(v) for k, v in fn_enabled.items()}
+    if general_settings is not None:
+        data["general_settings"] = general_settings
 
     with open(ENV_CONFIG_PATH, "w", encoding="utf-8") as f:
         yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)

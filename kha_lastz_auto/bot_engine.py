@@ -12,7 +12,8 @@ import random
 import yaml
 import pyautogui
 import cv2 as cv
-from vision import Vision
+from vision import Vision, get_global_scale
+from pynput.mouse import Button, Controller
 from fast_clicker import FastClicker
 from ocr_utils import (
     read_level_from_roi    as _read_level_from_roi,
@@ -21,6 +22,7 @@ from ocr_utils import (
 )
 
 log = logging.getLogger("kha_lastz")
+_mouse_ctrl = Controller()
 
 try:
     import zalo_web_clicker as _zalo_web_clicker
@@ -124,12 +126,16 @@ def load_functions(functions_dir="functions"):
             continue
         name = os.path.splitext(fname)[0]
         path = os.path.join(functions_dir, fname)
-        with open(path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        result[name] = {
-            "description": data.get("description", ""),
-            "steps": data.get("steps", []),
-        }
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+            result[name] = {
+                "description": data.get("description", ""),
+                "steps": data.get("steps", []),
+            }
+            # log.debug("[bot_engine] Loaded function: {}".format(name))
+        except Exception as e:
+            log.error("[bot_engine] Failed to load {}: {}".format(path, e))
     return result
 
 
@@ -216,6 +222,9 @@ class FunctionRunner:
         self._rtr_cache = {}          # require_text_in_region cache: frozenset(points) → filtered points
         self._rtr_page_logged = False # True after printing truck list for current refresh cycle
         self._fast_clicker = FastClicker()
+        self._step_pos_cache = None
+        self._debug_click_saved = False
+        self._step_last_click_t = None
 
     def _fn_setting(self, key, fallback=None):
         """Return fn_settings[current_function][key], or fallback if not set."""
@@ -225,6 +234,14 @@ class FunctionRunner:
         self.functions = functions_dict
 
     def start(self, function_name, wincap, trigger_event=None, trigger_active_cb=None):
+        # Reload all functions from disk to pick up any YAML changes immediately
+        try:
+            new_functions = load_functions()
+            if new_functions:
+                self.functions = new_functions
+        except Exception as e:
+            log.warning("[Runner] Failed to reload functions from disk: {}".format(e))
+
         if function_name not in self.functions:
             log.info("[Runner] Function not found: {}".format(function_name))
             return False
@@ -250,6 +267,25 @@ class FunctionRunner:
                 delattr(self, attr)
         log.info("[Runner] Started function: {}".format(function_name))
         return True
+
+    def _get_vision(self, template):
+        """Get Vision object from cache, or load on-the-fly if missing/new."""
+        if not template:
+            return None
+        v = self.vision_cache.get(template)
+        if v:
+            return v
+        
+        # On-the-fly load attempt
+        if os.path.isfile(template):
+            try:
+                log.info("[Runner] Template {} not in cache, loading on-the-fly...".format(template))
+                v = Vision(template)
+                self.vision_cache[template] = v
+                return v
+            except Exception as e:
+                log.error("[Runner] Failed to load template {} on-the-fly: {}".format(template, e))
+        return None
 
     def stop(self):
         self._fast_clicker.stop()
@@ -330,9 +366,11 @@ class FunctionRunner:
                 click_storm_corner = None
             click_storm_corner_every = int((_corner_cfg or {}).get("every", 1000))
 
-            vision = self.vision_cache.get(template)
+            vision = self._get_vision(template)
             if not vision:
-                self._advance_step(True)  # config skip, not a match failure
+                log.warning("[Runner] Step {} skipped: template NOT FOUND or FAILED TO LOAD ({})".format(
+                    self._step_label(step), template))
+                self._advance_step(True)  # skip
                 return "running"
             debug_click  = step.get("debug_click", False)
             debug_log    = step.get("debug_log", False)
@@ -340,6 +378,47 @@ class FunctionRunner:
             color_match_tolerance  = step.get("color_match_tolerance")   # BGR mean-color distance cap
             ocr_name_region        = step.get("ocr_name_region")          # [x,y,w,h] ratios → OCR name to the left of truck
             cache_position = step.get("cache_position", False) or step.get("cache_frames", 0) > 0  # match once, reuse forever
+
+            # ── ROI crop: restrict matching to a region centered on the expected button position ──
+            # roi_center_x / roi_center_y: ratios [0..1] of the expected button CENTER (copy from YAML ROI in mouse log).
+            # The crop window is auto-sized to roi_padding × template dimensions around that center.
+            # roi_padding: how many template-widths/heights to extend in each direction (default 3.0).
+            # search_region: {x, y, w, h} explicit override (ratios), for advanced use.
+            _roi_offset = (0, 0)
+            _roi_cx = step.get("roi_center_x")
+            _roi_cy = step.get("roi_center_y")
+            _explicit_roi = step.get("search_region")
+            if _explicit_roi:
+                # Explicit {x, y, w, h} region (ratios)
+                _sh, _sw = screenshot.shape[:2]
+                _rx  = max(0, int(_explicit_roi.get("x", 0.0) * _sw))
+                _ry  = max(0, int(_explicit_roi.get("y", 0.0) * _sh))
+                _rx2 = min(_sw, _rx + max(1, int(_explicit_roi.get("w", 1.0) * _sw)))
+                _ry2 = min(_sh, _ry + max(1, int(_explicit_roi.get("h", 1.0) * _sh)))
+                search_img  = screenshot[_ry:_ry2, _rx:_rx2]
+                _roi_offset = (_rx, _ry)
+            elif _roi_cx is not None and _roi_cy is not None:
+                # Smart center-based ROI: auto-compute crop from template size
+                _sh, _sw = screenshot.shape[:2]
+                _scale   = get_global_scale()   # window_width / reference_width
+                _nw_px   = max(1, int(vision.needle_w * _scale))   # template width  in screenshot pixels
+                _nh_px   = max(1, int(vision.needle_h * _scale))   # template height in screenshot pixels
+                _padding = float(step.get("roi_padding", 3.0))     # 3× template size each side
+                _cx_px   = int(_roi_cx * _sw)
+                _cy_px   = int(_roi_cy * _sh)
+                _half_w  = int(_nw_px * _padding)
+                _half_h  = int(_nh_px * _padding)
+                _rx      = max(0, _cx_px - _half_w)
+                _ry      = max(0, _cy_px - _half_h)
+                _rx2     = min(_sw, _cx_px + _half_w)
+                _ry2     = min(_sh, _cy_px + _half_h)
+                search_img  = screenshot[_ry:_ry2, _rx:_rx2]
+                _roi_offset = (_rx, _ry)
+                if debug_log:
+                    log.info("[Runner] {} ROI: center=({:.2f},{:.2f}) crop=({},{})→({},{}) tpl={}×{}px".format(
+                        self._step_label(step), _roi_cx, _roi_cy, _rx, _ry, _rx2, _ry2, _nw_px, _nh_px))
+            else:
+                search_img = screenshot
 
             # Run matchTemplate only on first hit, then reuse cached position for all subsequent clicks.
             _cached_pos = getattr(self, '_step_pos_cache', None)
@@ -349,14 +428,22 @@ class FunctionRunner:
                 dbg = 'info' if (debug_click or debug_log) else None
                 meta_list = None
                 if match_color:
-                    result = vision.find(screenshot, threshold=threshold, debug_mode=dbg,
+                    result = vision.find(search_img, threshold=threshold, debug_mode=dbg,
                                         is_color=True, debug_log=debug_log,
                                         color_tolerance=color_match_tolerance,
                                         ratio_test=ratio_test, min_inliers=min_inliers)
                     points = result[0] if isinstance(result, tuple) else result
                     meta_list = result[1] if isinstance(result, tuple) and len(result) > 1 else None
                 else:
-                    points = vision.find(screenshot, threshold=threshold, debug_mode=dbg, debug_log=debug_log, ratio_test=ratio_test, min_inliers=min_inliers)
+                    points = vision.find(search_img, threshold=threshold, debug_mode=dbg, debug_log=debug_log, ratio_test=ratio_test, min_inliers=min_inliers)
+                # Translate ROI-local coords back to full screenshot coords
+                if points and _roi_offset != (0, 0):
+                    ox, oy = _roi_offset
+                    _shifted = []
+                    for pt in points:
+                        cx, cy = pt[0] + ox, pt[1] + oy
+                        _shifted.append((cx, cy) + tuple(pt[2:]))
+                    points = _shifted
                 if points:
                     self._step_pos_cache = points[0]
                 elif debug_log:
@@ -638,23 +725,39 @@ class FunctionRunner:
                             self._advance_step(True)
                     return "running"
 
-                # Non-storm path: move cursor with pyautogui then click
-                pyautogui.moveTo(sx, sy)
+                # Non-storm path: move cursor with pynput then click
+                try:
+                    _mouse_ctrl.position = (sx, sy)
+                    time.sleep(0.05) # Tang len 0.05s de chac chan game nhan ra chuot dang o tren nut
+                except Exception as e:
+                    log.warning("[Runner] Failed to set mouse position: {}".format(e))
+                    return "running"
+
                 if debug_log:
-                    actual = pyautogui.position()
+                    actual = _mouse_ctrl.position
                     log.info("[Runner] {} | intended=({},{}) actual=({},{}) diff=({},{})".format(
-                        self._step_label(step), sx, sy, actual.x, actual.y,
-                        actual.x - sx, actual.y - sy))
+                        self._step_label(step), sx, sy, int(actual[0]), int(actual[1]),
+                        int(actual[0] - sx), int(actual[1] - sy)))
+
+                # Force focus game window right before clicking to ensure it receives input
+                if hasattr(wincap, 'focus_window'):
+                    wincap.focus_window()
 
                 burst_start = time.time()
                 if not one_shot and click_interval_sec == 0:
                     # Burst mode: click as many times as possible within 50ms this frame
                     burst_end = burst_start + 0.05
                     while time.time() < burst_end and self.step_click_count < max_clicks:
-                        pyautogui.click()
+                        # Improved click reliability with pynput
+                        _mouse_ctrl.press(Button.left)
+                        time.sleep(0.03) # Tăng nhẹ thời gian hold trong burst
+                        _mouse_ctrl.release(Button.left)
                         self.step_click_count += 1
                 else:
-                    pyautogui.click()
+                    # Improved click reliability with pynput (standard click)
+                    _mouse_ctrl.press(Button.left)
+                    time.sleep(0.1) # Tăng lên 0.1s để game chắc chắn nhận diện được
+                    _mouse_ctrl.release(Button.left)
                     self.step_click_count += 1
 
                 if not one_shot:
@@ -680,7 +783,7 @@ class FunctionRunner:
                     _click_truck_pt = tuple(points[0])
                     _click_density = getattr(self, '_rtr_density_map_last', {}).get(_click_truck_pt)
                     _click_density_str = " density={:.3f}".format(_click_density) if _click_density is not None else ""
-                    log.info("[Runner] {} → true (clicked truck ({},{}){})"  .format(
+                    log.info("[Runner] {} → true (clicked position ({},{}){})"  .format(
                         self._step_label(step), _click_truck_pt[0], _click_truck_pt[1], _click_density_str))
                     self._advance_step(True)
                     return "running"
@@ -747,7 +850,7 @@ class FunctionRunner:
             timeout_sec        = step.get("timeout_sec") or 10
             click_interval_sec = step.get("click_interval_sec", 0.15)
 
-            vision = self.vision_cache.get(template)
+            vision = self._get_vision(template)
             if not vision:
                 self._advance_step(True)
                 return "running"
@@ -755,7 +858,17 @@ class FunctionRunner:
             if points:
                 for pt in points:
                     sx, sy = wincap.get_screen_position((pt[0], pt[1]))
-                    pyautogui.click(sx, sy)
+                    try:
+                        _mouse_ctrl.position = (sx, sy)
+                        time.sleep(0.05)
+                    except: pass
+                    
+                    if hasattr(wincap, 'focus_window'):
+                        wincap.focus_window()
+                        
+                    _mouse_ctrl.press(Button.left)
+                    time.sleep(0.1)
+                    _mouse_ctrl.release(Button.left)
                     if click_interval_sec > 0:
                         time.sleep(click_interval_sec)
                 log.info("[Runner] {} → true (clicked {} match(es))".format(self._step_label(step), len(points)))
@@ -820,7 +933,17 @@ class FunctionRunner:
             px = int(wincap.w * ox)
             py = int(wincap.h * oy)
             sx, sy = wincap.get_screen_position((px, py))
-            pyautogui.click(sx, sy)
+            try:
+                _mouse_ctrl.position = (sx, sy)
+                time.sleep(0.05)
+            except: pass
+            
+            if hasattr(wincap, 'focus_window'):
+                wincap.focus_window()
+                
+            _mouse_ctrl.press(Button.left)
+            time.sleep(0.1)
+            _mouse_ctrl.release(Button.left)
             log.info("[Runner] {} → true".format(self._step_label(step)))
             self._advance_step(True)
             return "running"
@@ -829,7 +952,7 @@ class FunctionRunner:
             template = step.get("template")
             threshold = step.get("threshold", 0.75)
             timeout_sec = step.get("timeout_sec") or 30
-            vision = self.vision_cache.get(template)
+            vision = self._get_vision(template)
             if not vision:
                 self._advance_step(True)
                 return "running"
@@ -878,7 +1001,7 @@ class FunctionRunner:
             # Resolve anchor center from template if specified
             anchor_center = None
             if level_anchor_template:
-                v_anchor = self.vision_cache.get(level_anchor_template)
+                v_anchor = self._get_vision(level_anchor_template)
                 if v_anchor:
                     pts = v_anchor.find(screenshot, threshold=threshold, debug_mode=None)
                     if pts:
@@ -908,7 +1031,10 @@ class FunctionRunner:
                 pts = vision_plus.find(screenshot, threshold=threshold, debug_mode=None)
                 if pts:
                     sx, sy = wincap.get_screen_position((pts[0][0], pts[0][1]))
-                    pyautogui.click(sx, sy)
+                    _mouse_ctrl.position = (sx, sy)
+                    _mouse_ctrl.press(Button.left)
+                    time.sleep(0.05)
+                    _mouse_ctrl.release(Button.left)
                     log.info("[Runner] set_level: Lv.{} -> click Plus (target Lv.{})".format(current, target_level))
                     time.sleep(click_interval)
                 else:

@@ -29,7 +29,7 @@ steps:
   - event_type: set_level
     target_level: 10
     level_anchor_template: buttons_template/Slider.png
-    level_anchor_offset: [-45, -65, 110, 35]
+    level_anchor_offset: [-5, -65, 70, 35]
     plus_template: buttons_template/PlusButton.png
     minus_template: buttons_template/MinusButton.png
     threshold: 0.75

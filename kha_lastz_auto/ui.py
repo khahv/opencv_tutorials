@@ -40,7 +40,9 @@ class BotUI:
                  settings_save_callback=None,
                  run_callback=None,
                  enabled_callback=None,
-                 quit_check=None):
+                 quit_check=None,
+                 general_settings: dict = None,
+                 general_settings_callback=None):
         self._fn_enabled    = fn_enabled
         self._fn_configs    = [fc for fc in fn_configs if fc.get("name")]
         self._runner        = runner_ref
@@ -54,6 +56,8 @@ class BotUI:
         self._run_callback  = run_callback   # fn(fn_name) — trigger function immediately
         self._enabled_callback = enabled_callback  # fn(fn_name, enabled_bool)
         self._quit_check   = quit_check   # callable() -> bool, if True close UI (for Ctrl+C)
+        self._general_settings = general_settings if general_settings is not None else {}
+        self._general_settings_callback = general_settings_callback
 
         self._vars       = {}   # fn_name → BooleanVar
         self._row_frames = {}   # fn_name → (row_frame, name_label)
@@ -73,6 +77,7 @@ class BotUI:
         self._play_btns   = {}
         self._play_icons  = {}
         self._play_lbls   = {}
+        self._focus_var   = None
 
     def start(self):
         """Start UI in a background thread (legacy). Prefer run_main() on main thread to avoid hangs."""
@@ -119,6 +124,18 @@ class BotUI:
             state="disabled",
             relief="flat", bd=0, highlightthickness=0)
         self._running_cb.pack(side="right")
+
+        # Auto Focus toggle
+        self._focus_var = tk.BooleanVar(value=self._general_settings.get("auto_focus", False))
+        tk.Checkbutton(
+            hf, text="Auto Focus Window",
+            variable=self._focus_var,
+            command=self._on_focus_toggle,
+            font=("Segoe UI", 10),
+            bg=BG3, activebackground=BG3,
+            fg=FG, activeforeground=FG,
+            selectcolor=GRAY2, cursor="arrow",
+            relief="flat", bd=0, highlightthickness=0).pack(side="right", padx=(0, 20))
 
         # Status bar
         sf = tk.Frame(r, bg=BG2, padx=16, pady=8)
@@ -207,6 +224,12 @@ class BotUI:
         else:
             _log.info("[UI] Is Running → ON (resumed)")
             self._running_cb.config(fg=GREEN, activeforeground=GREEN)
+            self._status_lbl.config(text="Ready", fg=FG)
+        self._update_badge_states()
+
+    def _on_focus_toggle(self):
+        if self._general_settings_callback:
+            self._general_settings_callback("auto_focus", self._focus_var.get())
         self._update_badge_states()
 
     def _update_badge_states(self):
@@ -339,10 +362,12 @@ class BotUI:
             gear_lbl = None
 
         # Play "▶" button — active when Is Running = ON (paused=False), greyed when paused
+        is_paused = not self._running_var.get()
         play_lbl = tk.Label(row, text=" ▶ ",
                             font=("Segoe UI", 10),
-                            bg=GRAY2, fg=GREEN,
-                            padx=4, pady=2, relief="flat", cursor="hand2")
+                            bg=GRAY2, fg=GRAY if is_paused else GREEN,
+                            padx=4, pady=2, relief="flat", 
+                            cursor="arrow" if is_paused else "hand2")
         play_lbl.pack(side="right", padx=(0, 4))
         play_lbl.bind("<Button-1>", lambda e, n=name: self._run_fn(n))
 

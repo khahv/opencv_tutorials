@@ -3,10 +3,14 @@ description: "Mo Mail -> Alliance -> Claim All -> System -> Claim All -> dong po
 steps:
   - event_type: match_click
     template: buttons_template/Mail.png
-    threshold: 0.5
+    threshold: 0.7
     one_shot: true
     timeout_sec: 5
     debug_log: true
+    roi_center_x: 0.93   # ← copy từ YAML ROI: x: 0.07
+    roi_center_y: 0.81   # ← copy từ YAML ROI: y: 0.95
+    roi_padding: 3.0 
+    
   - event_type: sleep
     duration_sec: 1
   - event_type: match_click
