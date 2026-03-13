@@ -10,13 +10,13 @@ steps:
   - event_type: match_count
     template: buttons_template/PasswordSlot.png
     count: 6
-    threshold: 0.75
+    threshold: 0.3
     timeout_sec: 8
 
   # Click the first visible password slot to focus the input
   - event_type: match_click
     template: buttons_template/PasswordSlot.png
-    threshold: 0.75
+    threshold: 0.6
     one_shot: true
     timeout_sec: 5
 
