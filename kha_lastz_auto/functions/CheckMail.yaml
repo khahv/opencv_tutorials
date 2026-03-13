@@ -16,16 +16,17 @@ steps:
   - event_type: match_click
     template: buttons_template/AllianceButton.png
     threshold: 0.8
-    match_color: true
     one_shot: true
     timeout_sec: 5
     debug_log: true
+    roi_center_x: 0.42
+    roi_center_y: 0.09
+    roi_padding: 2.0
   - event_type: sleep
     duration_sec: 0.5
   - event_type: match_click
     template: buttons_template/ClaimAll.png
     threshold: 0.8
-    match_color: true
     one_shot: true
     debug_log: true
     timeout_sec: 5
@@ -34,8 +35,10 @@ steps:
   - event_type: match_click
     template: buttons_template/SystemButton.png
     threshold: 0.8
-    match_color: true
     one_shot: true
+    roi_center_x: 0.58
+    roi_center_y: 0.08
+    roi_padding: 2.0
     timeout_sec: 5
     debug_log: true
   - event_type: sleep
@@ -43,17 +46,16 @@ steps:
   - event_type: match_click
     template: buttons_template/ClaimAll.png
     threshold: 0.8
-    match_color: true
     one_shot: true
     timeout_sec: 5
     debug_log: true
   - event_type: sleep
     duration_sec: 2
   - event_type: click_position
-    offset_x: 0.15
-    offset_y: 0.15
+    x: 0.03   # relative (0–1), giống search_roi
+    y: 0.08
   - event_type: sleep
     duration_sec: 2
   - event_type: click_position
-    offset_x: 0.15
-    offset_y: 0.15
+    x: 0.03
+    y: 0.08

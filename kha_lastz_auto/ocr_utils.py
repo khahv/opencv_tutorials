@@ -34,22 +34,24 @@ def _parse_level(text, level_range):
     text_s = text.strip()
     if not text_s:
         return None
-    
+
+    # Normalize common low-res OCR misreads (e.g. 540x960): "Lu" -> "Lv", trailing "_" from progress bar
+    text_s = re.sub(r"Lu(?=[\d.\s]|$)", "Lv", text_s, flags=re.IGNORECASE)
+    text_s = re.sub(r"_+$", "", text_s).strip()
+
     # Pre-clean: common misreads for '0' in a level context
-    # If we see digit + [UoO], it's very likely a '0'.
-    text_s = re.sub(r"(\d)[UoO]", r"\1 0", text_s)
-    # Also handle standalone [UoO] if we are expecting a number (more risky, so we use regex later)
+    text_s = re.sub(r"(\d)[UoO]", r"\g<1>0", text_s)
 
     m = re.search(r"[Ll][Vv]\.?\s*(\d{1,2})", text_s)
     if not m:
-        # Try to match after resolving possible misreads in the digits
         cleaned = text_s.replace('U', '0').replace('O', '0').replace('o', '0')
         m = re.search(r"[Ll][Vv]\.?\s*(\d{1,2})", cleaned)
-    
+    # Focus on number after "L": Lv.7, LK1, LV.10, Lu1_... — bỏ qua 2 chữ đầu, chỉ lấy số
+    if not m:
+        m = re.search(r"[Ll][^0-9]{0,2}(\d{1,2})", text_s)
     if not m:
         m = re.search(r"[.,]\s*(\d{1,2})\b", text_s)
     if not m:
-        # Pure digits or fixed misreads
         cleaned = text_s.replace('U', '0').replace('O', '0').replace('o', '0')
         m = re.search(r"\b(\d{1,2})\b", cleaned)
         

@@ -82,9 +82,9 @@ class WindowCapture:
                     print(f"  - YAML ROI (copy this):")
                     print(f"    roi_center_x: {rel_x:.2f}")
                     print(f"    roi_center_y: {rel_y:.2f}")
-                else:
-                    # Clicked outside the game window
-                    print(f"\n[MOUSE-LOG] Clicked Outside at: ({x}, {y})")
+                # else:
+                #     # Clicked outside the game window
+                #     print(f"\n[MOUSE-LOG] Clicked Outside at: ({x}, {y})")
 
         # Start the listener thread
         self.listener = mouse.Listener(on_click=on_click)

@@ -137,6 +137,18 @@ class BotUI:
             selectcolor=GRAY2, cursor="arrow",
             relief="flat", bd=0, highlightthickness=0).pack(side="right", padx=(0, 20))
 
+        # Resolution dropdown (saved to .env_config, hot-reloads window size)
+        RESOLUTIONS = ["1080x1920", "540x960"]
+        ww = self._general_settings.get("window_width")
+        wh = self._general_settings.get("window_height")
+        current = "1080x1920" if (ww == 1080 and wh == 1920) else "540x960"
+        self._resolution_var = tk.StringVar(value=current)
+        tk.Label(hf, text="Resolution", font=("Segoe UI", 10), bg=BG3, fg=FG).pack(side="right", padx=(0, 6))
+        om = tk.OptionMenu(hf, self._resolution_var, *RESOLUTIONS, command=self._on_resolution_change)
+        om.config(font=("Segoe UI", 10), bg=BG2, fg=FG, activebackground=BG2, activeforeground=FG,
+                  highlightthickness=0, relief="flat")
+        om.pack(side="right", padx=(0, 16))
+
         # Status bar
         sf = tk.Frame(r, bg=BG2, padx=16, pady=8)
         sf.pack(fill="x", pady=(1, 0))
@@ -231,6 +243,10 @@ class BotUI:
         if self._general_settings_callback:
             self._general_settings_callback("auto_focus", self._focus_var.get())
         self._update_badge_states()
+
+    def _on_resolution_change(self, value):
+        if self._general_settings_callback and value:
+            self._general_settings_callback("resolution", value)
 
     def _update_badge_states(self):
         """Grey out / restore all key badges, schedule and gear buttons based on Is Running state."""

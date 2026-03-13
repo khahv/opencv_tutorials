@@ -23,13 +23,16 @@ steps:
     timeout_sec: 10
   - event_type: sleep
     duration_sec: 0.5
-  # "Lv.X" text sits directly above the slider thumb (|| icon) and moves with it.
-  # Anchor: find Slider.png, then crop the region above its center.
-  # level_anchor_offset: [dx, dy, w, h] px from Slider center
+  # "Lv.X" text sits above the slider bar in the Boomer search dialog.
+  # level_ocr_region: screen-ratio coords of the game window (0.0 = top/left, 1.0 = bottom/right).
+  # Debug crop is saved to debug_ocr/debug_set_level_roi_raw.png — use it to tune x,y,w,h.
   - event_type: set_level
     target_level: 10
-    level_anchor_template: buttons_template/Slider.png
-    level_anchor_offset: [-5, -65, 70, 35]
+    level_ocr_region:
+      x: 0.20   # left edge of "Lv.XX" text
+      y: 0.85   # top edge (above the slider bar)
+      w: 0.57   # wide enough to capture "Lv.10"
+      h: 0.03   # height of one text line
     plus_template: buttons_template/PlusButton.png
     minus_template: buttons_template/MinusButton.png
     threshold: 0.75
@@ -43,7 +46,7 @@ steps:
     one_shot: true
     timeout_sec: 10
   - event_type: sleep
-    duration_sec: 0.5
+    duration_sec: 2
   - event_type: match_click
     template: buttons_template/TeamUp.png
     threshold: 0.75
@@ -53,6 +56,6 @@ steps:
     duration_sec: 0.5
   - event_type: match_click
     template: buttons_template/March.png
-    threshold: 0.75
+    threshold: 0.6
     one_shot: true
     timeout_sec: 10

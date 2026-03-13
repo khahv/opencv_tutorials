@@ -12,7 +12,7 @@ _log = logging.getLogger("kha_lastz")
 # Performance decorator
 # ---------------------------------------------------------------------------
 def timeit(func):
-    """Decorator: log execution time of find/exists in milliseconds."""
+    """Decorator: log execution time + result summary for find/exists."""
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         t0 = time.perf_counter()
@@ -20,7 +20,25 @@ def timeit(func):
         elapsed_ms = (time.perf_counter() - t0) * 1000
         needle = getattr(args[0], 'needle_name', '?') if args else '?'
         if elapsed_ms > 20:
-            _log.debug("[timeit] Vision.%s [%s] took %.2f ms", func.__name__, needle, elapsed_ms)
+            # Summarize return value to make logs actionable.
+            summary = ""
+            if isinstance(result, bool):
+                summary = " -> {}".format("true" if result else "false")
+            elif isinstance(result, (list, tuple)):
+                n = len(result)
+                if n == 0:
+                    summary = " -> 0"
+                else:
+                    first = result[0]
+                    if isinstance(first, (list, tuple)) and len(first) >= 2:
+                        summary = " -> {} (first=({},{}))".format(n, int(first[0]), int(first[1]))
+                    else:
+                        summary = " -> {}".format(n)
+            elif result is None:
+                summary = " -> None"
+            else:
+                summary = " -> {}".format(type(result).__name__)
+            _log.debug("[timeit] Vision.%s [%s] took %.2f ms%s", func.__name__, needle, elapsed_ms, summary)
         return result
     return wrapper
 
@@ -78,24 +96,16 @@ def get_global_scale():
 
 
 # ---------------------------------------------------------------------------
-# Vision class
+# Vision class — matchTemplate only (gray or BGR). No Distance Transform.
 # ---------------------------------------------------------------------------
 class Vision:
     """
-    Template matcher supporting two modes:
-      - Default (is_color=False): Distance Transform (Chamfer) Matching on edges.
-        Robust to lighting/color variation. Good for icons/shapes.
-      - Color (is_color=True): BGR TM_CCOEFF_NORMED.
-        Good for text buttons, colourful UI elements with unique colours.
+    Template matcher using cv.matchTemplate only:
+      - is_color=False (default): grayscale matchTemplate.
+      - is_color=True: BGR matchTemplate (needle and haystack kept in color).
 
-    Scale handling (correct approach):
-      Templates are captured at reference resolution (e.g. 1080x1920).
-      The game window runs at a smaller resolution (e.g. 540x960).
-      scale = window / reference  (e.g. 0.5)
-
-      We DOWNSCALE the needle to match the haystack, NOT upscale the haystack.
-      This keeps the haystack pixel-perfect (no interpolation artefacts) and
-      works for any arbitrary window size, not just exact 2x multiples.
+    Scale: haystack is resized to reference resolution (norm = resize(haystack, 1/scale))
+    before matching; needle stays at reference size. Results are scaled back to haystack coords.
     """
 
     needle_img   = None
@@ -117,224 +127,144 @@ class Vision:
         self.needle_h    = img.shape[0]
         self.method      = method
 
-        # Pre-compute reference-resolution grayscale + edges (for DT matching)
-        gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
-        self.needle_gray_ref  = gray                       # full-res gray (1080p)
-        self.needle_edges_ref = cv.Canny(gray, 50, 150)   # full-res edges
+        if len(img.shape) == 3:
+            self.needle_gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+        else:
+            self.needle_gray = img
 
-        _log.info("[vision:info] [%s] Load Distance Transform Model thành công (%dx%d).",
+        _log.info("[vision:info] [%s] Load template thành công (%dx%d).",
                   self.needle_name, self.needle_w, self.needle_h)
 
-    # ------------------------------------------------------------------
-    # Internal helpers: return scaled needle artefacts for current window
-    # ------------------------------------------------------------------
-    def _scaled_needle_color(self, scale):
-        """Needle BGR image scaled to current window resolution."""
+    def _norm_haystack(self, haystack_img):
+        """Resize haystack to reference resolution for matching (like original vision)."""
+        scale = _global_scale
         if scale == 1.0:
-            return self.needle_img
-        nw = max(1, int(round(self.needle_w * scale)))
-        nh = max(1, int(round(self.needle_h * scale)))
-        interp = cv.INTER_AREA if scale < 1.0 else cv.INTER_LINEAR
-        return cv.resize(self.needle_img, (nw, nh), interpolation=interp)
+            return haystack_img, 1.0
+        nw = max(4, int(haystack_img.shape[1] / scale))
+        nh = max(4, int(haystack_img.shape[0] / scale))
+        interp = cv.INTER_AREA if scale > 1.0 else cv.INTER_LINEAR
+        norm = cv.resize(haystack_img, (nw, nh), interpolation=interp)
+        return norm, scale
 
-    def _scaled_needle_gray(self, scale):
-        """Needle grayscale image scaled to current window resolution."""
-        if scale == 1.0:
-            return self.needle_gray_ref
-        nw = max(1, int(round(self.needle_w * scale)))
-        nh = max(1, int(round(self.needle_h * scale)))
-        interp = cv.INTER_AREA if scale < 1.0 else cv.INTER_LINEAR
-        return cv.resize(self.needle_gray_ref, (nw, nh), interpolation=interp)
-
-    def _scaled_needle_edges(self, scale):
-        """Needle edge mask scaled to current window resolution."""
-        if scale == 1.0:
-            return self.needle_edges_ref
-        nw = max(1, int(round(self.needle_w * scale)))
-        nh = max(1, int(round(self.needle_h * scale)))
-        # Scale binary edges then re-threshold to keep clean binary mask
-        interp = cv.INTER_AREA if scale < 1.0 else cv.INTER_LINEAR
-        scaled = cv.resize(self.needle_edges_ref, (nw, nh), interpolation=interp)
-        _, binary = cv.threshold(scaled, 64, 255, cv.THRESH_BINARY)
-        return binary
-
-    # ------------------------------------------------------------------
     @timeit
     def exists(self, haystack_img, threshold=0.5, debug_log=False) -> bool:
-        """Fast existence check — no groupRectangles, no coordinate output."""
-        scale = _global_scale
-        needle_gray = self._scaled_needle_gray(scale)
-        nw, nh = needle_gray.shape[1], needle_gray.shape[0]
-        if nw > haystack_img.shape[1] or nh > haystack_img.shape[0]:
+        """Fast existence check — matchTemplate on grayscale only."""
+        norm, scale = self._norm_haystack(haystack_img)
+        if self.needle_w > norm.shape[1] or self.needle_h > norm.shape[0]:
             return False
-        hay_gray = _get_gray(haystack_img)
-        result = cv.matchTemplate(hay_gray, needle_gray, cv.TM_CCOEFF_NORMED)
+        norm_gray = _get_gray(norm)
+        result = cv.matchTemplate(norm_gray, self.needle_gray, self.method)
         _, max_val, _, _ = cv.minMaxLoc(result)
         return max_val >= threshold
 
-    # ------------------------------------------------------------------
     @timeit
     def find(self, haystack_img, threshold=0.5, debug_mode=None, is_color=False,
              debug_log=False, multi=False, color_tolerance=None, ratio_test=None, min_inliers=None):
         """
         Find needle in haystack. Returns list of (cx, cy, w, h) in haystack coords.
-
-        is_color=False     → Distance Transform (Chamfer) matching (default)
-        is_color=True      → BGR TM_CCOEFF_NORMED matching (match_color: true in YAML)
-        multi=True         → Return ALL matches above threshold (for match_count with count > 1)
-        color_tolerance    → Max mean BGR distance (0-255) between matched region and template.
-                             None = disabled. E.g. 30 = strict color check.
+        is_color=False → grayscale matchTemplate.
+        is_color=True  → BGR matchTemplate (color preserved).
+        multi=True + is_color → return all matches (groupRectangles).
+        color_tolerance → optional BGR mean distance filter when is_color=True.
         """
-        scale = _global_scale
+        norm, scale = self._norm_haystack(haystack_img)
+        nw, nh = self.needle_w, self.needle_h
+        if nw > norm.shape[1] or nh > norm.shape[0]:
+            return []
 
         if is_color:
-            if multi:
-                return self._find_color_multi(haystack_img, threshold, scale, debug_log, color_tolerance)
-            return self._find_color(haystack_img, threshold, scale, debug_log, color_tolerance)
+            if len(norm.shape) == 2:
+                norm = cv.cvtColor(norm, cv.COLOR_GRAY2BGR)
+            needle_bgr = self.needle_img if len(self.needle_img.shape) == 3 else \
+                cv.cvtColor(self.needle_img, cv.COLOR_GRAY2BGR)
+            result = cv.matchTemplate(norm, needle_bgr, self.method)
         else:
-            return self._find_dt(haystack_img, threshold, scale, debug_log)
+            norm_gray = _get_gray(norm)
+            result = cv.matchTemplate(norm_gray, self.needle_gray, self.method)
 
-    # ------------------------------------------------------------------
-    def _find_color(self, haystack_img, threshold, scale, debug_log, color_tolerance=None):
-        """BGR template matching. Returns single best match above threshold."""
-        needle = self._scaled_needle_color(scale)
-        nw, nh = needle.shape[1], needle.shape[0]
-        if nw > haystack_img.shape[1] or nh > haystack_img.shape[0]:
-            return []
-
-        # Ensure haystack is BGR
-        hay = haystack_img if len(haystack_img.shape) == 3 else cv.cvtColor(haystack_img, cv.COLOR_GRAY2BGR)
-
-        result = cv.matchTemplate(hay, needle, cv.TM_CCOEFF_NORMED)
-        _, max_val, _, max_loc = cv.minMaxLoc(result)
-
-        if max_val < threshold:
-            if debug_log:
-                _log.debug("[vision:debug] [%s] Color Match Failed: score %.2f < %.2f",
-                           self.needle_name, max_val, threshold)
-            return []
-
-        x, y = max_loc
-
-        # Optional: strict color check — reject if mean BGR differs too much from template
-        if color_tolerance is not None:
-            region = hay[y:y+nh, x:x+nw].astype(np.float32)
-            needle_f = needle.astype(np.float32)
-            color_dist = float(np.linalg.norm(
-                np.mean(region.reshape(-1, 3), axis=0) - np.mean(needle_f.reshape(-1, 3), axis=0)
-            ))
-            if color_dist > color_tolerance:
-                if debug_log:
-                    _log.debug("[vision:debug] [%s] Color Reject: mean BGR dist=%.1f > tol=%.1f",
-                               self.needle_name, color_dist, color_tolerance)
-                return []
-
-        cx = int(x + nw // 2)
-        cy = int(y + nh // 2)
-
-        if debug_log:
-            _log.debug("[vision:debug] [%s] Color Match OK! Score: %.2f (Thresh: %.2f)",
-                       self.needle_name, max_val, threshold)
-
-        return [(cx, cy, nw, nh)]
-
-    # ------------------------------------------------------------------
-    def _find_color_multi(self, haystack_img, threshold, scale, debug_log, color_tolerance=None):
-        """BGR template matching. Returns ALL matches above threshold (groupRectangles)."""
-        needle = self._scaled_needle_color(scale)
-        nw, nh = needle.shape[1], needle.shape[0]
-        if nw > haystack_img.shape[1] or nh > haystack_img.shape[0]:
-            return []
-
-        hay = haystack_img if len(haystack_img.shape) == 3 else cv.cvtColor(haystack_img, cv.COLOR_GRAY2BGR)
-
-        result = cv.matchTemplate(hay, needle, cv.TM_CCOEFF_NORMED)
         locs = list(zip(*np.where(result >= threshold)[::-1]))
         if not locs:
+            if debug_log and is_color:
+                _log.debug("[vision:debug] [%s] Color Match Failed: best < %.2f", self.needle_name, threshold)
+            elif debug_log and not is_color:
+                _log.debug("[vision:debug] [%s] Gray Match Failed: best < %.2f", self.needle_name, threshold)
             return []
 
-        # Optional color filter before groupRectangles
-        if color_tolerance is not None:
-            needle_mean = np.mean(needle.astype(np.float32).reshape(-1, 3), axis=0)
-            filtered = []
-            for loc in locs:
-                x, y = int(loc[0]), int(loc[1])
-                region = hay[y:y+nh, x:x+nw].astype(np.float32)
-                color_dist = float(np.linalg.norm(
-                    np.mean(region.reshape(-1, 3), axis=0) - needle_mean
-                ))
-                if color_dist <= color_tolerance:
-                    filtered.append(loc)
-            locs = filtered
-            if not locs:
+        if is_color and not multi:
+            # Single best match
+            _, max_val, _, max_loc = cv.minMaxLoc(result)
+            if max_val < threshold:
                 return []
+            x, y = max_loc
+            hay = norm if len(norm.shape) == 3 else cv.cvtColor(norm, cv.COLOR_GRAY2BGR)
+            needle_bgr = self.needle_img if len(self.needle_img.shape) == 3 else \
+                cv.cvtColor(self.needle_img, cv.COLOR_GRAY2BGR)
+            if color_tolerance is not None:
+                region = hay[y:y+nh, x:x+nw].astype(np.float32)
+                needle_f = needle_bgr.astype(np.float32)
+                color_dist = float(np.linalg.norm(
+                    np.mean(region.reshape(-1, 3), axis=0) - np.mean(needle_f.reshape(-1, 3), axis=0)
+                ))
+                if color_dist > color_tolerance:
+                    if debug_log:
+                        _log.debug("[vision:debug] [%s] Color Reject: mean BGR dist=%.1f > tol=%.1f",
+                                   self.needle_name, color_dist, color_tolerance)
+                    return []
+            if debug_log:
+                _log.debug("[vision:debug] [%s] Color Match OK! Score: %.2f", self.needle_name, max_val)
+            cx = int((x + nw // 2) * scale)
+            cy = int((y + nh // 2) * scale)
+            return [(cx, cy, int(nw * scale), int(nh * scale))]
 
+        # Multiple matches or gray single: use groupRectangles
         rects = []
         for loc in locs:
             r = [int(loc[0]), int(loc[1]), nw, nh]
             rects.append(r)
             rects.append(r)
-
         rects, _ = cv.groupRectangles(rects, groupThreshold=1, eps=0.5)
         if not len(rects):
             return []
 
+        if is_color and color_tolerance is not None:
+            hay = norm if len(norm.shape) == 3 else cv.cvtColor(norm, cv.COLOR_GRAY2BGR)
+            needle_bgr = self.needle_img if len(self.needle_img.shape) == 3 else \
+                cv.cvtColor(self.needle_img, cv.COLOR_GRAY2BGR)
+            needle_mean = np.mean(needle_bgr.astype(np.float32).reshape(-1, 3), axis=0)
+            filtered = []
+            for (x, y, w, h) in rects:
+                region = hay[y:y+h, x:x+w].astype(np.float32)
+                color_dist = float(np.linalg.norm(
+                    np.mean(region.reshape(-1, 3), axis=0) - needle_mean
+                ))
+                if color_dist <= color_tolerance:
+                    filtered.append((x, y, w, h))
+            rects = [(x, y, w, h) for x, y, w, h in filtered] if filtered else []
+            if not rects:
+                return []
+
         points = []
         for x, y, w, h in rects:
-            points.append((int(x + w // 2), int(y + h // 2), w, h))
+            cx = int((x + w // 2) * scale)
+            cy = int((y + h // 2) * scale)
+            points.append((cx, cy, int(w * scale), int(h * scale)))
 
-        if debug_log:
-            _log.debug("[vision:debug] [%s] Color Multi-Match: found %d (Thresh: %.2f)",
-                       self.needle_name, len(points), threshold)
+        if debug_mode in ("rectangles", "points"):
+            for x, y, w, h in rects:
+                ox = int(x * scale)
+                oy = int(y * scale)
+                ow = int(w * scale)
+                oh = int(h * scale)
+                if debug_mode == "rectangles":
+                    cv.rectangle(haystack_img, (ox, oy), (ox + ow, oy + oh), (0, 255, 0), 2)
+                else:
+                    cv.drawMarker(haystack_img, (ox + ow // 2, oy + oh // 2),
+                                 (255, 0, 255), cv.MARKER_CROSS, 40, 2)
+            try:
+                cv.imshow("Matches", haystack_img)
+            except cv.error:
+                pass
+
+        if debug_log and points:
+            _log.debug("[vision:debug] [%s] Match: %d (Thresh: %.2f)", self.needle_name, len(points), threshold)
         return points
-
-
-    # ------------------------------------------------------------------
-    def _find_dt(self, haystack_img, threshold, scale, debug_log):
-        """Distance Transform (Chamfer) matching. Returns single best match."""
-        needle_edges = self._scaled_needle_edges(scale)
-        nw, nh = needle_edges.shape[1], needle_edges.shape[0]
-        if nw > haystack_img.shape[1] or nh > haystack_img.shape[0]:
-            return []
-
-        # 1. Haystack edges
-        hay_gray  = _get_gray(haystack_img)
-        edges_hay = cv.Canny(hay_gray, 50, 150)
-
-        # 2. Invert: edges → 0 (DT measures distance to zero pixels)
-        inv_hay = cv.bitwise_not(edges_hay)
-
-        # 3. Distance transform map
-        dist_map = cv.distanceTransform(inv_hay, cv.DIST_L2, cv.DIST_MASK_PRECISE)
-
-        # 4. Slide binary needle edges over distance map (Chamfer score)
-        needle_binary = (needle_edges / 255.0).astype(np.float32)
-        match_result  = cv.matchTemplate(dist_map, needle_binary, cv.TM_CCORR)
-
-        # 5. Best match = minimum summed distance
-        min_val, _, min_loc, _ = cv.minMaxLoc(match_result)
-
-        total_edge_pixels = np.count_nonzero(needle_binary)
-        if total_edge_pixels == 0:
-            return []
-
-        avg_dist = min_val / total_edge_pixels
-
-        # Threshold mapping: 0.8 → ≤2px avg dist, 0.5 → ≤5px
-        max_allowed_dist = (1.0 - threshold) * 10.0
-
-        if avg_dist > max_allowed_dist:
-            if debug_log:
-                _log.debug("[vision:debug] [%s] DT Failed: Avg Dist=%.2fpx > %.2fpx (thresh=%.2f)",
-                           self.needle_name, avg_dist, max_allowed_dist, threshold)
-            return []
-
-        if debug_log:
-            _log.debug("[vision:debug] [%s] Match OK! Avg Dist = %.2fpx (Cho phep <= %.2fpx)",
-                       self.needle_name, avg_dist, max_allowed_dist)
-
-        x, y = min_loc
-        cx = int(x + nw // 2)
-        cy = int(y + nh // 2)
-
-        return [(cx, cy, nw, nh)]

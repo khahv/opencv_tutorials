@@ -144,12 +144,16 @@ else:
 # ── Load config ──────────────────────────────────────────────────────────────
 config = load_config("config.yaml")
 fn_configs = config.get("functions") or []
-general_settings_ov = config_manager.apply_overrides(fn_configs)  # .env_config overrides config.yaml
+general_settings_ov = config_manager.apply_overrides(fn_configs) or {}  # .env_config overrides config.yaml
 
 # Auto Focus setting
 auto_focus = config.get("auto_focus", False)
 if "auto_focus" in general_settings_ov:
     auto_focus = bool(general_settings_ov["auto_focus"])
+
+# Window size: prefer .env_config (general_settings), else config.yaml
+_win_w = general_settings_ov.get("window_width") or config.get("window_width")
+_win_h = general_settings_ov.get("window_height") or config.get("window_height")
 
 key_bindings      = {}   # key_char -> fn_name
 fn_enabled        = {}   # fn_name  -> bool
@@ -212,9 +216,8 @@ wincap = _wincap_result[0]
 
 _ref_w = config.get("reference_width")   # template capture resolution → vision scale
 _ref_h = config.get("reference_height")
-_win_w = config.get("window_width")       # game window resize target (can differ from reference)
-_win_h = config.get("window_height")
 _show_preview = config.get("show_preview", False)
+# _win_w, _win_h already set from general_settings_ov / config above
 
 # Apply initial auto_focus to wincap
 wincap.auto_focus = auto_focus
@@ -395,7 +398,7 @@ if pending_queue:
 
 # ── UI ────────────────────────────────────────────────────────────────────────
 config_manager.init_if_missing(fn_configs, fn_enabled)
-bot_paused = {"paused": False}
+bot_paused = {"paused": True}
 
 
 def _rebuild_trigger_lists():
@@ -488,17 +491,38 @@ def _on_enabled_change(fn_name, enabled):
     _rebuild_schedules()
 
 
+# Mutable dict for general_settings; written to .env_config on save (auto_focus, window_width, window_height).
+_general_settings = {"auto_focus": auto_focus, "window_width": _win_w, "window_height": _win_h}
+
+
 def _on_general_setting_change(key, value):
-    global auto_focus
+    global auto_focus, _win_w, _win_h
     if key == "auto_focus":
         auto_focus = value
         wincap.auto_focus = value
-    config_manager.save(fn_configs, fn_enabled, general_settings={"auto_focus": auto_focus})
+        _general_settings["auto_focus"] = value
+    elif key == "resolution":
+        # value is "1080x1920" or "540x960"
+        try:
+            a, b = value.strip().lower().split("x")
+            _win_w, _win_h = int(a.strip()), int(b.strip())
+        except (ValueError, AttributeError):
+            log.warning("[Settings] Invalid resolution '{}', ignored.".format(value))
+            return
+        _general_settings["window_width"] = _win_w
+        _general_settings["window_height"] = _win_h
+        config_manager.save(fn_configs, fn_enabled, general_settings=_general_settings)
+        wincap.resize_to_client(_win_w, _win_h)
+        update_vision_scale()
+        log.info("[Settings] Resolution → {}x{}, saved to .env_config, window resized.".format(_win_w, _win_h))
+        return
+    _general_settings["auto_focus"] = auto_focus
+    config_manager.save(fn_configs, fn_enabled, general_settings=_general_settings)
 
 # UI will run on main thread via .run_main() after game loop thread is started (reduces startup hang)
 _ui = BotUI(fn_enabled, fn_configs, runner, next_run_at,
             key_bindings=key_bindings,
-            save_callback=lambda: config_manager.save(fn_configs, fn_enabled, general_settings={"auto_focus": auto_focus}),
+            save_callback=lambda: config_manager.save(fn_configs, fn_enabled, general_settings=_general_settings),
             bot_paused=bot_paused,
             cron_callback=_on_cron_change,
             fn_settings=fn_settings,
@@ -506,7 +530,7 @@ _ui = BotUI(fn_enabled, fn_configs, runner, next_run_at,
             run_callback=lambda fn_name: _try_start(fn_name, trigger="ui_play"),
             enabled_callback=_on_enabled_change,
             quit_check=lambda: exit_requested,
-            general_settings={"auto_focus": auto_focus},
+            general_settings=_general_settings,
             general_settings_callback=_on_general_setting_change)
 
 # ── Focus thread ──────────────────────────────────────────────────────────────

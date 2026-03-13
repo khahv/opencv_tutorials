@@ -28,7 +28,7 @@ def apply_overrides(fn_configs: list) -> None:
     Must be called BEFORE the loop that builds key_bindings / fn_enabled in main.py.
     """
     if not os.path.isfile(ENV_CONFIG_PATH):
-        return
+        return {}
     with open(ENV_CONFIG_PATH, "r", encoding="utf-8") as f:
         env = yaml.safe_load(f) or {}
 

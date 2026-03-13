@@ -19,6 +19,7 @@ from ocr_utils import (
     read_level_from_roi    as _read_level_from_roi,
     read_raw_text_from_roi as _read_raw_text_from_roi,
     read_region_relative,
+    _parse_level,
 )
 
 log = logging.getLogger("kha_lastz")
@@ -166,6 +167,12 @@ def collect_templates(functions_dict):
         for step in fn["steps"]:
             if step.get("event_type") in ("match_click", "match_multi_click", "match_count", "match_move") and step.get("template"):
                 templates.add(step["template"])
+            if step.get("event_type") == "match_click" and step.get("template_array"):
+                ta = step.get("template_array")
+                if isinstance(ta, list):
+                    for t in ta:
+                        if t:
+                            templates.add(t)
             if step.get("event_type") == "match_click" and step.get("refresh_template"):
                 templates.add(step["refresh_template"])
             if step.get("event_type") == "wait_until_match" and step.get("template"):
@@ -262,6 +269,7 @@ class FunctionRunner:
         self._ocr_prev_vals = {}  # {step_index: last_read_value} for wait_for_change_region
         self._last_click_pos = None      # position of the most recent match_click (template-space)
         self._last_ocr_click_pos = None  # position that was current when ocr_log last ran
+        self._tpl_array_idx = 0          # current template index for template_array steps
         for attr in ("_set_level_debug_saved", "_set_level_warned"):
             if hasattr(self, attr):
                 delattr(self, attr)
@@ -322,11 +330,38 @@ class FunctionRunner:
 
         if step_type == "match_click":
             template = step.get("template")
+            template_array = step.get("template_array")  # list of templates to try in order
             threshold = step.get("threshold", 0.75)
             ratio_test = step.get("ratio_test")
             min_inliers = step.get("min_inliers")
             one_shot = step.get("one_shot", True)
             timeout_sec = step.get("timeout_sec") or 999
+            # ── template_array: try each template in order, each gets its own timeout ───
+            _tpls = template_array if isinstance(template_array, list) and template_array else None
+            if _tpls:
+                # Persist index across ticks so we don't re-try A from scratch every frame.
+                tpl_idx = int(getattr(self, "_tpl_array_idx", 0) or 0)
+                tpl_idx = max(0, tpl_idx)
+                if tpl_idx >= len(_tpls):
+                    log.info("[Runner] {} → false (all {} templates exhausted)".format(
+                        self._step_label(step), len(_tpls)))
+                    self._tpl_array_idx = 0
+                    self._tpl_array_start_t = None
+                    self._advance_step(False)
+                    return "running"
+
+                # Reset per-template timeout timer when we switch template
+                cur_tpl = _tpls[tpl_idx]
+                last_tpl = getattr(self, "_tpl_array_last_tpl", None)
+                if last_tpl != cur_tpl or getattr(self, "_tpl_array_start_t", None) is None:
+                    self._tpl_array_last_tpl = cur_tpl
+                    self._tpl_array_start_t = time.time()
+                    self._step_pos_cache = None
+
+                template = cur_tpl  # override single-template path below
+                # Use per-template timer for "timeout_sec"
+                self.step_start_time = getattr(self, "_tpl_array_start_t", now)
+
             refresh_sleep_sec = step.get("refresh_sleep_sec", 1.0)
             max_clicks = step.get("max_clicks") or 999999
             click_interval_sec = step.get("click_interval_sec") or 0
@@ -446,6 +481,11 @@ class FunctionRunner:
                     points = _shifted
                 if points:
                     self._step_pos_cache = points[0]
+                    # If this step is using template_array, stop after first successful template.
+                    if _tpls:
+                        self._tpl_array_idx = 0
+                        self._tpl_array_start_t = None
+                        self._tpl_array_last_tpl = None
                 elif debug_log:
                     elapsed = now - self.step_start_time
                     log.info("[Runner] {} → not found (elapsed={:.1f}s)".format(self._step_label(step), elapsed))
@@ -463,6 +503,18 @@ class FunctionRunner:
                                              "match_click", template)
                             log.info("[Runner] {} → 0 passed color filter, saved best match → debug_ocr/".format(
                                 self._step_label(step)))
+            # template_array: on per-template timeout, advance to next template and reset timer
+            if not points and _tpls and (now - self.step_start_time >= timeout_sec):
+                tpl_idx = int(getattr(self, "_tpl_array_idx", 0) or 0)
+                cur_tpl = _tpls[tpl_idx] if 0 <= tpl_idx < len(_tpls) else None
+                tpl_name = os.path.splitext(os.path.basename(cur_tpl))[0] if cur_tpl else str(tpl_idx)
+                log.info("[Runner] {} [{}] → not found in {}s, trying next template".format(
+                    self._step_label(step), tpl_name, timeout_sec))
+                self._tpl_array_idx = tpl_idx + 1
+                self._tpl_array_start_t = None
+                self._tpl_array_last_tpl = None
+                self._step_pos_cache = None
+                return "running"
             # When 0 trucks found and track_tried+refresh: click refresh to reload list (unstick)
             if not points and step.get("track_tried") and step.get("refresh_template"):
                 _last_refresh = getattr(self, "_last_zero_refresh_t", 0)
@@ -928,8 +980,9 @@ class FunctionRunner:
             return "running"
 
         if step_type == "click_position":
-            ox = step.get("offset_x", 0.15)
-            oy = step.get("offset_y", 0.15)
+            # x, y = relative position (0–1) like search_roi; fallback offset_x/offset_y
+            ox = step.get("x", step.get("offset_x", 0.15))
+            oy = step.get("y", step.get("offset_y", 0.15))
             px = int(wincap.w * ox)
             py = int(wincap.h * oy)
             sx, sy = wincap.get_screen_position((px, py))
@@ -979,6 +1032,7 @@ class FunctionRunner:
             level_roi = step.get("level_roi")
             level_anchor_template = step.get("level_anchor_template")
             level_anchor_offset = step.get("level_anchor_offset")
+            level_ocr_region  = step.get("level_ocr_region")   # {x, y, w, h} ratios of anchor template
             plus_template = step.get("plus_template")
             minus_template = step.get("minus_template")
             threshold = step.get("threshold", 0.75)
@@ -998,31 +1052,73 @@ class FunctionRunner:
             if not vision_plus or not vision_minus:
                 self._advance_step(True)
                 return "running"
-            # Resolve anchor center from template if specified
+            # Resolve anchor center from template
             anchor_center = None
+            anchor_needle_w = None
+            anchor_needle_h = None
             if level_anchor_template:
                 v_anchor = self._get_vision(level_anchor_template)
                 if v_anchor:
                     pts = v_anchor.find(screenshot, threshold=threshold, debug_mode=None)
                     if pts:
-                        anchor_center = (int(pts[0][0]), int(pts[0][1]))
+                        pt = pts[0]
+                        anchor_center   = (int(pt[0]), int(pt[1]))
+                        anchor_needle_w = pt[2] if len(pt) >= 4 else v_anchor.needle_w
+                        anchor_needle_h = pt[3] if len(pt) >= 4 else v_anchor.needle_h
             # OCR: read current level
-            debug_save = step.get("debug_save_roi") and not getattr(self, "_set_level_debug_saved", False)
-            current = _read_level_from_roi(
-                screenshot, level_roi or [0, 0, 0.3, 0.1], wincap,
-                anchor_center, level_anchor_offset,
-                debug_save_path="debug_set_level_roi.png" if debug_save else None,
-                level_range=(min_level, max_level),
-            )
-            if debug_save:
-                self._set_level_debug_saved = True
-                log.info("[Runner] set_level: ROI saved to debug_set_level_roi.png")
+            # Mode A (new): level_ocr_region — absolute screen-ratio coords
+            #   x, y = top-left corner of OCR region (0.0~1.0 of game window)
+            #   w, h = size of OCR region (0.0~1.0 of game window)
+            #   No anchor template needed — just pure screen coords
+            debug_save = step.get("debug_save_roi", False)
+            current = None
+            if level_ocr_region:
+                h_img, w_img = screenshot.shape[:2]
+                rx = level_ocr_region.get("x", 0.0)
+                ry = level_ocr_region.get("y", 0.0)
+                rw = level_ocr_region.get("w", 0.1)
+                rh = level_ocr_region.get("h", 0.05)
+                px = max(0, int(rx * w_img))
+                py = max(0, int(ry * h_img))
+                pw = max(1, min(int(rw * w_img), w_img - px))
+                ph = max(1, min(int(rh * h_img), h_img - py))
+                roi = screenshot[py:py + ph, px:px + pw]
+                # 540x960: ROI nhỏ, EasyOCR dễ mất số. Upscale ROI theo reference (như 1080p) trước khi OCR.
+                scale = get_global_scale()
+                if scale and 0 < scale < 1.0:
+                    up = 1.0 / scale
+                    nw = max(1, int(roi.shape[1] * up))
+                    nh = max(1, int(roi.shape[0] * up))
+                    roi = cv.resize(roi, (nw, nh), interpolation=cv.INTER_CUBIC)
+                dbg_lbl = "debug_set_level_roi" if debug_save else None
+                from ocr_easyocr import read_region_easy as _ocr_easy
+                raw_text = _ocr_easy(roi, digits_only=False, debug_label=dbg_lbl)
+                if debug_save:
+                    log.info("[Runner] set_level: ROI crop saved to debug_ocr/debug_set_level_roi_raw.png")
+                if raw_text:
+                    current = _parse_level(raw_text, (min_level, max_level))
+                    if current is not None:
+                        log.info("[Runner] set_level: Lv.{} from {!r}".format(current, raw_text))
+                    else:
+                        log.info("[Runner] set_level: no level match from {!r}".format(raw_text))
+            else:
+                # Mode B (legacy): anchor template + pixel offset or level_roi
+                current = _read_level_from_roi(
+                    screenshot, level_roi or [0, 0, 0.3, 0.1], wincap,
+                    anchor_center, level_anchor_offset,
+                    debug_save_path="debug_set_level_roi.png" if debug_save else None,
+                    level_range=(min_level, max_level),
+                )
+                if debug_save:
+                    self._set_level_debug_saved = True
+                    log.info("[Runner] set_level: ROI saved to debug_set_level_roi.png")
             if current is None:
                 if not getattr(self, "_set_level_warned", False):
                     self._set_level_warned = True
-                    log.info("[Runner] set_level: OCR cannot read level — check level_anchor_offset in YAML")
+                    log.info("[Runner] set_level: OCR cannot read level — check level_ocr_region / level_anchor_offset in YAML")
                 return "running"
             self._set_level_warned = False
+
             if current == target_level:
                 log.info("[Runner] set_level: already at Lv.{}, done".format(target_level))
                 self._advance_step(True)
@@ -1182,24 +1278,75 @@ class FunctionRunner:
             scroll_times    = step.get("scroll_times", 5)
             scroll_interval = step.get("scroll_interval_sec", 0.1)
             timeout_sec     = step.get("timeout_sec", 5)
+            debug_save      = step.get("debug_save", False)
+            debug_log       = step.get("debug_log", False)
+            match_color     = step.get("match_color", False)
+            color_tol       = step.get("color_match_tolerance")
 
             vision = self.vision_cache.get(template) if template else None
             clicked_hq = False
             if vision:
-                points = vision.find(screenshot, threshold=threshold, debug_mode=None)
+                dbg_mode = "info" if debug_log else None
+                points = vision.find(
+                    screenshot,
+                    threshold=threshold,
+                    debug_mode=dbg_mode,
+                    debug_log=debug_log,
+                    is_color=bool(match_color),
+                    color_tolerance=color_tol,
+                )
                 if points:
+                    # Optional debug: save full screenshot + crop around match
+                    if debug_save:
+                        try:
+                            os.makedirs("debug", exist_ok=True)
+                            ts_str = time.strftime("%Y%m%d_%H%M%S")
+                            tpl_name = os.path.splitext(os.path.basename(template))[0] if template else "template"
+                            shot_path = os.path.join("debug", f"base_zoomout_{tpl_name}_{ts_str}_screenshot.png")
+                            cv.imwrite(shot_path, screenshot)
+                            cx0, cy0 = int(points[0][0]), int(points[0][1])
+                            mw = getattr(vision, "needle_w", 80)
+                            mh = getattr(vision, "needle_h", 80)
+                            x0 = max(0, cx0 - mw)
+                            y0 = max(0, cy0 - mh)
+                            x1 = min(screenshot.shape[1], cx0 + mw)
+                            y1 = min(screenshot.shape[0], cy0 + mh)
+                            crop = screenshot[y0:y1, x0:x1]
+                            crop_path = os.path.join("debug", f"base_zoomout_{tpl_name}_{ts_str}_crop.png")
+                            if crop.size > 0:
+                                cv.imwrite(crop_path, crop)
+                            log.info("[Runner] base_zoomout debug saved: {} | {}".format(shot_path, crop_path))
+                        except Exception as e:
+                            log.info("[Runner] base_zoomout debug save failed: {}".format(e))
                     sx, sy = wincap.get_screen_position((points[0][0], points[0][1]))
                     pyautogui.click(sx, sy)
                     time.sleep(0.3)
                     clicked_hq = True
+                elif debug_save:
+                    # Save screenshot when template is not found (to validate expectation)
+                    try:
+                        os.makedirs("debug", exist_ok=True)
+                        ts_str = time.strftime("%Y%m%d_%H%M%S")
+                        tpl_name = os.path.splitext(os.path.basename(template))[0] if template else "template"
+                        shot_path = os.path.join("debug", f"base_zoomout_{tpl_name}_{ts_str}_not_found.png")
+                        cv.imwrite(shot_path, screenshot)
+                        log.info("[Runner] base_zoomout debug saved (not found): {}".format(shot_path))
+                    except Exception as e:
+                        log.info("[Runner] base_zoomout debug save failed: {}".format(e))
 
-            # Scroll zoom out tai tam cua so game
+            # Scroll zoom out tai tam cua so game (luon chay, du co match HQ hay khong).
+            # Bat buoc focus truoc scroll, khong phu thuoc auto_focus (force=True).
+            if hasattr(wincap, "focus_window"):
+                wincap.focus_window(force=True)
+                time.sleep(0.05)
             cx = wincap.offset_x + wincap.w // 2
             cy = wincap.offset_y + wincap.h // 2
             pyautogui.moveTo(cx, cy)
-            for _ in range(scroll_times):
+            time.sleep(0.05)
+            for i in range(scroll_times):
                 pyautogui.scroll(-3)
                 time.sleep(scroll_interval)
+            log.info("[Runner] base_zoomout scrolled x{} at center ({}, {})".format(scroll_times, cx, cy))
 
             if clicked_hq:
                 log.info("[Runner] {} → true (clicked HQ + scrolled x{})".format(self._step_label(step), scroll_times))
@@ -1490,7 +1637,9 @@ class FunctionRunner:
         if stype == "sleep":
             return "sleep {}s".format(step.get("duration_sec", 0))
         if stype == "click_position":
-            return "click_position ({}, {})".format(step.get("offset_x", 0), step.get("offset_y", 0))
+            x = step.get("x", step.get("offset_x", 0))
+            y = step.get("y", step.get("offset_y", 0))
+            return "click_position (x={}, y={})".format(x, y)
         if stype == "type_text":
             return "type_text"
         if stype == "key_press":
