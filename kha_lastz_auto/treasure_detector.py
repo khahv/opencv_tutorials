@@ -11,7 +11,7 @@ class TreasureDetector:
     """
 
     def __init__(self, treasure_template_path: str,
-                 threshold: float = 0.6, clear_sec: float = 10.0):
+                 threshold: float = 0.5, clear_sec: float = 10.0):
         self._vision = Vision(treasure_template_path)
         self._threshold = threshold
         self._clear_sec = clear_sec

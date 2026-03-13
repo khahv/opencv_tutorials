@@ -598,7 +598,7 @@ alliance_attack_detector = AllianceAttackDetector(
 
 treasure_detector = TreasureDetector(
     treasure_template_path="buttons_template/Treasure1.png",
-    threshold=0.6,
+    threshold=0.5,
     clear_sec=10.0,
 )
 
