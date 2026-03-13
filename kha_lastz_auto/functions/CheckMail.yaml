@@ -11,7 +11,8 @@ steps:
     duration_sec: 1
   - event_type: match_click
     template: buttons_template/AllianceButton.png
-    threshold: 0.7
+    threshold: 0.8
+    match_color: true
     one_shot: true
     timeout_sec: 5
     debug_log: true
@@ -19,7 +20,8 @@ steps:
     duration_sec: 0.5
   - event_type: match_click
     template: buttons_template/ClaimAll.png
-    threshold: 0.5
+    threshold: 0.8
+    match_color: true
     one_shot: true
     debug_log: true
     timeout_sec: 5
@@ -27,7 +29,8 @@ steps:
     duration_sec: 0.5
   - event_type: match_click
     template: buttons_template/SystemButton.png
-    threshold: 0.5
+    threshold: 0.8
+    match_color: true
     one_shot: true
     timeout_sec: 5
     debug_log: true
@@ -35,7 +38,8 @@ steps:
     duration_sec: 0.5
   - event_type: match_click
     template: buttons_template/ClaimAll.png
-    threshold: 0.5
+    threshold: 0.8
+    match_color: true
     one_shot: true
     timeout_sec: 5
     debug_log: true

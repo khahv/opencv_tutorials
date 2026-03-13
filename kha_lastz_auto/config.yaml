@@ -6,8 +6,8 @@ reference_height: 1920
 # Kich thuoc cua so game muon resize ve khi khoi dong bot.
 # De trong (hoac xoa 2 dong nay) neu khong muon bot tu resize window.
 # Vi du: chay game o 540x960 de giam tai CPU trong khi template chup o 1080x1920.
-window_width: 540
-window_height: 960
+window_width: 1080
+window_height: 1920
 show_preview: false   # hien thi cua so debug screenshot (true = bat, false = tat)
 
 # Function list: key, cron, enabled
@@ -75,6 +75,7 @@ functions:
 
   - name: DonateAllianceTech
     key: d
+    cron: "* * * * *"
     enabled: true
 
     

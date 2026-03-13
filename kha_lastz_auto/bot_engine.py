@@ -287,6 +287,8 @@ class FunctionRunner:
         if step_type == "match_click":
             template = step.get("template")
             threshold = step.get("threshold", 0.75)
+            ratio_test = step.get("ratio_test")
+            min_inliers = step.get("min_inliers")
             one_shot = step.get("one_shot", True)
             timeout_sec = step.get("timeout_sec") or 999
             refresh_sleep_sec = step.get("refresh_sleep_sec", 1.0)
@@ -347,11 +349,11 @@ class FunctionRunner:
                 dbg = 'info' if (debug_click or debug_log) else None
                 meta_list = None
                 if match_color:
-                    result = vision.find(screenshot, threshold=threshold, debug_mode=dbg, is_color=True)
+                    result = vision.find(screenshot, threshold=threshold, debug_mode=dbg, is_color=True, ratio_test=ratio_test, min_inliers=min_inliers)
                     points = result[0] if isinstance(result, tuple) else result
                     meta_list = result[1] if isinstance(result, tuple) and len(result) > 1 else None
                 else:
-                    points = vision.find(screenshot, threshold=threshold, debug_mode=dbg, debug_log=debug_log)
+                    points = vision.find(screenshot, threshold=threshold, debug_mode=dbg, debug_log=debug_log, ratio_test=ratio_test, min_inliers=min_inliers)
                 if points:
                     self._step_pos_cache = points[0]
                 elif debug_log:

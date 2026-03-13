@@ -6,6 +6,8 @@ steps:
   - event_type: match_click
     template: buttons_template/AllianceIconButton.png
     threshold: 0.7
+    ratio_test: 0.85
+    min_inliers: 4
     one_shot: true
     timeout_sec: 10
     debug_log: true
@@ -14,24 +16,30 @@ steps:
   - event_type: match_click
     template: buttons_template/AllianceTechs.png
     threshold: 0.8
+    match_color: true
     one_shot: true
     timeout_sec: 10
+    debug_log: true
 
   # Click Like de chon tech can donate
   - event_type: match_click
-    template: buttons_template/AllianceTechLike.png
-    threshold: 0.75
+    template: buttons_template/AllianceTechLike1.png
+    threshold: 0.8
+    match_color: true
     one_shot: true
     timeout_sec: 10
+    debug_log: true
 
   # Donate 20 lan
   - event_type: match_click
     template: buttons_template/AllianceTechDonate1.png
     threshold: 0.8
+    match_color: true
     one_shot: false
     max_clicks: 20
     click_interval_sec: 0.03
     timeout_sec: 30
+    debug_log: true
 
   # --- Dong panel: luon chay du step truoc false ---
   - event_type: sleep
