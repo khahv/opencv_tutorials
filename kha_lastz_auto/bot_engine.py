@@ -349,7 +349,10 @@ class FunctionRunner:
                 dbg = 'info' if (debug_click or debug_log) else None
                 meta_list = None
                 if match_color:
-                    result = vision.find(screenshot, threshold=threshold, debug_mode=dbg, is_color=True, ratio_test=ratio_test, min_inliers=min_inliers)
+                    result = vision.find(screenshot, threshold=threshold, debug_mode=dbg,
+                                        is_color=True, debug_log=debug_log,
+                                        color_tolerance=color_match_tolerance,
+                                        ratio_test=ratio_test, min_inliers=min_inliers)
                     points = result[0] if isinstance(result, tuple) else result
                     meta_list = result[1] if isinstance(result, tuple) and len(result) > 1 else None
                 else:
@@ -992,7 +995,10 @@ class FunctionRunner:
             if not vision:
                 self._advance_step(True)
                 return "running"
-            points = vision.find(screenshot, threshold=threshold, debug_mode=None)
+            match_color = step.get("match_color", False)
+            debug_log   = step.get("debug_log", False)
+            points = vision.find(screenshot, threshold=threshold, debug_mode=None,
+                                 is_color=match_color, debug_log=debug_log, multi=True)
             found = len(points) if points else 0
             if found >= count:
                 log.info("[Runner] {} → true (found {}/{})".format(self._step_label(step), found, count))
