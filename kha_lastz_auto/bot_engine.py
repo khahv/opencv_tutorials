@@ -1,8 +1,8 @@
 """
 Engine chay Function (YAML): load functions, thuc thi tung step.
-Step types: match_click, match_multi_click, match_count, sleep, send_zalo, click_position, wait_until_match, key_press, set_level, type_text, click_unless_visible.
+Step types: match_click, match_multi_click, match_count, sleep, send_zalo, click_position, wait_until_match, key_press, set_level, type_text, click_unless_visible, drag.
 Each step returns true/false. Next step is blocked (function aborted) if previous returned false, unless run_always: true is set.
-send_zalo: message (required), repeat_interval_sec (optional; when set and trigger_active_cb provided, repeats while trigger active).
+send_zalo: message (required), receiver_name (optional; ten hien thi trong danh sach chat, fallback DEFAULT_CLICK_AFTER_OPEN), repeat_interval_sec (optional; when set and trigger_active_cb provided, repeats while trigger active).
 """
 import os
 import re
@@ -189,8 +189,11 @@ def collect_templates(functions_dict):
                     templates.add(step["minus_template"])
                 if step.get("level_anchor_template"):
                     templates.add(step["level_anchor_template"])
-            if step.get("event_type") == "base_zoomout" and step.get("template"):
-                templates.add(step["template"])
+            if step.get("event_type") == "base_zoomout":
+                if step.get("template"):
+                    templates.add(step["template"])
+                if step.get("world_button"):
+                    templates.add(step["world_button"])
             if step.get("event_type") == "ocr_log":
                 tpl = step.get("anchor_template") or step.get("template")
                 if tpl:
@@ -212,9 +215,10 @@ def build_vision_cache(template_paths):
 class FunctionRunner:
     """Chay 1 function: giu state step hien tai, xu ly tung step theo type."""
 
-    def __init__(self, vision_cache, fn_settings=None):
+    def __init__(self, vision_cache, fn_settings=None, bot_paused=None):
         self.vision_cache = vision_cache
         self.fn_settings = fn_settings if fn_settings is not None else {}
+        self.bot_paused = bot_paused  # ref to {"paused": bool}; when True, send_zalo repeat counter resets on resume
         self.functions = {}
         self.state = "idle"  # idle | running
         self.function_name = None
@@ -345,9 +349,9 @@ class FunctionRunner:
                 if tpl_idx >= len(_tpls):
                     log.info("[Runner] {} → false (all {} templates exhausted)".format(
                         self._step_label(step), len(_tpls)))
+                    self._advance_step(False, step=step)
                     self._tpl_array_idx = 0
                     self._tpl_array_start_t = None
-                    self._advance_step(False)
                     return "running"
 
                 # Reset per-template timeout timer when we switch template
@@ -405,7 +409,7 @@ class FunctionRunner:
             if not vision:
                 log.warning("[Runner] Step {} skipped: template NOT FOUND or FAILED TO LOAD ({})".format(
                     self._step_label(step), template))
-                self._advance_step(True)  # skip
+                self._advance_step(True, step=step)  # skip
                 return "running"
             debug_click  = step.get("debug_click", False)
             debug_log    = step.get("debug_log", False)
@@ -709,7 +713,7 @@ class FunctionRunner:
                                 self.step_start_time = time.time()
                                 return "running"
                         log.info("[Runner] {} → all tried, no refresh available → abort".format(self._step_label(step)))
-                        self._advance_step(False)
+                        self._advance_step(False, step=step)
                         return "running"
                     points = untried
                 # ─────────────────────────────────────────────────────────────────────
@@ -774,7 +778,7 @@ class FunctionRunner:
                             log.info("[Runner] {} | storm={} clicks in {:.1f}s (~{:.0f}/s)".format(
                                 self._step_label(step), _n, _elapsed, _rate))
                             log.info("[Runner] {} → true (clicked {})".format(self._step_label(step), self.step_click_count))
-                            self._advance_step(True)
+                            self._advance_step(True, step=step)
                     return "running"
 
                 # Non-storm path: move cursor with pynput then click
@@ -837,16 +841,16 @@ class FunctionRunner:
                     _click_density_str = " density={:.3f}".format(_click_density) if _click_density is not None else ""
                     log.info("[Runner] {} → true (clicked position ({},{}){})"  .format(
                         self._step_label(step), _click_truck_pt[0], _click_truck_pt[1], _click_density_str))
-                    self._advance_step(True)
+                    self._advance_step(True, step=step)
                     return "running"
                 log.info("[Runner] {} clicking... (count {})".format(self._step_label(step), self.step_click_count))
                 if self.step_click_count >= max_clicks:
                     log.info("[Runner] {} → true (clicked {})".format(self._step_label(step), self.step_click_count))
-                    self._advance_step(True)
+                    self._advance_step(True, step=step)
                     return "running"
             if now - self.step_start_time >= timeout_sec:
                 log.info("[Runner] {} → false (not found in {}s)".format(self._step_label(step), timeout_sec))
-                self._advance_step(False)
+                self._advance_step(False, step=step)
             return "running"
 
         if step_type == "match_move":
@@ -942,6 +946,8 @@ class FunctionRunner:
             # UI override from fn_settings (Settings button); fallback to YAML step
             _msg_ov = self._fn_setting("send_zalo_message")
             message = (_msg_ov if _msg_ov is not None and str(_msg_ov).strip() else "") or (step.get("message") or "")
+            _rcv_ov = self._fn_setting("send_zalo_receiver_name")
+            receiver_name = (_rcv_ov if _rcv_ov is not None and str(_rcv_ov).strip() else None) or step.get("receiver_name")
             _int_ov = self._fn_setting("send_zalo_repeat_interval_sec")
             if _int_ov is not None:
                 try:
@@ -954,19 +960,31 @@ class FunctionRunner:
 
             def _do_send():
                 if _zalo_web_clicker:
-                    _zalo_web_clicker.send_zalo_message(message, logger=log)
+                    _zalo_web_clicker.send_zalo_message(message, receiver_name=receiver_name, logger=log)
                 else:
                     log.warning("[Runner] send_zalo: zalo_web_clicker not available, skip")
 
             if repeat_interval_sec > 0 and trigger_cb and callable(trigger_cb):
                 def _repeat_loop():
                     _do_send()
+                    next_send_at = time.time() + repeat_interval_sec
+                    paused_ref = getattr(self, "bot_paused", None)
+                    was_paused = bool(paused_ref and paused_ref.get("paused", False))
                     while trigger_cb():
-                        time.sleep(repeat_interval_sec)
-                        if not trigger_cb():
-                            break
-                        _do_send()
-                        log.info("[Runner] send_zalo repeat (interval={}s)".format(repeat_interval_sec))
+                        if paused_ref and paused_ref.get("paused", False):
+                            was_paused = True
+                            time.sleep(1)
+                            continue
+                        if was_paused:
+                            # Reset counter: gui ngay lan tiep theo khi resume (trigger van dang active)
+                            next_send_at = time.time()
+                            was_paused = False
+                            log.info("[Runner] send_zalo repeat counter reset (resumed), will send next tick")
+                        if time.time() >= next_send_at:
+                            _do_send()
+                            next_send_at = time.time() + repeat_interval_sec
+                            log.info("[Runner] send_zalo repeat (interval={}s)".format(repeat_interval_sec))
+                        time.sleep(1)
                 import threading
                 t = threading.Thread(target=_repeat_loop, daemon=True)
                 t.start()
@@ -1271,9 +1289,11 @@ class FunctionRunner:
             return "running"
 
         if step_type == "base_zoomout":
-            # Neu tim thay template (HeadquartersButton) -> click vao -> scroll zoom out.
-            # Neu khong tim thay -> chi scroll zoom out (co the da o world map roi).
+            # Step 1: tim HeadquartersButton -> click -> scroll zoom out.
+            # Neu khong thay HQ: tim WorldButton -> click -> quay lai step 1 (khong advance, next tick retry).
+            # Neu ca hai deu khong thay -> scroll zoom out, advance.
             template        = step.get("template")
+            world_button    = step.get("world_button")
             threshold       = step.get("threshold", 0.75)
             scroll_times    = step.get("scroll_times", 5)
             scroll_interval = step.get("scroll_interval_sec", 0.1)
@@ -1296,7 +1316,6 @@ class FunctionRunner:
                     color_tolerance=color_tol,
                 )
                 if points:
-                    # Optional debug: save full screenshot + crop around match
                     if debug_save:
                         try:
                             os.makedirs("debug", exist_ok=True)
@@ -1323,7 +1342,6 @@ class FunctionRunner:
                     time.sleep(0.3)
                     clicked_hq = True
                 elif debug_save:
-                    # Save screenshot when template is not found (to validate expectation)
                     try:
                         os.makedirs("debug", exist_ok=True)
                         ts_str = time.strftime("%Y%m%d_%H%M%S")
@@ -1334,8 +1352,46 @@ class FunctionRunner:
                     except Exception as e:
                         log.info("[Runner] base_zoomout debug save failed: {}".format(e))
 
-            # Scroll zoom out tai tam cua so game (luon chay, du co match HQ hay khong).
-            # Bat buoc focus truoc scroll, khong phu thuoc auto_focus (force=True).
+            if clicked_hq:
+                if hasattr(wincap, "focus_window"):
+                    wincap.focus_window(force=True)
+                    time.sleep(0.05)
+                cx = wincap.offset_x + wincap.w // 2
+                cy = wincap.offset_y + wincap.h // 2
+                pyautogui.moveTo(cx, cy)
+                time.sleep(0.05)
+                for i in range(scroll_times):
+                    pyautogui.scroll(-3)
+                    time.sleep(scroll_interval)
+                log.info("[Runner] base_zoomout scrolled x{} at center ({}, {})".format(scroll_times, cx, cy))
+                log.info("[Runner] {} → true (clicked HQ + scroll)".format(self._step_label(step)))
+                self._advance_step(True)
+                return "running"
+
+            # HQ khong thay: thu WorldButton -> click -> quay lai step 1 (khong advance)
+            if world_button:
+                vision_world = self.vision_cache.get(world_button)
+                if vision_world:
+                    dbg_mode = "info" if debug_log else None
+                    points_w = vision_world.find(
+                        screenshot,
+                        threshold=threshold,
+                        debug_mode=dbg_mode,
+                        debug_log=debug_log,
+                        is_color=bool(match_color),
+                        color_tolerance=color_tol,
+                    )
+                    if points_w:
+                        if hasattr(wincap, "focus_window"):
+                            wincap.focus_window(force=True)
+                            time.sleep(0.05)
+                        sx, sy = wincap.get_screen_position((points_w[0][0], points_w[0][1]))
+                        pyautogui.click(sx, sy)
+                        time.sleep(0.5)
+                        log.info("[Runner] base_zoomout: clicked WorldButton → retry step 1 (find HQ)")
+                        return "running"
+
+            # Ca HQ va World deu khong thay -> chi scroll zoom out, step3 drag, advance
             if hasattr(wincap, "focus_window"):
                 wincap.focus_window(force=True)
                 time.sleep(0.05)
@@ -1347,11 +1403,49 @@ class FunctionRunner:
                 pyautogui.scroll(-3)
                 time.sleep(scroll_interval)
             log.info("[Runner] base_zoomout scrolled x{} at center ({}, {})".format(scroll_times, cx, cy))
+            log.info("[Runner] {} → true (HQ/World not found, scroll)".format(self._step_label(step)))
+            self._advance_step(True)
+            return "running"
 
-            if clicked_hq:
-                log.info("[Runner] {} → true (clicked HQ + scrolled x{})".format(self._step_label(step), scroll_times))
+        if step_type == "drag":
+            # Keo man hinh theo huong (x, y). x,y = huong di chuyen (-1 ~ 1). Khoang cach moi lan keo fixed trong engine (relative man hinh). Muon keo xa hon thi tang count.
+            dx = float(step.get("x", 0))
+            dy = float(step.get("y", 0))
+            count = max(1, int(step.get("count", 3)))
+            if hasattr(wincap, "focus_window"):
+                wincap.focus_window(force=True)
+                time.sleep(0.05)
+            cx = wincap.offset_x + wincap.w // 2
+            cy = wincap.offset_y + wincap.h // 2
+            length = (dx * dx + dy * dy) ** 0.5
+            if length < 1e-6:
+                dx, dy = 1.0, 0.0
             else:
-                log.info("[Runner] {} → true (HQ not found, scrolled x{})".format(self._step_label(step), scroll_times))
+                dx, dy = dx / length, dy / length
+            # Khoang cach moi lan keo: 15% canh nho cua cua so (relative man hinh)
+            drag_distance_px = 0.15 * min(wincap.w, wincap.h)
+            sx = cx
+            sy = cy
+            ex = int(cx + dx * drag_distance_px)
+            ey = int(cy + dy * drag_distance_px)
+
+            def _do_drag(sx_, sy_, ex_, ey_):
+                try:
+                    _mouse_ctrl.position = (sx_, sy_)
+                    time.sleep(0.05)
+                    _mouse_ctrl.press(Button.left)
+                    time.sleep(0.05)
+                    _mouse_ctrl.position = (ex_, ey_)
+                    time.sleep(0.08)
+                    _mouse_ctrl.release(Button.left)
+                except Exception as e:
+                    log.debug("[Runner] drag: {}".format(e))
+
+            for _ in range(count):
+                _do_drag(sx, sy, ex, ey)
+                time.sleep(0.15)
+            log.info("[Runner] {} → true (drag dir=({},{}) x{})".format(
+                self._step_label(step), step.get("x"), step.get("y"), count))
             self._advance_step(True)
             return "running"
 
@@ -1646,11 +1740,14 @@ class FunctionRunner:
             return "key_press {}".format(step.get("key", ""))
         if stype == "set_level":
             return "set_level Lv.{}".format(step.get("target_level", "?"))
+        if stype == "drag":
+            return "drag ({},{}) x{}".format(
+                step.get("x", 0), step.get("y", 0), step.get("count", 3))
         if tpl_name:
             return "{} {}".format(stype, tpl_name)
         return stype
 
-    def _advance_step(self, result=True):
+    def _advance_step(self, result=True, step=None):
         self.step_index += 1
         self.step_start_time = time.time()
         self.step_click_count = 0
@@ -1658,6 +1755,13 @@ class FunctionRunner:
         self._step_last_click_t = None
         self._debug_click_saved = False
         self._step_pos_cache = None
+        if step is not None:
+            if step.get("exit_always"):
+                self.step_index = len(self.steps)
+                log.info("[Runner] {} → exit_always → end function".format(self._step_label(step)))
+            elif step.get("exit_on_true") and result:
+                self.step_index = len(self.steps)
+                log.info("[Runner] {} → exit_on_true (match) → end function".format(self._step_label(step)))
 
     def _goto_step(self, index):
         """Jump to a specific step index (used for retry loops)."""

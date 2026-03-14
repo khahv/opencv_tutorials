@@ -89,6 +89,13 @@ SCHEMA: dict = {
             "default":     "@All Ối dời ơi!, Kem Chua đang bị tấn công",
         },
         {
+            "key":         "send_zalo_receiver_name",
+            "label":       "Zalo receiver (tên nhóm/chat)",
+            "description": "Tên hiển thị trong danh sách chat (vd. Nhóm HLSE, My Documents)",
+            "type":        "str",
+            "default":     "Nhóm HLSE",
+        },
+        {
             "key":         "send_zalo_repeat_interval_sec",
             "label":       "Repeat interval (sec)",
             "description": "Gửi lặp mỗi N giây khi icon attack còn hiện (0 = chỉ gửi 1 lần)",
@@ -108,6 +115,13 @@ SCHEMA: dict = {
             "default":     " @All Bớ làng nước ơi!, liên minh đang bị tấn công",
         },
         {
+            "key":         "send_zalo_receiver_name",
+            "label":       "Zalo receiver (tên nhóm/chat)",
+            "description": "Tên hiển thị trong danh sách chat (vd. Nhóm HLSE, Safira-Chủ Căn hộ-BQT)",
+            "type":        "str",
+            "default":     "Nhóm HLSE",
+        },
+        {
             "key":         "send_zalo_repeat_interval_sec",
             "label":       "Repeat interval (sec)",
             "description": "Gửi lặp mỗi N giây khi icon còn hiện (0 = chỉ gửi 1 lần)",
@@ -125,6 +139,13 @@ SCHEMA: dict = {
             "description": "Nội dung tin nhắn khi có kho báo",
             "type":        "str",
             "default":     "@All Có kho báo!",
+        },
+        {
+            "key":         "send_zalo_receiver_name",
+            "label":       "Zalo receiver (tên nhóm/chat)",
+            "description": "Tên hiển thị trong danh sách chat",
+            "type":        "str",
+            "default":     "Nhóm HLSE",
         },
         {
             "key":         "send_zalo_repeat_interval_sec",

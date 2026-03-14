@@ -19,10 +19,14 @@ log = logging.getLogger("zalo_web")
 ZALO_CHAT_URL = "https://chat.zalo.me/"
 USER_DATA_DIR = os.path.join(SCRIPT_DIR, "playwright_zalo_data")
 CDP_PORT = 9222
-# Sau khi mo trang, tu dong click vao conversation/ nhom nay (ten hien thi trong danh sach chat)
+# Sau khi mo trang, tu dong click vao conversation/ nhom nay (ten hien thi trong danh sach chat).
+# Duoc override boi tham so receiver_name khi goi send_zalo_message(...).
 DEFAULT_CLICK_AFTER_OPEN = "Nhóm HLSE"
-# Neu set: click theo selector nay (tranh loi ten co &nbsp; trong HTML). None = click theo ten (get_by_text).
+# Neu set: click theo selector nay (tranh loi ten co &nbsp; trong HTML). None = click theo ten (conversation list).
 CONV_ITEM_SELECTOR = None
+# conversationList: #conversationList .msg-item chua [class*="conv-item-title"] > .truncate (ten nhom/nguoi nhan)
+CONV_LIST_ID = "conversationList"
+CONV_ITEM_TITLE_CLASS = "conv-item-title"
 # Sau khi click nhom, dien text vao o nhap tin nhan (contenteditable #richInput / #input_line_0)
 DEFAULT_CHAT_MESSAGE = "Hello"
 CHAT_INPUT_SELECTOR = "#richInput"  # contenteditable
@@ -138,13 +142,34 @@ def click_role(page, name: str, role: str = "button", timeout_ms: int = 10000) -
         return False
 
 
-def send_zalo_message(message: str, logger=None):
+def click_conversation_by_name(page, receiver_name: str, timeout_ms: int = 10000) -> bool:
     """
-    Send Zalo message to the configured conversation (DEFAULT_CLICK_AFTER_OPEN). Call from other modules (e.g. attack_detector).
-    Connect Edge -> open Zalo -> click conversation -> type message -> click Send -> disconnect.
+    Click vao conversation trong danh sach chat (conversationList) theo ten hien thi.
+    Cau truc: #conversationList .msg-item chua [class*='conv-item-title'] voi .truncate = ten (co the co &nbsp;).
+    Tra ve True neu click thanh cong.
+    """
+    try:
+        # Tim .msg-item co title chua receiver_name (exact=False de khong phu thuoc khoang trang/&nbsp;)
+        item = page.locator("#%s .msg-item" % CONV_LIST_ID).filter(
+            has=page.locator("[class*='%s']" % CONV_ITEM_TITLE_CLASS).get_by_text(receiver_name, exact=False)
+        ).first
+        item.click(timeout=timeout_ms)
+        log.info("Da click conversation: %s", receiver_name)
+        return True
+    except Exception as e:
+        log.warning("Khong click duoc conversation %r: %s", receiver_name, e)
+        return False
+
+
+def send_zalo_message(message: str, receiver_name: str = None, logger=None):
+    """
+    Send Zalo message to the conversation (receiver_name hoac DEFAULT_CLICK_AFTER_OPEN).
+    receiver_name: ten hien thi trong danh sach chat (vd. "Nhóm HLSE", "My Documents", "Safira-Chủ Căn hộ-BQT").
+    Connect Edge -> open Zalo -> click conversation by name -> type message -> click Send -> disconnect.
     Tra ve True neu thanh cong, False neu loi. Chay trong thread de tranh block.
     """
     _log = logger or log
+    target = (receiver_name or "").strip() or DEFAULT_CLICK_AFTER_OPEN
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -164,7 +189,7 @@ def send_zalo_message(message: str, logger=None):
                 if CONV_ITEM_SELECTOR:
                     page.locator(CONV_ITEM_SELECTOR).first.click(timeout=5000)
                 else:
-                    click_text(page, DEFAULT_CLICK_AFTER_OPEN, timeout_ms=5000)
+                    click_conversation_by_name(page, target, timeout_ms=5000)
                 time.sleep(0.4)
                 page.wait_for_selector(CHAT_INPUT_SELECTOR, timeout=8000)
                 page.locator(CHAT_INPUT_SELECTOR).click()
@@ -182,11 +207,19 @@ def send_zalo_message(message: str, logger=None):
                     time.sleep(DEBUG_STEP_SLEEP)
                     page.keyboard.type("l", delay=50)
                     time.sleep(DEBUG_STEP_SLEEP)
+                    mention_ok = False
                     try:
                         page.get_by_title(MENTION_ALL_TITLE).first.click(timeout=5000)
+                        mention_ok = True
                     except Exception:
-                        page.locator(".mention-popover__item").first.click(timeout=3000)
-                    time.sleep(DEBUG_STEP_SLEEP)
+                        try:
+                            page.locator(".mention-popover__item").first.click(timeout=3000)
+                            mention_ok = True
+                        except Exception:
+                            pass
+                    if not mention_ok:
+                        # Chat khong phai nhom hoac popover cham: da go "@All", chi them phan sau
+                        _log.info("[ZaloWeb] Mention @All popover not found, typing rest as text")
                     if text_after:
                         page.keyboard.type(" " + text_after, delay=40)
                     time.sleep(DEBUG_STEP_SLEEP)
@@ -194,7 +227,7 @@ def send_zalo_message(message: str, logger=None):
                     page.keyboard.type(message, delay=40)
                     time.sleep(0.15)
                 page.locator(SEND_BUTTON_SELECTOR).first.click(timeout=3000)
-                _log.info("[ZaloWeb] Sent message to %s: %s", DEFAULT_CLICK_AFTER_OPEN, message[:50])
+                _log.info("[ZaloWeb] Sent message to %s: %s", target, message[:50])
                 return True
             finally:
                 try:
@@ -237,9 +270,9 @@ def main():
                 time.sleep(0.8)
                 if CONV_ITEM_SELECTOR:
                     page.locator(CONV_ITEM_SELECTOR).first.click(timeout=5000)
-                    log.info("Da click conversation: %s (theo selector)", DEFAULT_CLICK_AFTER_OPEN)
+                    log.info("Da click conversation (theo selector)")
                 else:
-                    click_text(page, DEFAULT_CLICK_AFTER_OPEN, timeout_ms=5000)
+                    click_conversation_by_name(page, DEFAULT_CLICK_AFTER_OPEN, timeout_ms=5000)
                 time.sleep(0.5)
                 # Dien text vao o nhap tin nhan (contenteditable)
                 page.wait_for_selector(CHAT_INPUT_SELECTOR, timeout=8000)

@@ -5,6 +5,7 @@ description: "Alliance attacked: send Zalo alert, repeat every 300s while icon v
 
 steps:
   - event_type: send_zalo
+    receiver_name: "Nhóm HLSE"
     message: " @All Bớ làng nước ơi!, liên minh đang bị tấn công"
     repeat_interval_sec: 300
   - event_type: sleep

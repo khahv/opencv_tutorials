@@ -245,7 +245,8 @@ actual_scale = update_vision_scale()
 
 
 fn_settings = config_manager.load_fn_settings()
-runner = FunctionRunner(vision_cache, fn_settings=fn_settings)
+bot_paused = {"paused": True}
+runner = FunctionRunner(vision_cache, fn_settings=fn_settings, bot_paused=bot_paused)
 runner.load(functions)
 
 # ── Ctrl+C / SIGINT ──────────────────────────────────────────────────────────
@@ -398,7 +399,6 @@ if pending_queue:
 
 # ── UI ────────────────────────────────────────────────────────────────────────
 config_manager.init_if_missing(fn_configs, fn_enabled)
-bot_paused = {"paused": True}
 
 
 def _rebuild_trigger_lists():
@@ -642,6 +642,9 @@ def _detector_loop():
         time.sleep(_DETECTOR_INTERVAL)
         if not running or exit_requested:
             break
+        # When Is Running (UI) = false, pause all detectors — no screenshot, no matchTemplate
+        if bot_paused["paused"]:
+            continue
         _tick += 1
         try:
             w, h = wincap.w, wincap.h
@@ -756,6 +759,12 @@ def _game_loop():
             break
 
         if bot_paused["paused"]:
+            # Drain detector queue so we don't process stale events on resume
+            try:
+                while True:
+                    _detector_event_queue.get_nowait()
+            except queue.Empty:
+                pass
             _safe_waitkey(1)
             continue
 
