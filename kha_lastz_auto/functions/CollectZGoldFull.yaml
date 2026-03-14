@@ -9,8 +9,7 @@ steps:
     scroll_times: 5
     debug_log: true
     scroll_interval_sec: 0.1
-    debug_save: true
-
+    # debug_save: true
   - event_type: sleep
     duration_sec: 2
 
@@ -29,8 +28,8 @@ steps:
 
   # Huong keo: x,y trong khoang -1 ~ 1. Cheo tren trai = (-1,-1)
   - event_type: drag
-    x: -1
-    y: -1
+    direction_x: -1
+    direction_y: -1
     count: 5
     run_always: true
 
@@ -48,8 +47,8 @@ steps:
     exit_on_true: true
 
   - event_type: drag
-    x: 1
-    y: 0
+    direction_x: 1
+    direction_y: 0
     count: 10
     run_always: true
 
@@ -67,8 +66,8 @@ steps:
     exit_on_true: true
 
   - event_type: drag
-    x: 0
-    y: 1
+    direction_x: 0
+    direction_y: 1
     count: 7
     run_always: true
 
@@ -86,8 +85,8 @@ steps:
     exit_on_true: true
 
   - event_type: drag
-    x: -1
-    y: 0
+    direction_x: -1
+    direction_y: 0
     count: 10
     run_always: true
 

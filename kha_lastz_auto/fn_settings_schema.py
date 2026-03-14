@@ -132,6 +132,16 @@ SCHEMA: dict = {
         },
     ],
 
+    "TurnOnShield": [
+        {
+            "key":         "shield_duration",
+            "label":       "Loại shield",
+            "description": "8h | 24h | 3d — vị trí click cố định tương ứng",
+            "type":        "str",
+            "default":     "8h",
+        },
+    ],
+
     "ClickTreasure": [
         {
             "key":         "send_zalo_message",

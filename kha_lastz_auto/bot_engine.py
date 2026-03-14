@@ -998,9 +998,26 @@ class FunctionRunner:
             return "running"
 
         if step_type == "click_position":
-            # x, y = relative position (0–1) like search_roi; fallback offset_x/offset_y
-            ox = step.get("x", step.get("offset_x", 0.15))
-            oy = step.get("y", step.get("offset_y", 0.15))
+            # Có thể lấy (x,y) từ fn_settings: position_setting_key + positions map (key -> [x,y])
+            ox, oy = None, None
+            setting_key = step.get("position_setting_key")
+            positions_map = step.get("positions")  # e.g. {"8h": [0.75, 0.31], "24h": [0.75, 0.40], "3d": [0.75, 0.49]}
+            if setting_key and positions_map and isinstance(positions_map, dict):
+                val = self._fn_setting(setting_key)
+                key = (str(val).strip().lower() if val is not None else "") or str(step.get("default", "")).strip().lower()
+                if key in positions_map:
+                    pos = positions_map[key]
+                    if isinstance(pos, (list, tuple)) and len(pos) >= 2:
+                        ox, oy = float(pos[0]), float(pos[1])
+                if ox is None and "default" in step:
+                    default_key = str(step.get("default", "")).strip().lower()
+                    if default_key in positions_map:
+                        pos = positions_map[default_key]
+                        if isinstance(pos, (list, tuple)) and len(pos) >= 2:
+                            ox, oy = float(pos[0]), float(pos[1])
+            if ox is None:
+                ox = step.get("x", step.get("offset_x", 0.15))
+                oy = step.get("y", step.get("offset_y", 0.15))
             px = int(wincap.w * ox)
             py = int(wincap.h * oy)
             sx, sy = wincap.get_screen_position((px, py))
@@ -1015,7 +1032,13 @@ class FunctionRunner:
             _mouse_ctrl.press(Button.left)
             time.sleep(0.1)
             _mouse_ctrl.release(Button.left)
-            log.info("[Runner] {} → true".format(self._step_label(step)))
+            if setting_key and positions_map and ox is not None:
+                log.info("[Runner] {} → true ({} → x={}, y={})".format(
+                    self._step_label(step),
+                    str(self._fn_setting(setting_key) or step.get("default", "")).strip().lower(),
+                    round(ox, 2), round(oy, 2)))
+            else:
+                log.info("[Runner] {} → true".format(self._step_label(step)))
             self._advance_step(True)
             return "running"
 
@@ -1289,9 +1312,9 @@ class FunctionRunner:
             return "running"
 
         if step_type == "base_zoomout":
-            # Step 1: tim HeadquartersButton -> click -> scroll zoom out.
-            # Neu khong thay HQ: tim WorldButton -> click -> quay lai step 1 (khong advance, next tick retry).
-            # Neu ca hai deu khong thay -> scroll zoom out, advance.
+            # Luong: (1) Thay HQ -> click HQ -> chup lai: thay World thi zoom out; thay HQ thi click HQ them 1 lan roi zoom out.
+            #        (2) Vua vo da thay World -> click World -> retry (tick sau tim HQ, click HQ, roi nhu (1)).
+            #        (3) Khong thay ca hai -> scroll zoom out, advance.
             template        = step.get("template")
             world_button    = step.get("world_button")
             threshold       = step.get("threshold", 0.75)
@@ -1303,10 +1326,26 @@ class FunctionRunner:
             match_color     = step.get("match_color", False)
             color_tol       = step.get("color_match_tolerance")
 
+            def _do_zoomout_scroll():
+                if hasattr(wincap, "focus_window"):
+                    wincap.focus_window(force=True)
+                    time.sleep(0.05)
+                cx = wincap.offset_x + wincap.w // 2
+                cy = wincap.offset_y + wincap.h // 2
+                pyautogui.moveTo(cx, cy)
+                time.sleep(0.05)
+                for i in range(scroll_times):
+                    pyautogui.scroll(-3)
+                    time.sleep(scroll_interval)
+                log.info("[Runner] base_zoomout scrolled x{} at center ({}, {})".format(scroll_times, cx, cy))
+
             vision = self.vision_cache.get(template) if template else None
+            vision_world = self.vision_cache.get(world_button) if world_button else None
+            dbg_mode = "info" if debug_log else None
+
+            # (1) Thay HQ -> click HQ -> sau do kiem tra World / HQ tren man hinh moi
             clicked_hq = False
             if vision:
-                dbg_mode = "info" if debug_log else None
                 points = vision.find(
                     screenshot,
                     threshold=threshold,
@@ -1339,7 +1378,7 @@ class FunctionRunner:
                             log.info("[Runner] base_zoomout debug save failed: {}".format(e))
                     sx, sy = wincap.get_screen_position((points[0][0], points[0][1]))
                     pyautogui.click(sx, sy)
-                    time.sleep(0.3)
+                    time.sleep(0.4)
                     clicked_hq = True
                 elif debug_save:
                     try:
@@ -1353,99 +1392,144 @@ class FunctionRunner:
                         log.info("[Runner] base_zoomout debug save failed: {}".format(e))
 
             if clicked_hq:
-                if hasattr(wincap, "focus_window"):
-                    wincap.focus_window(force=True)
-                    time.sleep(0.05)
-                cx = wincap.offset_x + wincap.w // 2
-                cy = wincap.offset_y + wincap.h // 2
-                pyautogui.moveTo(cx, cy)
-                time.sleep(0.05)
-                for i in range(scroll_times):
-                    pyautogui.scroll(-3)
-                    time.sleep(scroll_interval)
-                log.info("[Runner] base_zoomout scrolled x{} at center ({}, {})".format(scroll_times, cx, cy))
-                log.info("[Runner] {} → true (clicked HQ + scroll)".format(self._step_label(step)))
-                self._advance_step(True)
-                return "running"
-
-            # HQ khong thay: thu WorldButton -> click -> quay lai step 1 (khong advance)
-            if world_button:
-                vision_world = self.vision_cache.get(world_button)
-                if vision_world:
-                    dbg_mode = "info" if debug_log else None
-                    points_w = vision_world.find(
-                        screenshot,
+                # Chup lai: thay World -> zoom out ngay; thay HQ -> click HQ them 1 lan roi zoom out
+                screenshot2 = wincap.get_screenshot() if hasattr(wincap, "get_screenshot") else None
+                if screenshot2 is not None and vision_world:
+                    points_w2 = vision_world.find(
+                        screenshot2,
                         threshold=threshold,
                         debug_mode=dbg_mode,
                         debug_log=debug_log,
                         is_color=bool(match_color),
                         color_tolerance=color_tol,
                     )
-                    if points_w:
-                        if hasattr(wincap, "focus_window"):
-                            wincap.focus_window(force=True)
-                            time.sleep(0.05)
-                        sx, sy = wincap.get_screen_position((points_w[0][0], points_w[0][1]))
-                        pyautogui.click(sx, sy)
-                        time.sleep(0.5)
-                        log.info("[Runner] base_zoomout: clicked WorldButton → retry step 1 (find HQ)")
+                    if points_w2:
+                        _do_zoomout_scroll()
+                        log.info("[Runner] {} → true (clicked HQ, saw World → scroll)".format(self._step_label(step)))
+                        self._advance_step(True)
                         return "running"
+                if screenshot2 is not None and vision:
+                    points_hq2 = vision.find(
+                        screenshot2,
+                        threshold=threshold,
+                        debug_mode=dbg_mode,
+                        debug_log=debug_log,
+                        is_color=bool(match_color),
+                        color_tolerance=color_tol,
+                    )
+                    if points_hq2:
+                        sx2, sy2 = wincap.get_screen_position((points_hq2[0][0], points_hq2[0][1]))
+                        pyautogui.click(sx2, sy2)
+                        time.sleep(0.3)
+                        log.info("[Runner] base_zoomout: saw HQ again → click HQ once more")
+                _do_zoomout_scroll()
+                log.info("[Runner] {} → true (clicked HQ + scroll)".format(self._step_label(step)))
+                self._advance_step(True)
+                return "running"
 
-            # Ca HQ va World deu khong thay -> chi scroll zoom out, step3 drag, advance
-            if hasattr(wincap, "focus_window"):
-                wincap.focus_window(force=True)
-                time.sleep(0.05)
-            cx = wincap.offset_x + wincap.w // 2
-            cy = wincap.offset_y + wincap.h // 2
-            pyautogui.moveTo(cx, cy)
-            time.sleep(0.05)
-            for i in range(scroll_times):
-                pyautogui.scroll(-3)
-                time.sleep(scroll_interval)
-            log.info("[Runner] base_zoomout scrolled x{} at center ({}, {})".format(scroll_times, cx, cy))
+            # (2) Vua vo da thay World: click World -> retry step (luong cu)
+            if world_button and vision_world:
+                points_w = vision_world.find(
+                    screenshot,
+                    threshold=threshold,
+                    debug_mode=dbg_mode,
+                    debug_log=debug_log,
+                    is_color=bool(match_color),
+                    color_tolerance=color_tol,
+                )
+                if points_w:
+                    if hasattr(wincap, "focus_window"):
+                        wincap.focus_window(force=True)
+                        time.sleep(0.05)
+                    sx, sy = wincap.get_screen_position((points_w[0][0], points_w[0][1]))
+                    pyautogui.click(sx, sy)
+                    time.sleep(0.5)
+                    log.info("[Runner] base_zoomout: clicked WorldButton → retry step 1 (find HQ)")
+                    return "running"
+
+            # (3) Khong thay HQ cung khong thay World -> chi scroll zoom out, advance
+            _do_zoomout_scroll()
             log.info("[Runner] {} → true (HQ/World not found, scroll)".format(self._step_label(step)))
             self._advance_step(True)
             return "running"
 
         if step_type == "drag":
-            # Keo man hinh theo huong (x, y). x,y = huong di chuyen (-1 ~ 1). Khoang cach moi lan keo fixed trong engine (relative man hinh). Muon keo xa hon thi tang count.
-            dx = float(step.get("x", 0))
-            dy = float(step.get("y", 0))
+            # start_x, start_y = diem bat dau (ti le 0-1). direction_x/y = huong, magnitude nhan voi do dai keo (vd 5 -> keo dai gap 5).
+            # drag_distance_ratio = ti le so voi canh nho cua so (mac dinh 0.15). drag_duration_sec = thoi gian moi lan keo.
+            dir_x = float(step.get("direction_x", step.get("x", 0)))
+            dir_y = float(step.get("direction_y", step.get("y", 0)))
             count = max(1, int(step.get("count", 3)))
+            start_x_ratio = float(step.get("start_x", 0.5))
+            start_y_ratio = float(step.get("start_y", 0.5))
             if hasattr(wincap, "focus_window"):
                 wincap.focus_window(force=True)
                 time.sleep(0.05)
-            cx = wincap.offset_x + wincap.w // 2
-            cy = wincap.offset_y + wincap.h // 2
-            length = (dx * dx + dy * dy) ** 0.5
+            # Diem bat dau (client px) -> screen px
+            px_start = int(wincap.w * start_x_ratio)
+            py_start = int(wincap.h * start_y_ratio)
+            sx, sy = wincap.get_screen_position((px_start, py_start))
+            length = (dir_x * dir_x + dir_y * dir_y) ** 0.5
             if length < 1e-6:
                 dx, dy = 1.0, 0.0
+                length = 1.0
             else:
-                dx, dy = dx / length, dy / length
-            # Khoang cach moi lan keo: 15% canh nho cua cua so (relative man hinh)
-            drag_distance_px = 0.15 * min(wincap.w, wincap.h)
-            sx = cx
-            sy = cy
-            ex = int(cx + dx * drag_distance_px)
-            ey = int(cy + dy * drag_distance_px)
+                dx, dy = dir_x / length, dir_y / length
+            # Do dai keo = base * max(1, magnitude(direction)). direction (5,0) -> keo dai gap 5.
+            ratio = float(step.get("drag_distance_ratio", 0.15))
+            base_px = ratio * min(wincap.w, wincap.h)
+            drag_distance_px = base_px * max(1.0, length)
+            ex = int(sx + dx * drag_distance_px)
+            ey = int(sy + dy * drag_distance_px)
+            offset_x = ex - sx
+            offset_y = ey - sy
+            # Thoi gian cho ca qua trinh keo (mac dinh cham rai ~0.8s)
+            duration = step.get("drag_duration_sec", 0.8)
+            num_steps = max(15, int(step.get("drag_steps", 30)))
 
-            def _do_drag(sx_, sy_, ex_, ey_):
+            log.info("[Runner] drag: win={}x{}, start screen=({},{}), end=({},{}), offset=({},{}), drag_px={:.0f}, steps={}, duration={}s".format(
+                wincap.w, wincap.h, sx, sy, ex, ey, offset_x, offset_y, drag_distance_px, num_steps, duration))
+
+            # Dung Windows API (SetCursorPos + mouse_event) thay pyautogui — nhieu game/emulator chi nhan input nay.
+            _MOUSEEVENTF_LEFTDOWN = 0x0002
+            _MOUSEEVENTF_LEFTUP = 0x0004
+
+            def _do_drag(sx_, sy_, off_x, off_y):
                 try:
-                    _mouse_ctrl.position = (sx_, sy_)
+                    import ctypes
+                    u32 = ctypes.windll.user32
+                    ex_ = sx_ + off_x
+                    ey_ = sy_ + off_y
+                    step_duration = duration / num_steps
+                    # Buoc 1: di chuot toi diem bat dau
+                    log.info("[Runner] drag step 1: SetCursorPos start ({}, {})".format(sx_, sy_))
+                    u32.SetCursorPos(int(sx_), int(sy_))
+                    time.sleep(0.06)
+                    # Buoc 2: nhan chuot xuong (mouse_event LEFTDOWN)
+                    log.info("[Runner] drag step 2: mouse_event LEFTDOWN at ({}, {})".format(sx_, sy_))
+                    u32.mouse_event(_MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
                     time.sleep(0.05)
-                    _mouse_ctrl.press(Button.left)
-                    time.sleep(0.05)
-                    _mouse_ctrl.position = (ex_, ey_)
-                    time.sleep(0.08)
-                    _mouse_ctrl.release(Button.left)
+                    # Buoc 3: di chuyen chuot tung buoc (van giu nut)
+                    for s in range(1, num_steps + 1):
+                        t = s / num_steps
+                        px = int(sx_ + off_x * t)
+                        py = int(sy_ + off_y * t)
+                        u32.SetCursorPos(px, py)
+                        time.sleep(step_duration)
+                        if s == 1 or s == num_steps or s == num_steps // 2:
+                            log.info("[Runner] drag step 3: move s={}/{} -> ({}, {})".format(s, num_steps, px, py))
+                    time.sleep(0.04)
+                    # Buoc 4: tha chuot (mouse_event LEFTUP)
+                    log.info("[Runner] drag step 4: mouse_event LEFTUP at ({}, {})".format(int(ex_), int(ey_)))
+                    u32.mouse_event(_MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
                 except Exception as e:
-                    log.debug("[Runner] drag: {}".format(e))
+                    log.warning("[Runner] drag exception: {}".format(e))
 
-            for _ in range(count):
-                _do_drag(sx, sy, ex, ey)
-                time.sleep(0.15)
+            for i in range(count):
+                _do_drag(sx, sy, offset_x, offset_y)
+                if i < count - 1:
+                    time.sleep(0.12)
             log.info("[Runner] {} → true (drag dir=({},{}) x{})".format(
-                self._step_label(step), step.get("x"), step.get("y"), count))
+                self._step_label(step), step.get("direction_x", step.get("x")), step.get("direction_y", step.get("y")), count))
             self._advance_step(True)
             return "running"
 
@@ -1465,7 +1549,7 @@ class FunctionRunner:
             #   roi_ratios: [x, y, w, h] as fractions of screen size (0.0–1.0)
             #
             # debug_save: true → save ROI crop (and screenshot if anchor not found)
-            # abort_if_found: true → advance(False)/abort if anchor IS found; advance(True)/continue if NOT found
+            # exit_on_true: true → when anchor IS found, end function (same semantic as match_click exit_on_true)
             anchor_template = step.get("anchor_template") or step.get("template")
             roi_ratios      = step.get("roi_ratios")       # [x, y, w, h] 0-1 fractions
             ocr_regions     = step.get("ocr_regions")      # list of ratio-based region dicts
@@ -1475,7 +1559,7 @@ class FunctionRunner:
             label           = step.get("label", "ocr_log")
             debug_save      = step.get("debug_save", False)
             timeout_sec     = step.get("timeout_sec", 5)
-            abort_if_found  = step.get("abort_if_found", False)
+            exit_on_true    = step.get("exit_on_true", False)
             _debug_key      = "_ocr_log_debug_{}".format(label.replace(" ", "_"))
 
             # ── Mode B: roi_ratios — run immediately, no template needed ──────
@@ -1503,12 +1587,49 @@ class FunctionRunner:
                     log.info("[Runner] {} [{}]: (no text read)".format(self._step_label(step), label))
                 if debug_path:
                     log.info("[Runner] ocr_log: ROI saved to {}".format(debug_path))
-                self._advance_step(True)
+                if exit_on_true and text and str(text).strip():
+                    self._advance_step(True, step=step)
+                else:
+                    self._advance_step(True)
+                return "running"
+
+            # ── Mode B2: ocr_regions only (no anchor) — x,y,w,h = tỉ lệ màn hình (0.0–1.0) ─
+            if ocr_regions and not anchor_template:
+                h_img, w_img = screenshot.shape[:2]
+                any_text = False
+                for region in ocr_regions:
+                    rname = region.get("name", "ocr")
+                    rx = float(region.get("x", 0.0))
+                    ry = float(region.get("y", 0.0))
+                    rw = float(region.get("w", 1.0))
+                    rh = float(region.get("h", 0.2))
+                    x = max(0, int(rx * w_img))
+                    y = max(0, int(ry * h_img))
+                    w = max(1, int(rw * w_img))
+                    h = max(1, int(rh * h_img))
+                    w = min(w, w_img - x)
+                    h = min(h, h_img - y)
+                    debug_path = None
+                    if debug_save:
+                        debug_path = "debug_ocr_{}_{}.png".format(label.replace(" ", "_"), rname)
+                    text = _read_raw_text_from_roi(
+                        screenshot, (0, 0), [x, y, w, h],
+                        char_whitelist=char_whitelist, debug_save_path=debug_path)
+                    if text:
+                        s = str(text).strip()
+                        any_text = any_text or (bool(s) and any(c.isdigit() for c in s))
+                        log.info("[Runner] {} [{}]: {}".format(self._step_label(step), rname, text))
+                    else:
+                        log.info("[Runner] {} [{}]: (no text read)".format(self._step_label(step), rname))
+                if exit_on_true and any_text:
+                    self._advance_step(True, step=step)
+                else:
+                    self._advance_step(True)
                 return "running"
 
             # ── Mode A / A2: anchor template ──────────────────────────────────
             if not anchor_template or (not anchor_offset and not ocr_regions):
-                log.info("[Runner] {} → skip (set roi_ratios, or anchor_template + anchor_offset/ocr_regions)".format(self._step_label(step)))
+                log.info("[Runner] {} → skip (set roi_ratios, ocr_regions only, or anchor_template + anchor_offset/ocr_regions)".format(self._step_label(step)))
                 self._advance_step(True)
                 return "running"
 
@@ -1676,17 +1797,16 @@ class FunctionRunner:
                     if debug_path:
                         log.info("[Runner] ocr_log: ROI saved to {}".format(debug_path))
 
-                if abort_if_found:
-                    log.info("[Runner] {} → abort (abort_if_found, anchor matched)".format(self._step_label(step)))
-                    self._advance_step(False)
+                if exit_on_true:
+                    self._advance_step(True, step=step)
                 else:
                     self._advance_step(True)
                 return "running"
 
             if now - self.step_start_time >= timeout_sec:
-                if abort_if_found:
+                if exit_on_true:
                     # anchor NOT found → condition not met → continue with next steps
-                    log.info("[Runner] {} → continue (abort_if_found but anchor not found in {}s)".format(self._step_label(step), timeout_sec))
+                    log.info("[Runner] {} → continue (exit_on_true but anchor not found in {}s)".format(self._step_label(step), timeout_sec))
                 else:
                     log.info("[Runner] {} → anchor not found in {}s".format(self._step_label(step), timeout_sec))
                 if debug_save and not getattr(self, _debug_key + "_shot", False):
@@ -1698,7 +1818,7 @@ class FunctionRunner:
                     except Exception as e:
                         log.info("[Runner] ocr_log: failed to save debug screen: {}".format(e))
 
-                if not abort_if_found:
+                if not exit_on_true:
                     # Anchor not found = cannot verify conditions → treat as assertion failure
                     on_fail_goto = step.get("on_fail_goto")
                     max_retries  = int(step.get("max_retries", 0))
@@ -1731,6 +1851,8 @@ class FunctionRunner:
         if stype == "sleep":
             return "sleep {}s".format(step.get("duration_sec", 0))
         if stype == "click_position":
+            if step.get("position_setting_key"):
+                return "click_position ({} from setting)".format(step.get("position_setting_key"))
             x = step.get("x", step.get("offset_x", 0))
             y = step.get("y", step.get("offset_y", 0))
             return "click_position (x={}, y={})".format(x, y)
@@ -1741,8 +1863,13 @@ class FunctionRunner:
         if stype == "set_level":
             return "set_level Lv.{}".format(step.get("target_level", "?"))
         if stype == "drag":
-            return "drag ({},{}) x{}".format(
-                step.get("x", 0), step.get("y", 0), step.get("count", 3))
+            dx = step.get("direction_x", step.get("x", 0))
+            dy = step.get("direction_y", step.get("y", 0))
+            c = step.get("count", 3)
+            start = step.get("start_x"), step.get("start_y")
+            if start[0] is not None or start[1] is not None:
+                return "drag dir=({},{}) start=({},{}) x{}".format(dx, dy, start[0] or 0.5, start[1] or 0.5, c)
+            return "drag dir=({},{}) x{}".format(dx, dy, c)
         if tpl_name:
             return "{} {}".format(stype, tpl_name)
         return stype

@@ -1,0 +1,50 @@
+# Function: FightBoomer
+description: "Magnifier -> Boomer -> set level (OCR) -> Search -> Team Up -> March"
+steps:
+  
+
+  # Now click MagnifierButton (visible after navigation)
+  - event_type: match_click
+    template: buttons_template/EventCenter.png
+    threshold: 0.6
+    one_shot: true
+    timeout_sec: 2
+
+  - event_type: sleep
+    duration_sec: 1
+
+  - event_type: match_click
+    template: buttons_template/FurylordIcon.png
+    threshold: 0.6
+    one_shot: true
+    timeout_sec: 2
+
+
+  - event_type: drag
+    direction_x: 1
+    direction_y: 0
+    count: 1
+    run_always: true
+    start_x: 0.25
+    start_y: 0.96
+    drag_distance_ratio: 0.35
+
+  - event_type: match_click
+    template: buttons_template/FurylordIcon.png
+    threshold: 0.6
+    one_shot: true
+    timeout_sec: 2
+
+
+  - event_type: match_click
+    template: buttons_template/FurylordGoButton.png
+    threshold: 0.6
+    one_shot: true
+    timeout_sec: 2
+
+  - event_type: match_click
+    template: buttons_template/FurylordAttackIcon.png
+    threshold: 0.6
+    one_shot: true
+    timeout_sec: 2
+

@@ -34,7 +34,7 @@ steps:
     duration_sec: 1
 
   - event_type: match_click
-    template: buttons_template/CityWallIcon.png
+    template: buttons_template/BuffIcon.png
     threshold: 0.75
     one_shot: true
     timeout_sec: 10
@@ -42,26 +42,27 @@ steps:
   - event_type: sleep
     duration_sec: 3
 
-  # Read remaining time on the PeaceShield timer bar (e.g. "23:32:13")
-  # anchor_template: PeaceShieldActivated.png làm anchor (template mới chụp lúc shield đang bật)
-  # anchor_offset: [ox, oy, w, h] px từ tâm template đến góc trên-trái vùng OCR
-  # Timer bar nằm gần đáy card: oy dương = dịch xuống từ tâm card
-  # debug_save: true -> lưu debug_ocr_PeaceShield_remaining.png để tinh chỉnh anchor_offset
+  # Đọc vùng timer PeaceShield (vd. "23:32:13"). ocr_regions: x,y,w,h = tỉ lệ màn hình (0.0–1.0).
+  # exit_on_true: đọc được text (shield đang bật) → kết thúc function.
   - event_type: ocr_log
-    anchor_template: buttons_template/PeaceShieldActivated.png
-    threshold: 0.75
-    timeout_sec: 5
-    anchor_offset: [-200, 55, 420, 28]
-    char_whitelist: "0123456789:"
     label: "PeaceShield remaining"
-    debug_save: false
-    abort_if_found: true
+    char_whitelist: "0123456789:"
+    debug_save: true
+    debug_log: true
+    exit_on_true: true
+    ocr_regions:
+      - name: remaining
+        x: 0.32
+        y: 0.38
+        w: 0.46
+        h: 0.02
+        # x,y,w,h = tỉ lệ màn hình, tự mò và fill
 
-  # Click the ► arrow on the right edge of the PeaceShield card.
-  # Use PeaceShieldCard.png — captured without the timer (matches BOTH active/inactive states).
-  # If you don't have PeaceShieldCard.png yet, capture it when shield is OFF (icon+title area only).
   - event_type: match_click
-    template: buttons_template/PeaceShield.png
+    template: buttons_template/PeaceShieldActivated.png
+    roi_center_x: 0.85
+    roi_center_y: 0.38
+    roi_padding: 2
     threshold: 0.75
     one_shot: true
     timeout_sec: 10
@@ -72,18 +73,17 @@ steps:
     duration_sec: 1
     run_always: true   # run even if match_click above failed (shield card not matched)
 
-  # Click the Use button (right side of card, ~33% right of center)
-  - event_type: match_move
-    template: buttons_template/Use8HoursPeaceShield.png
-    threshold: 0.75
-    one_shot: true
-    timeout_sec: 10
-    click_offset_x: 0.33
-    click_offset_y: -0.4
-    debug_click: false
+  # Click 1 trong 3 vị trí shield (8h / 24h / 3 ngày). Chọn loại trong UI: Settings → TurnOnShield → Loại shield.
+  - event_type: click_position
+    position_setting_key: shield_duration
+    default: "8h"
+    positions:
+      "8h":  [0.75, 0.31]
+      "24h": [0.75, 0.40]
+      "3d":  [0.75, 0.49]
 
   # Always close the City Walls panel — runs even if previous steps aborted
   - event_type: click_position
-    offset_x: 0.05
-    offset_y: 0.05
+    x: 0.03
+    y: 0.08
     run_always: true

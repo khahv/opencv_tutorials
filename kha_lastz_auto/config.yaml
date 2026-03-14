@@ -39,6 +39,9 @@ functions:
     cron: "*/3 * * * *"
     enabled: false
 
+  - name: AttackFuryLord
+    enabled: true
+
   - name: ClickTreasure
     trigger: treasure_detected
     key: y
