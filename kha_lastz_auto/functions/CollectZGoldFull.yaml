@@ -2,6 +2,11 @@
 description: "Collect ZGold when full: zoom out to world map, drag 4 huong, click Zgold/EXP buttons"
 
 steps:
+  - event_type: close_ui
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    threshold: 0.75
+
   - event_type: base_zoomout
     template: buttons_template/HeadquartersButton.png
     world_button: buttons_template/WorldButton.png

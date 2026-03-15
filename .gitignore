@@ -9,3 +9,5 @@ __pycache__
 **/.env_config
 kha_lastz_auto/.env_config
 kha_lastz_auto/playwright_zalo_data/
+debug
+debug_ocr

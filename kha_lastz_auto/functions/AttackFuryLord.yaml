@@ -19,7 +19,7 @@ steps:
     one_shot: true
     timeout_sec: 2
 
-
+  # Drag all to the left
   - event_type: drag
     direction_x: 1
     direction_y: 0
@@ -27,7 +27,28 @@ steps:
     run_always: true
     start_x: 0.25
     start_y: 0.96
-    drag_distance_ratio: 0.35
+    drag_distance_ratio: 0.7
+
+  - event_type: sleep
+    duration_sec: 1
+  
+  - event_type: match_click
+    template: buttons_template/FurylordIcon.png
+    threshold: 0.6
+    one_shot: true
+    timeout_sec: 2
+
+  - event_type: drag
+    direction_x: -1
+    direction_y: 0
+    count: 1
+    run_always: true
+    start_x: 0.25
+    start_y: 0.96
+    drag_distance_ratio: 1.0
+
+  - event_type: sleep
+    duration_sec: 1
 
   - event_type: match_click
     template: buttons_template/FurylordIcon.png
@@ -41,10 +62,16 @@ steps:
     threshold: 0.6
     one_shot: true
     timeout_sec: 2
+    
 
   - event_type: match_click
     template: buttons_template/FurylordAttackIcon.png
     threshold: 0.6
     one_shot: true
     timeout_sec: 2
+
+  - event_type: click_position
+    x: 0.03
+    y: 0.08
+    run_always: true
 

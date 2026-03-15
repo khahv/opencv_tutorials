@@ -262,6 +262,49 @@ Commonly used to close popups or dismiss banners by clicking an empty corner.
 
 ---
 
+### `close_ui` (special)
+Closes popups / overlays: repeatedly **clicks a fixed position** (default top-left corner) until **Headquarters** or **World** is found on screen (or max tries reached). Use **before** `base_zoomout` to ensure the base/world view is visible before zooming out.
+
+```yaml
+- event_type: close_ui
+  template: buttons_template/HeadquartersButton.png    # HQ template (required)
+  world_button: buttons_template/WorldButton.png       # World template (optional)
+  threshold: 0.75
+  click_x: 0.03        # X position ratio (default 0.03 = near left edge)
+  click_y: 0.08        # Y position ratio (default 0.08 = near top edge)
+  max_tries: 10        # max click-then-capture cycles, default 10
+  roi_center_x: 0.93  # (optional) search HQ/World only within this ROI
+  roi_center_y: 0.96
+  roi_padding: 2       # multiplier of template size to define ROI
+  debug_log: false
+```
+
+**Flow:** Each iteration: search for HQ and World (in ROI if set). If **at least one** is found → exit and advance step. Otherwise → click at `(click_x, click_y)` → sleep 1s → capture new screenshot → repeat. After exit (or `max_tries`), step always advances and returns success.
+
+---
+
+### `base_zoomout` (special)
+Zooms the map out to the world view: finds **Headquarters** or **World**, clicks in sequence (HQ → re-check World/HQ → scroll to zoom out). Use **after** `close_ui`.
+
+```yaml
+- event_type: base_zoomout
+  template: buttons_template/HeadquartersButton.png
+  world_button: buttons_template/WorldButton.png       # optional
+  threshold: 0.75
+  scroll_times: 5
+  scroll_interval_sec: 0.1
+  timeout_sec: 5
+  roi_center_x: 0.93  # (optional) search HQ/World only within this ROI
+  roi_center_y: 0.96
+  roi_padding: 2
+  debug_log: false
+  debug_save: false   # true = save ROI image when HQ/World not found (for debugging)
+```
+
+**Flow:** (1) If HQ found → click HQ → capture again; if World then visible → scroll zoom out → advance. If HQ still visible → click HQ once more then scroll. (2) If World found from the start → click World → retry step (next run finds HQ, clicks HQ, zooms out). (3) If neither HQ nor World found → still scroll zoom out then advance. Always returns success.
+
+---
+
 ### `key_press`
 Press a keyboard key.
 
@@ -299,22 +342,6 @@ Use OCR to read the current level, then click Plus/Minus until `target_level` is
 ```
 
 Requires Tesseract OCR to be installed.
-
----
-
-### `base_zoomout`
-Click the Headquarters button (if visible) then scroll to zoom out to the world map.
-
-```yaml
-- event_type: base_zoomout
-  template: buttons_template/HeadquartersButton.png
-  threshold: 0.75
-  scroll_times: 5
-  scroll_interval_sec: 0.1
-  timeout_sec: 5
-```
-
-Always returns `true`. Use as the first step in functions that require the world map view.
 
 ---
 

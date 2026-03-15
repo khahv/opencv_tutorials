@@ -2,6 +2,12 @@
 description: "Train soldiers: Headquarters -> collect Shooter -> train all Soldiers -> collect Assault -> train all Soldiers"
 
 steps:
+  # Dong UI popup truoc khi zoom out
+  - event_type: close_ui
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    threshold: 0.75
+
   # Zoom out ve world map truoc khi navigate
   - event_type: base_zoomout
     template: buttons_template/HeadquartersButton.png

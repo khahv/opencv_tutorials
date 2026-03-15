@@ -1,0 +1,62 @@
+---
+description: Project-wide coding standards — English-only docs/comments, Python naming, reuse, and clean code
+alwaysApply: true
+---
+
+# Coding Standards
+
+All prompts and changes in this project must follow these rules.
+
+---
+
+## Language
+
+- **Comments and documentation must be in English** (including docstrings, README, DOCS.md, and inline comments).
+- User-facing strings (logs, UI) may stay in the project’s existing language if that is the current convention.
+
+---
+
+## Python Naming Conventions
+
+Follow PEP 8; use these consistently:
+
+| Kind | Convention | Example |
+|------|------------|--------|
+| **Modules / files** | `snake_case` | `bot_engine.py`, `window_capture.py` |
+| **Functions / methods** | `snake_case` | `get_screenshot()`, `find_template()` |
+| **Variables / parameters** | `snake_case` | `screenshot`, `threshold`, `max_tries` |
+| **Constants** | `UPPER_SNAKE_CASE` | `DEFAULT_THRESHOLD`, `MAX_RETRIES` |
+| **Classes** | `PascalCase` | `FunctionRunner`, `Vision` |
+| **Private** (module/class internal) | leading `_` | `_advance_step()`, `_roi_bounds` |
+| **“Protected” / internal** | leading `_` | `_base_zoomout_search_img()` |
+
+- Avoid single-letter names except for trivial loop indices (e.g. `i`, `j`).
+- Prefer descriptive names; avoid abbreviations unless very common (e.g. `img`, `rect`, `cfg`).
+
+---
+
+## Before Adding New Code
+
+- **Check if equivalent logic already exists** (same module, other modules, or helpers). Reuse or extend it instead of duplicating.
+- **Search the codebase** for similar behavior (e.g. “find template”, “click at position”) before implementing from scratch.
+- Prefer **small, focused functions** that can be reused; avoid long inline blocks that do multiple unrelated things.
+
+---
+
+## Clean & Reusable Code
+
+- **DRY**: Do not repeat yourself; extract shared logic into functions or helpers.
+- **Single responsibility**: Each function/class should do one clear thing.
+- **Reusability**: Prefer parameters and config over hardcoded values so behavior can be reused.
+- **Readability**: Prefer clear control flow and named variables over clever one-liners.
+- **No premature optimization**: Write simple, correct code first; optimize only when needed and with evidence.
+
+---
+
+## Additional Rules
+
+- **Type hints**: Use type hints for function parameters and return values when they clarify intent or public APIs; not required for every trivial helper.
+- **Docstrings**: Add docstrings (in English) for public functions, classes, and non-obvious behavior.
+- **Error handling**: Prefer explicit handling and logging over bare `except`; avoid silencing errors without a clear reason.
+- **Imports**: Group and order imports (stdlib → third-party → local); avoid unused imports.
+- **Formatting**: Keep line length reasonable (e.g. ≤120 chars); break long lines for readability.

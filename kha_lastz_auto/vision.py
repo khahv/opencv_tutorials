@@ -184,10 +184,16 @@ class Vision:
 
         locs = list(zip(*np.where(result >= threshold)[::-1]))
         if not locs:
+            min_val, max_val, min_loc, max_loc = cv.minMaxLoc(result)
+            # CCOEFF_NORMED / CCOEFF: max la tot; SQDIFF: min la tot
+            best_val = max_val if self.method in (cv.TM_CCOEFF_NORMED, cv.TM_CCOEFF, cv.TM_CCORR_NORMED, cv.TM_CCORR) else min_val
+            best_loc = max_loc if self.method in (cv.TM_CCOEFF_NORMED, cv.TM_CCOEFF, cv.TM_CCORR_NORMED, cv.TM_CCORR) else min_loc
             if debug_log and is_color:
-                _log.debug("[vision:debug] [%s] Color Match Failed: best < %.2f", self.needle_name, threshold)
+                _log.debug("[vision:debug] [%s] Color Match Failed: best=%.3f (thresh %.2f) at (%d,%d)",
+                           self.needle_name, float(best_val), threshold, best_loc[0], best_loc[1])
             elif debug_log and not is_color:
-                _log.debug("[vision:debug] [%s] Gray Match Failed: best < %.2f", self.needle_name, threshold)
+                _log.debug("[vision:debug] [%s] Gray Match Failed: best=%.3f (thresh %.2f) at (%d,%d)",
+                           self.needle_name, float(best_val), threshold, best_loc[0], best_loc[1])
             return []
 
         if is_color and not multi:

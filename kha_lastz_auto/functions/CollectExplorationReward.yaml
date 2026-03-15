@@ -3,10 +3,24 @@ description: "Collect exploration reward: Headquarters -> ExplorationReward -> C
 
 steps:
 
+  # Dong UI popup: lap click (0.03, 0.08) cho den khi thay HQ hoac World
+  - event_type: close_ui
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
+    threshold: 0.6
+    debug_log: true
+
   # Zoom out ve world map truoc khi navigate
   - event_type: base_zoomout
     template: buttons_template/HeadquartersButton.png
-    threshold: 0.75
+    world_button: buttons_template/WorldButton.png
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
+    threshold: 0.6
     scroll_times: 5
     scroll_interval_sec: 0.1
 
@@ -29,21 +43,19 @@ steps:
     template: buttons_template/CollectButton.png
     threshold: 0.75
     one_shot: true
-    timeout_sec: 10
+    timeout_sec: 3
     run_always: true
 
   # Click corner to close any remaining dialog
   - event_type: sleep
     duration_sec: 2
 
-  - event_type: click_position
-    offset_x: 0.15
-    offset_y: 0.15
+  - event_type: close_ui
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
+    threshold: 0.6
+    debug_log: true
 
-    
-  - event_type: sleep
-    duration_sec: 2
-
-  - event_type: click_position
-    offset_x: 0.15
-    offset_y: 0.15

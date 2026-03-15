@@ -1,6 +1,17 @@
 # Function: CheckMail (ten = ten file)
 description: "Mo Mail -> Alliance -> Claim All -> System -> Claim All -> dong popup"
 steps:
+
+  # Dong UI popup: lap click (0.03, 0.08) cho den khi thay HQ hoac World
+  - event_type: close_ui
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
+    threshold: 0.6
+    debug_log: true
+
   - event_type: match_click
     template: buttons_template/Mail.png
     threshold: 0.7
@@ -23,15 +34,24 @@ steps:
     roi_center_y: 0.09
     roi_padding: 2.0
   - event_type: sleep
-    duration_sec: 0.5
+    duration_sec: 1
+
   - event_type: match_click
     template: buttons_template/ClaimAll.png
     threshold: 0.8
     one_shot: true
     debug_log: true
     timeout_sec: 5
+    
   - event_type: sleep
-    duration_sec: 0.5
+    duration_sec: 2
+
+  - event_type: click_position
+    x: 0.51 
+    y: 0.03
+
+
+
   - event_type: match_click
     template: buttons_template/SystemButton.png
     threshold: 0.8
@@ -41,21 +61,26 @@ steps:
     roi_padding: 2.0
     timeout_sec: 5
     debug_log: true
+
   - event_type: sleep
-    duration_sec: 0.5
+    duration_sec: 1
+
   - event_type: match_click
     template: buttons_template/ClaimAll.png
     threshold: 0.8
     one_shot: true
     timeout_sec: 5
     debug_log: true
+
   - event_type: sleep
     duration_sec: 2
-  - event_type: click_position
-    x: 0.03   # relative (0–1), giống search_roi
-    y: 0.08
-  - event_type: sleep
-    duration_sec: 2
-  - event_type: click_position
-    x: 0.03
-    y: 0.08
+  
+
+  - event_type: close_ui
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
+    threshold: 0.6
+    debug_log: true
