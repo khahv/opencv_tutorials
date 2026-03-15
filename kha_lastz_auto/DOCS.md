@@ -305,6 +305,28 @@ Zooms the map out to the world view: finds **Headquarters** or **World**, clicks
 
 ---
 
+### `world_zoomout` (special)
+Opposite of `base_zoomout`: zoom out when already on the **world map**. Requires both `template` and `world_button` (same as base_zoomout). "On world" = the given template (e.g. HeadquartersButton) is visible. Only scrolls when the template is found; otherwise retries until `timeout_sec` (then aborts the function).
+
+```yaml
+- event_type: world_zoomout
+  template: buttons_template/HeadquartersButton.png   # required; when visible = we're on world
+  world_button: buttons_template/WorldButton.png      # required (same as base_zoomout)
+  threshold: 0.75
+  scroll_times: 5
+  scroll_interval_sec: 0.1
+  timeout_sec: 15      # if template not found for this long, abort step (avoid infinite retry)
+  roi_center_x: 0.93   # optional: search only in this region
+  roi_center_y: 0.96
+  roi_padding: 2
+  debug_log: false
+  debug_save: false    # true = save ROI image when template not found
+```
+
+**Flow:** Search for `template` (e.g. HeadquartersButton) in the screenshot (in ROI if set). If found → scroll zoom out at center, advance step, return success. If not found but `world_button` (WorldButton) is found → we're on base; click WorldButton, sleep 2s, retry (next frame we're on world and can scroll). If neither found → retry; after `timeout_sec` seconds, abort the step (function stops).
+
+---
+
 ### `key_press`
 Press a keyboard key.
 

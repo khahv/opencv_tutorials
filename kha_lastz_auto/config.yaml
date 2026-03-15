@@ -50,6 +50,9 @@ functions:
   - name: ClickTreasureManual
     key: t
     enabled: true
+    
+  - name: CollectDailyReward
+    enabled: true
 
   - name: CollectZGoldFull
     enabled: true

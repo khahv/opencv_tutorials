@@ -2,14 +2,18 @@
 description: "Magnifier -> Boomer -> set level (OCR) -> Search -> Team Up -> March"
 steps:
   
-
   - event_type: close_ui
     template: buttons_template/HeadquartersButton.png
     world_button: buttons_template/WorldButton.png
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
     threshold: 0.75
 
+
+  # Now click MagnifierButton (visible after navigation)
   - event_type: match_click
-    template: buttons_template/EventCenter.png
+    template: buttons_template/DailyReward1.png
     threshold: 0.6
     one_shot: true
     timeout_sec: 2
@@ -18,29 +22,25 @@ steps:
     duration_sec: 1
 
   - event_type: match_click
-    template: buttons_template/FurylordIcon.png
+    template: buttons_template/DailyReward9.png
     threshold: 0.6
     one_shot: true
     timeout_sec: 2
 
-  # Drag all to the left
-  - event_type: drag
-    direction_x: 1
-    direction_y: 0
-    count: 1
+  - event_type: match_click
+    template: buttons_template/DailyReward2.png
+    threshold: 0.6
+    one_shot: true
+    timeout_sec: 2
+
+  - event_type: sleep
+    duration_sec: 3
     run_always: true
-    start_x: 0.25
-    start_y: 0.96
-    drag_distance_ratio: 0.7
 
-  - event_type: sleep
-    duration_sec: 1
-  
-  - event_type: match_click
-    template: buttons_template/FurylordIcon.png
-    threshold: 0.6
-    one_shot: true
-    timeout_sec: 2
+  - event_type: click_position
+    x: 0.49
+    y: 0.04
+    run_always: true
 
   - event_type: drag
     direction_x: -1
@@ -49,31 +49,25 @@ steps:
     run_always: true
     start_x: 0.25
     start_y: 0.96
-    drag_distance_ratio: 1.0
+    drag_distance_ratio: 0.7
+    run_always: true
 
+  - event_type: match_click
+    template: buttons_template/DailyReward3.png
+    threshold: 0.6
+    one_shot: true
+    timeout_sec: 2
+
+  - event_type: match_click
+    template: buttons_template/DailyReward4.png
+    threshold: 0.6
+    one_shot: true
+    timeout_sec: 2
+  
   - event_type: sleep
-    duration_sec: 1
-
-  - event_type: match_click
-    template: buttons_template/FurylordIcon.png
-    threshold: 0.6
-    one_shot: true
-    timeout_sec: 2
-
-
-  - event_type: match_click
-    template: buttons_template/FurylordGoButton.png
-    threshold: 0.6
-    one_shot: true
-    timeout_sec: 2
+    duration_sec: 3
+    run_always: true
     
-
-  - event_type: match_click
-    template: buttons_template/FurylordAttackIcon.png
-    threshold: 0.6
-    one_shot: true
-    timeout_sec: 2
-
   - event_type: close_ui
     template: buttons_template/HeadquartersButton.png
     world_button: buttons_template/WorldButton.png
@@ -82,4 +76,5 @@ steps:
     roi_padding: 2
     threshold: 0.6
     debug_log: true
+    run_always: true
 

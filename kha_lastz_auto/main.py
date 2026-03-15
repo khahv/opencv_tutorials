@@ -11,6 +11,32 @@ from datetime import datetime
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
+
+def _require_admin_win():
+    """If not running as admin on Windows, trigger UAC and re-launch elevated; then exit."""
+    if sys.platform != "win32":
+        return
+    try:
+        if ctypes.windll.shell32.IsUserAnAdmin() != 0:
+            return
+    except Exception:
+        pass
+    # Not admin: run self with "runas" to show UAC prompt
+    script = os.path.abspath(sys.argv[0])
+    quoted = '"' + script + '"' if " " in script else script
+    params = quoted + (" " + " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "")
+    ret = ctypes.windll.shell32.ShellExecuteW(
+        None, "runas", sys.executable, params, os.getcwd(), 1  # 1 = SW_SHOWNORMAL
+    )
+    if ret > 32:  # success
+        sys.exit(0)
+    # UAC cancelled or error: exit anyway so user sees no duplicate window
+    sys.exit(1)
+
+
+_require_admin_win()
+
+
 from dotenv import load_dotenv
 
 def _load_dotenv(path=".env"):
