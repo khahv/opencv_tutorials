@@ -44,12 +44,7 @@ steps:
   - event_type: sleep
     duration_sec: 10
 
-  # Click top-left corner to dismiss post-login banners/ads
-  - event_type: click_position
-    offset_x: 0.15
-    offset_y: 0.15
-
-  - event_type: click_position
-    offset_x: 0.05
-    offset_y: 0.05
-    run_always: true
+  - event_type: close_ui
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    threshold: 0.75

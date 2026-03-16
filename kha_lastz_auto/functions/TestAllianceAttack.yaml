@@ -10,3 +10,20 @@ steps:
     repeat_interval_sec: 300
   - event_type: sleep
     duration_sec: 3
+  
+  - event_type: match_click
+    template_array:
+      - buttons_template/AllianceBeingAttackedWarning1.png
+      - buttons_template/AllianceBeingAttackedWarning.png
+    threshold: 0.6
+    one_shot: true
+    timeout_sec: 3
+    debug_log: true
+
+  - event_type: sleep
+    duration_sec: 2
+
+  - event_type: close_ui
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    threshold: 0.75

@@ -23,6 +23,11 @@ class AttackDetector:
         self._attacked = False
         self._clear_since = None
 
+    def reset(self):
+        """Reset state so the next update re-evaluates from scratch (e.g. after Is Running toggled back ON)."""
+        self._attacked = False
+        self._clear_since = None
+
     def update(self, screenshot, log):
         """Call once per captured frame.
 

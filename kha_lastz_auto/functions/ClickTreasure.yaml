@@ -3,22 +3,36 @@
 description: "Treasure detected: send Zalo, then click lien tuc vao Treasure Helicopter"
 steps:
   - event_type: send_zalo
+    receiver_name: "Nhóm HLSE"
     message: "@All Có kho báo!"
     repeat_interval_sec: 60
 
   - event_type: match_click
-    template: buttons_template/Treasure1.png
+    template_array:
+      - buttons_template/Treasure1.png
+      - buttons_template/Treasure1-1.png
+      - buttons_template/Treasure1-2.png
+    threshold: 0.6
+    one_shot: true
+    timeout_sec: 10
+    debug_log: true
+    roi_center_x: 0.74
+    roi_center_y: 0.89
+    roi_padding: 2
+
+  
+  - event_type: sleep
+    duration_sec: 2
+
+  - event_type: match_click
+    template: buttons_template/Treasure2.png
     threshold: 0.6
     one_shot: true
     timeout_sec: 2
     debug_log: true
 
-  - event_type: match_click
-    template: buttons_template/Treasure4.png
-    threshold: 0.6
-    one_shot: true
-    timeout_sec: 2
-    debug_log: true
+  - event_type: sleep
+    duration_sec: 2
 
 
   - event_type: match_click
@@ -26,11 +40,12 @@ steps:
     threshold: 0.6
     run_always: true
     one_shot: false
-    timeout_sec: 60
+    timeout_sec: 5
     max_clicks: 3000
     click_offset_y: 0.1
     cache_position: true
-    click_storm_sec: 60         # detect once, storm for entire session (no detection gaps)
+    click_storm_sec: 300         # detect once, storm for entire session (no detection gaps)
+    position_refresh_interval: 1  # every 10s re-detect template on fresh screenshot and update click position
     click_storm_offset_x: 30   # ±30px random X offset per click
     click_storm_offset_y: 30   # ±30px random Y offset per click
     click_storm_corner:        # every N clicks, send 1 click to this position

@@ -5,7 +5,25 @@ description: "Being attacked: send Zalo alert, repeat every 300s while icon visi
 
 steps:
   - event_type: send_zalo
+    receiver_name: "Nhóm HLSE"
     message: "@All Ối dời ơi!, Kem Chua đang bị tấn công"
     repeat_interval_sec: 300
   - event_type: sleep
     duration_sec: 3
+
+  - event_type: match_click
+    template_array:
+      - buttons_template/BeingAttackedWarning.png
+      - buttons_template/BeingAttackedWarning1.png
+    threshold: 0.6
+    one_shot: true
+    timeout_sec: 3
+    debug_log: true
+
+  - event_type: sleep
+    duration_sec: 2
+
+  - event_type: close_ui
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    threshold: 0.75

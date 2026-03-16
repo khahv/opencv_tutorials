@@ -23,6 +23,12 @@ class LogoutDetector:
         self._seen_since = None    # when icon first appeared (confirming logout)
         self._clear_since = None   # when icon first disappeared (confirming login)
 
+    def reset(self):
+        """Reset state so the next update re-evaluates from scratch (e.g. after Is Running toggled back ON)."""
+        self._logged_out = False
+        self._seen_since = None
+        self._clear_since = None
+
     def update(self, screenshot, log):
         """Call once per captured frame.
 

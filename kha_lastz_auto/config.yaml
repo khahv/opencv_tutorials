@@ -11,7 +11,7 @@ window_height: 960
 show_preview: false   # hien thi cua so debug screenshot (true = bat, false = tat)
 auto_focus: false     # tự động chiếm quyền focus khi click (mặc định tắt)
 
-# Function list: key, cron, enabled
+# Function list: key, cron, enabled, cooldown (seconds; for trigger-based functions, skip re-trigger within cooldown)
 # https://crontab.guru/ for cron syntax
 # Functions run in FIFO order: whoever triggers first runs first.
 # If a function triggers while another is running, it is queued and runs after.
@@ -20,6 +20,7 @@ functions:
     trigger: logged_out
     enabled: true
     key: l
+    cooldown: 50
 
   - name: BeingAttacked
     trigger: attacked
@@ -46,11 +47,18 @@ functions:
     trigger: treasure_detected
     key: y
     enabled: true
+    cooldown: 60
 
   - name: ClickTreasureManual
     key: t
     enabled: true
-    
+  
+  - name: DoRadarTask
+    enabled: true
+
+  - name: CollectDailyShopReward
+    enabled: true
+  
   - name: CollectDailyReward
     enabled: true
 

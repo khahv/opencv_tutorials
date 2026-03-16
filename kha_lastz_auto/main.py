@@ -2,6 +2,7 @@ import os
 import sys
 import ctypes
 import signal
+import subprocess
 import time
 import queue
 import threading
@@ -113,6 +114,7 @@ def _do_heavy_imports():
         import config_manager
         from logout_detector import LogoutDetector
         from alliance_attack_detector import AllianceAttackDetector
+        from connection_detector import ConnectionDetector
         main_mod = sys.modules.get("__main__")
         if main_mod:
             main_mod.cv = cv
@@ -132,6 +134,7 @@ def _do_heavy_imports():
             main_mod.config_manager = config_manager
             main_mod.LogoutDetector = LogoutDetector
             main_mod.AllianceAttackDetector = AllianceAttackDetector
+            main_mod.ConnectionDetector = ConnectionDetector
         pyautogui.PAUSE = 0
         pyautogui.FAILSAFE = True
     except Exception as e:
@@ -181,6 +184,9 @@ if "auto_focus" in general_settings_ov:
 _win_w = general_settings_ov.get("window_width") or config.get("window_width")
 _win_h = general_settings_ov.get("window_height") or config.get("window_height")
 
+# LastZ executable path (startup auto-launch and connection_detector restart)
+LASTZ_EXE_PATH = config.get("lastz_exe_path") or r"C:\Users\hongkhavo\AppData\Local\Last Z\Last Z.exe"
+
 key_bindings      = {}   # key_char -> fn_name
 fn_enabled        = {}   # fn_name  -> bool
 schedules         = []   # [{ "function": ..., "cron": ... }]
@@ -211,6 +217,15 @@ for fc in fn_configs:
     if trigger == "alliance_attacked" and enabled:
         alliance_attacked_triggers.append(name)
 
+# Per-function cooldown (seconds) for detector triggers; only re-trigger after cooldown has passed.
+trigger_cooldown_sec = {}
+for fc in fn_configs:
+    if fc.get("name") and "cooldown" in fc:
+        try:
+            trigger_cooldown_sec[fc["name"]] = float(fc["cooldown"])
+        except (TypeError, ValueError):
+            pass
+
 functions    = load_functions("functions")
 templates    = collect_templates(functions)
 vision_cache = build_vision_cache(templates)
@@ -223,22 +238,59 @@ def _create_wincap():
         _wincap_result.append(WindowCapture("LastZ"))
     except Exception as e:
         log.error("WindowCapture failed: {}".format(e))
+        # Window not found: try to start LastZ and wait for it to appear
+        if os.path.isfile(LASTZ_EXE_PATH):
+            log.info("Starting LastZ: %s", LASTZ_EXE_PATH)
+            try:
+                subprocess.Popen(
+                    [LASTZ_EXE_PATH],
+                    cwd=os.path.dirname(LASTZ_EXE_PATH),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception as start_err:
+                log.error("Failed to start LastZ: %s", start_err)
+            else:
+                _wait_sec = 60
+                _interval_sec = 2
+                for _ in range(_wait_sec // _interval_sec):
+                    time.sleep(_interval_sec)
+                    try:
+                        _wincap_result.append(WindowCapture("LastZ"))
+                        log.info("LastZ window found after auto-start.")
+                        break
+                    except Exception:
+                        pass
+                else:
+                    log.error("LastZ window did not appear within %ds.", _wait_sec)
+        else:
+            log.error("LastZ exe not found: %s", LASTZ_EXE_PATH)
     finally:
         _wincap_done.set()
 log.info("Connecting to game window 'LastZ'...")
 sys.stdout.flush()
 threading.Thread(target=_create_wincap, daemon=True).start()
 try:
-    if not _wincap_done.wait(timeout=15):
-        log.error("Window 'LastZ' not found or timeout (15s). Open the game window and restart.")
+    if not _wincap_done.wait(timeout=90):
+        log.error("Window 'LastZ' not found or timeout (90s). Open the game or check lastz_exe_path.")
         sys.exit(1)
 except KeyboardInterrupt:
     log.info("Interrupted by user.")
     sys.exit(130)
 if not _wincap_result:
-    log.error("WindowCapture failed. Check that 'LastZ' window exists.")
+    log.error("WindowCapture failed. Check that 'LastZ' window exists or lastz_exe_path in config.")
     sys.exit(1)
 wincap = _wincap_result[0]
+
+# Track LastZ process PID for connection_detector (kill/restart on disconnect)
+lastz_pid = {"pid": None}
+try:
+    import win32process
+    _, _pid = win32process.GetWindowThreadProcessId(wincap.hwnd)
+    lastz_pid["pid"] = _pid
+    log.info("LastZ process PID: %s", _pid)
+except Exception as e:
+    log.warning("Could not get LastZ process PID: %s", e)
 
 _ref_w = config.get("reference_width")   # template capture resolution → vision scale
 _ref_h = config.get("reference_height")
@@ -329,6 +381,7 @@ for item in schedules:
 # ── FIFO queue (functions waiting to run) ─────────────────────────────────────
 # Each item: (fn_name, trigger_event, trigger_active_cb) so dequeued trigger-based functions keep repeat (e.g. send_zalo).
 pending_queue = []   # list of (fn_name, trigger_event, trigger_active_cb)
+last_triggered_at = {}   # fn_name -> time.time() when last triggered by a detector (for cooldown)
 
 def _queue_add(fn_name, reason="cron", trigger_event=None, trigger_active_cb=None):
     """Add fn_name to pending_queue if not already queued. Store trigger_* so send_zalo repeat works when dequeued."""
@@ -378,6 +431,16 @@ def _process_queue():
         runner.start(fn_name, wincap, trigger_event=trigger_event, trigger_active_cb=trigger_active_cb)
         return
 
+def _trigger_cooldown_ok(fn_name):
+    """Return True if fn_name is not in cooldown (or has no cooldown), so we may trigger it."""
+    cooldown = trigger_cooldown_sec.get(fn_name, 0)
+    if cooldown <= 0:
+        return True
+    last = last_triggered_at.get(fn_name)
+    if last is None:
+        return True
+    return (time.time() - last) >= cooldown
+
 def _start_urgent(fn_name, trigger="logged_out"):
     """Stop whatever is running (re-queue it at the front), then start fn_name immediately.
 
@@ -402,6 +465,7 @@ def _start_urgent(fn_name, trigger="logged_out"):
                 interrupted, fn_name, trigger))
 
     log.info("[Scheduler] {} starting urgently [{}]".format(fn_name, trigger))
+    last_triggered_at[fn_name] = time.time()
     runner.start(fn_name, wincap)
 
 # ── Startup log ───────────────────────────────────────────────────────────────
@@ -624,8 +688,12 @@ alliance_attack_detector = AllianceAttackDetector(
 
 treasure_detector = TreasureDetector(
     treasure_template_path="buttons_template/Treasure1.png",
-    threshold=0.5,
+    threshold=0.65,
     clear_sec=10.0,
+    re_trigger_interval_sec=60.0,  # emit "started" again while visible; per-function cooldown in config throttles actual runs
+    roi_center_x=0.74,
+    roi_center_y=0.89,
+    roi_padding=2,
 )
 
 # Callbacks for trigger-based functions: send_zalo with repeat_interval_sec uses these to repeat while detector still active.
@@ -650,17 +718,30 @@ exit_banner_detector = ExitBannerDetector(
     check_every=5,   # 5 × 2s = 10s
 )
 
+connection_detector = ConnectionDetector(
+    buff_icon_template_path="buttons_template/BuffIcon.png",
+    world_zoomout_template_path="buttons_template/HeadquartersButton.png",
+    world_zoomout_button_path="buttons_template/WorldButton.png",
+    lastz_exe_path=LASTZ_EXE_PATH,
+    lastz_pid_ref=lastz_pid,
+    lastz_window_name="LastZ",
+    interval_sec=300.0,   # 5 minutes
+    buff_icon_threshold=0.75,
+)
+
 # ── Detector background thread ─────────────────────────────────────────────────
 # Detectors run matchTemplate (~0.3s each × 3 = ~0.9s total). Running them on the
 # main thread blocks clicking. Instead, run them in a background thread every 2s
 # and post events to a queue for the main loop to handle.
 _detector_event_queue = queue.Queue()
 _DETECTOR_INTERVAL = 5.0  # background detectors check every 2s
+_last_detector_screenshot_fail_log = 0.0  # throttle "screenshot failed" log
 
 def _detector_loop():
     import mss as _mss_lib
     import win32gui as _win32gui
     import numpy as _np
+    global _last_detector_screenshot_fail_log
     _mss_inst = _mss_lib.mss()
     log.info("[Detector] Background thread started (interval={}s)".format(_DETECTOR_INTERVAL))
     _tick = 0
@@ -684,7 +765,15 @@ def _detector_loop():
             img = _np.array(raw)[..., :3]
             img = _np.ascontiguousarray(img)
         except Exception as e:
-            log.warning("[Detector] #{} screenshot failed: {}".format(_tick, e))
+            _now = time.time()
+            if _now - _last_detector_screenshot_fail_log >= 15.0:
+                log.warning("[Detector] #{} screenshot failed: {} (run connection_detector to recover)".format(_tick, e))
+                _last_detector_screenshot_fail_log = _now
+            # Still run connection_detector so it can check process and restart LastZ if needed
+            try:
+                connection_detector.update(wincap, vision_cache, log, current_screenshot=None)
+            except Exception as conn_e:
+                log.error("[Detector] connection_detector on screenshot fail: {}".format(conn_e))
             continue
 
         # ── Attack detector ─────────────────────────────
@@ -716,11 +805,22 @@ def _detector_loop():
 
 
         # ── Treasure detector ───────────────────────────
+        # Do not trigger treasure when on login screen (PasswordSlot visible) — avoids false positives.
         try:
             treasure_event = treasure_detector.update(img, log)
             if treasure_event == "started":
-                log.info("[Detector] #{} → treasure_detected, triggers={}".format(_tick, treasure_detected_triggers))
-                _detector_event_queue.put(("treasure_detected", list(treasure_detected_triggers)))
+                _password_visible = False
+                try:
+                    _v = vision_cache.get("buttons_template/PasswordSlot.png")
+                    if _v:
+                        _password_visible = _v.exists(img, threshold=0.75)
+                except Exception:
+                    pass
+                if _password_visible:
+                    log.info("[Detector] #{} → treasure_detected suppressed (on login screen)".format(_tick))
+                else:
+                    log.info("[Detector] #{} → treasure_detected, triggers={}".format(_tick, treasure_detected_triggers))
+                    _detector_event_queue.put(("treasure_detected", list(treasure_detected_triggers)))
         except Exception as e:
             log.error("[Detector] #{} treasure_detector crashed: {}".format(_tick, e))
 
@@ -733,6 +833,12 @@ def _detector_loop():
                 log.info("[Detector] #{} → ExitGameBanner detected, clicked corner ({}, {})".format(_tick, sx, sy))
         except Exception as e:
             log.error("[Detector] #{} exit_banner_detector crashed: {}".format(_tick, e))
+
+        # ── Connection detector (every 5 min when Is Running: world_zoomout → click middle → BuffIcon; kill+restart if disconnected) ──
+        try:
+            connection_detector.update(wincap, vision_cache, log, current_screenshot=img)
+        except Exception as e:
+            log.error("[Detector] #{} connection_detector crashed: {}".format(_tick, e))
     log.info("[Detector] Background thread exited")
 
 _detector_thread = threading.Thread(target=_detector_loop, daemon=True)
@@ -741,12 +847,14 @@ _detector_thread.start()
 # ── Game loop (background thread; Tkinter runs on main thread to avoid startup hang) ──
 _CAPTURE_INTERVAL = 0.1   # 10 FPS cap
 _last_capture_time = 0.0
+_last_invalid_handle_log = 0.0   # throttle "Invalid window handle" log to at most once per 15s
 last_stopped_key = None
 detector_lock = threading.Lock()
 _last_detector_restart = 0
+_was_paused_prev = True   # so on first run we don't reset; reset logout_detector when resuming from pause
 
 def _game_loop():
-    global _last_detector_restart, _detector_thread, running, _last_capture_time, last_stopped_key, _show_preview
+    global _last_detector_restart, _detector_thread, running, _last_capture_time, _last_invalid_handle_log, last_stopped_key, _show_preview, _was_paused_prev
     now = time.time()
     while running and not exit_requested:
         if exit_requested:
@@ -785,6 +893,7 @@ def _game_loop():
             break
 
         if bot_paused["paused"]:
+            _was_paused_prev = True
             # Drain detector queue so we don't process stale events on resume
             try:
                 while True:
@@ -793,6 +902,17 @@ def _game_loop():
                 pass
             _safe_waitkey(1)
             continue
+
+        # Just resumed from pause: reset all detectors so they re-evaluate and can trigger again
+        if _was_paused_prev:
+            _was_paused_prev = False
+            logout_detector.reset()
+            attack_detector.reset()
+            alliance_attack_detector.reset()
+            treasure_detector.reset()
+            exit_banner_detector.reset()
+            connection_detector.reset()
+            log.info("[Detector] Resumed: all detectors reset, will re-check (logged_out, attacked, treasure, etc.).")
 
         now = time.time()
         for fn_name, next_ts in list(next_run_at.items()):
@@ -811,10 +931,30 @@ def _game_loop():
             _safe_waitkey(1)
             continue
         _last_capture_time = _now
-        update_vision_scale()
+        try:
+            update_vision_scale()
+        except Exception as _e:
+            if getattr(_e, "winerror", None) == 1400:
+                _t = time.time()
+                if _t - _last_invalid_handle_log >= 15.0:
+                    log.warning("[GameLoop] Invalid window handle, skipping (window may be restarting)")
+                    _last_invalid_handle_log = _t
+                _safe_waitkey(100)
+                continue
+            raise
 
-        # Get screenshot and update runner
-        screenshot = wincap.get_screenshot()
+        # Get screenshot and update runner (invalid handle possible if connection_detector just killed LastZ)
+        try:
+            screenshot = wincap.get_screenshot()
+        except Exception as _e:
+            if getattr(_e, "winerror", None) == 1400:
+                _t = time.time()
+                if _t - _last_invalid_handle_log >= 15.0:
+                    log.warning("[GameLoop] Invalid window handle, skipping (window may be restarting)")
+                    _last_invalid_handle_log = _t
+                _safe_waitkey(100)
+                continue
+            raise
         if screenshot is None:
             continue
 
@@ -822,19 +962,35 @@ def _game_loop():
         try:
             while True:
                 event_type, triggers = _detector_event_queue.get_nowait()
+                _now = time.time()
                 if event_type == "logged_out":
                     for fn_name in triggers:
+                        if not _trigger_cooldown_ok(fn_name):
+                            log.info("[Scheduler] {} skipped (cooldown) [logged_out]".format(fn_name))
+                            continue
                         _start_urgent(fn_name, trigger="logged_out")
                 elif event_type == "attacked":
                     for fn_name in triggers:
+                        if not _trigger_cooldown_ok(fn_name):
+                            log.info("[Scheduler] {} skipped (cooldown) [attacked]".format(fn_name))
+                            continue
+                        last_triggered_at[fn_name] = _now
                         _try_start(fn_name, trigger="attacked", trigger_event="attacked",
                                    trigger_active_cb=trigger_active_callbacks.get("attacked"))
                 elif event_type == "alliance_attacked":
                     for fn_name in triggers:
+                        if not _trigger_cooldown_ok(fn_name):
+                            log.info("[Scheduler] {} skipped (cooldown) [alliance_attacked]".format(fn_name))
+                            continue
+                        last_triggered_at[fn_name] = _now
                         _try_start(fn_name, trigger="alliance_attacked", trigger_event="alliance_attacked",
                                    trigger_active_cb=trigger_active_callbacks.get("alliance_attacked"))
                 elif event_type == "treasure_detected":
                     for fn_name in triggers:
+                        if not _trigger_cooldown_ok(fn_name):
+                            log.info("[Scheduler] {} skipped (cooldown) [treasure_detected]".format(fn_name))
+                            continue
+                        last_triggered_at[fn_name] = _now
                         _try_start(fn_name, trigger="treasure_detected", trigger_event="treasure_detected",
                                    trigger_active_cb=trigger_active_callbacks.get("treasure_detected"))
         except queue.Empty:

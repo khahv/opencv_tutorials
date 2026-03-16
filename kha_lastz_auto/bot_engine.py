@@ -13,6 +13,7 @@ import yaml
 import pyautogui
 import cv2 as cv
 from vision import Vision, get_global_scale
+from zoom_helpers import do_world_zoomout, do_base_zoomout, _roi_crop
 from pynput.mouse import Button, Controller
 from fast_clicker import FastClicker
 from ocr_utils import (
@@ -302,6 +303,11 @@ class FunctionRunner:
 
     def stop(self):
         self._fast_clicker.stop()
+        try:
+            import ctypes
+            ctypes.windll.user32.BlockInput(False)
+        except Exception:
+            pass
         self.state = "idle"
         self.function_name = None
 
@@ -310,6 +316,11 @@ class FunctionRunner:
         if self.state != "running" or screenshot is None or self.step_index >= len(self.steps):
             if self.state == "running" and self.step_index >= len(self.steps):
                 self._fast_clicker.stop()
+                try:
+                    import ctypes
+                    ctypes.windll.user32.BlockInput(False)
+                except Exception:
+                    pass
                 self.state = "idle"
                 suffix = "" if self.last_step_result else " (aborted)"
                 log.info("[Runner] Finished function: {}{}".format(self.function_name, suffix))
@@ -405,6 +416,7 @@ class FunctionRunner:
             else:
                 click_storm_corner = None
             click_storm_corner_every = int((_corner_cfg or {}).get("every", 1000))
+            position_refresh_interval = float(step.get("position_refresh_interval") or 0)  # sec; re-detect center and restart storm
 
             vision = self._get_vision(template)
             if not vision:
@@ -758,8 +770,15 @@ class FunctionRunner:
                 # No screenshot is taken while the clicker is running — zero overhead.
                 if click_storm_sec > 0 and not one_shot:
                     if not self._fast_clicker.is_running:
-                        # First time: start the clicker at detected position
+                        # First time: block user input then start the clicker at detected position
+                        try:
+                            import ctypes
+                            if ctypes.windll.user32.BlockInput(True):
+                                log.info("[Runner] {} → storm: BlockInput(True) (blocking user mouse/kb)".format(self._step_label(step)))
+                        except Exception as e:
+                            log.warning("[Runner] storm BlockInput(True) failed: {}".format(e))
                         self._storm_start_t = time.time()
+                        self._storm_position_refresh_t = time.time()
                         self._fast_clicker.start(sx, sy,
                             rate=click_storm_max_rate or 0,
                             offset_x=click_storm_offset_x,
@@ -769,11 +788,31 @@ class FunctionRunner:
                         log.info("[Runner] {} → storm started at ({},{}) rate={}".format(
                             self._step_label(step), sx, sy, click_storm_max_rate or "unlimited"))
                     else:
+                        # position_refresh_interval: re-use current frame's screenshot + match to update click position
+                        if position_refresh_interval > 0 and points:
+                            _refresh_elapsed = time.time() - getattr(self, '_storm_position_refresh_t', 0)
+                            if _refresh_elapsed >= position_refresh_interval:
+                                self._fast_clicker.stop()
+                                self._fast_clicker.start(sx, sy,
+                                    rate=click_storm_max_rate or 0,
+                                    offset_x=click_storm_offset_x,
+                                    offset_y=click_storm_offset_y,
+                                    corner_pos=click_storm_corner,
+                                    corner_every=click_storm_corner_every)
+                                self._storm_position_refresh_t = time.time()
+                                log.info("[Runner] {} → position refresh at ({},{}) (interval {:.1f}s)".format(
+                                    self._step_label(step), sx, sy, position_refresh_interval))
                         # Clicker already running: check elapsed time and click count
                         _n = self._fast_clicker.click_count
                         _elapsed = max(0.001, time.time() - getattr(self, '_storm_start_t', time.time()))
                         if _n >= max_clicks or _elapsed >= click_storm_sec:
                             self._fast_clicker.stop()
+                            try:
+                                import ctypes
+                                ctypes.windll.user32.BlockInput(False)
+                                log.info("[Runner] {} → storm ended: BlockInput(False)".format(self._step_label(step)))
+                            except Exception as e:
+                                log.warning("[Runner] storm BlockInput(False) failed: {}".format(e))
                             self.step_click_count += _n
                             _rate = round(_n / _elapsed, 0)
                             log.info("[Runner] {} | storm={} clicks in {:.1f}s (~{:.0f}/s)".format(
@@ -842,12 +881,22 @@ class FunctionRunner:
                     _click_density_str = " density={:.3f}".format(_click_density) if _click_density is not None else ""
                     log.info("[Runner] {} → true (clicked position ({},{}){})"  .format(
                         self._step_label(step), _click_truck_pt[0], _click_truck_pt[1], _click_density_str))
-                    self._advance_step(True, step=step)
+                    on_success_goto = step.get("on_success_goto")
+                    if on_success_goto is not None:
+                        log.info("[Runner] {} → success, goto step {}".format(self._step_label(step), on_success_goto))
+                        self._goto_step(int(on_success_goto))
+                    else:
+                        self._advance_step(True, step=step)
                     return "running"
                 log.info("[Runner] {} clicking... (count {})".format(self._step_label(step), self.step_click_count))
                 if self.step_click_count >= max_clicks:
                     log.info("[Runner] {} → true (clicked {})".format(self._step_label(step), self.step_click_count))
-                    self._advance_step(True, step=step)
+                    on_success_goto = step.get("on_success_goto")
+                    if on_success_goto is not None:
+                        log.info("[Runner] {} → success, goto step {}".format(self._step_label(step), on_success_goto))
+                        self._goto_step(int(on_success_goto))
+                    else:
+                        self._advance_step(True, step=step)
                     return "running"
             if now - self.step_start_time >= timeout_sec:
                 log.info("[Runner] {} → false (not found in {}s)".format(self._step_label(step), timeout_sec))
@@ -1390,252 +1439,34 @@ class FunctionRunner:
             return "running"
 
         if step_type == "base_zoomout":
-            # Requires both template (HeadquartersButton) and world_button; no fallback.
-            template     = step.get("template")
+            template = step.get("template")
             world_button = step.get("world_button")
             if not template or not world_button:
                 log.error("[Runner] base_zoomout requires both 'template' and 'world_button'. Got template=%s, world_button=%s",
                           template, world_button)
                 self._advance_step(False)
                 return "running"
-            threshold       = step.get("threshold", 0.75)
-            scroll_times    = step.get("scroll_times", 5)
-            scroll_interval = step.get("scroll_interval_sec", 0.1)
-            timeout_sec     = step.get("timeout_sec", 5)
-            debug_save      = step.get("debug_save", False)
-            debug_log       = step.get("debug_log", False)
-            match_color     = step.get("match_color", False)
-            color_tol       = step.get("color_match_tolerance")
-
-            def _do_zoomout_scroll():
-                if hasattr(wincap, "focus_window"):
-                    wincap.focus_window(force=True)
-                    time.sleep(0.05)
-                cx = wincap.offset_x + wincap.w // 2
-                cy = wincap.offset_y + wincap.h // 2
-                pyautogui.moveTo(cx, cy)
-                time.sleep(0.05)
-                for i in range(scroll_times):
-                    pyautogui.scroll(-3)
-                    time.sleep(scroll_interval)
-                log.info("[Runner] base_zoomout scrolled x{} at center ({}, {})".format(scroll_times, cx, cy))
-
-            vision = self.vision_cache.get(template) if template else None
-            vision_world = self.vision_cache.get(world_button) if world_button else None
-            dbg_mode = "info" if debug_log else None
-
-            # ROI: neu step co roi_center_x, roi_center_y (va roi_padding) thi chi tim HQ/World trong vung do
-            _roi_offset = (0, 0)
-            _roi_bounds = None
-            _roi_cx = step.get("roi_center_x")
-            _roi_cy = step.get("roi_center_y")
-            if _roi_cx is not None and _roi_cy is not None and vision:
-                _sh, _sw = screenshot.shape[:2]
-                _scale = get_global_scale()
-                _nw_px = max(1, int(vision.needle_w * _scale))
-                _nh_px = max(1, int(vision.needle_h * _scale))
-                _padding = float(step.get("roi_padding", 3.0))
-                _cx_px = int(_roi_cx * _sw)
-                _cy_px = int(_roi_cy * _sh)
-                _half_w = int(_nw_px * _padding)
-                _half_h = int(_nh_px * _padding)
-                _rx = max(0, _cx_px - _half_w)
-                _ry = max(0, _cy_px - _half_h)
-                _rx2 = min(_sw, _cx_px + _half_w)
-                _ry2 = min(_sh, _cy_px + _half_h)
-                _roi_offset = (_rx, _ry)
-                _roi_bounds = (_rx, _ry, _rx2, _ry2)
-                if debug_log:
-                    log.info("[Runner] base_zoomout ROI: center=({:.2f},{:.2f}) crop=({},{})->({},{})".format(
-                        _roi_cx, _roi_cy, _rx, _ry, _rx2, _ry2))
-
-            def _base_zoomout_search_img(img):
-                if _roi_bounds is None:
-                    return img
-                rx, ry, rx2, ry2 = _roi_bounds
-                return img[ry:ry2, rx:rx2]
-
-            def _base_zoomout_shift_points(pts):
-                if not pts or _roi_offset == (0, 0):
-                    return pts
-                ox, oy = _roi_offset
-                return [((p[0] + ox, p[1] + oy) + tuple(p[2:]) if len(p) > 2 else (p[0] + ox, p[1] + oy)) for p in pts]
-
-            def _save_roi_debug(img_roi, tpl_name_suffix):
-                if not debug_save or img_roi is None or img_roi.size == 0:
-                    return
-                try:
-                    os.makedirs("debug", exist_ok=True)
-                    ts_str = time.strftime("%Y%m%d_%H%M%S")
-                    path = os.path.join("debug", "base_zoomout_{}_{}_roi_not_found.png".format(tpl_name_suffix, ts_str))
-                    cv.imwrite(path, img_roi)
-                    log.info("[Runner] base_zoomout debug_save: ROI saved → {}".format(path))
-                except Exception as e:
-                    log.info("[Runner] base_zoomout debug_save ROI failed: {}".format(e))
-
-            # (1) Thay HQ -> click HQ -> sau do kiem tra World / HQ tren man hinh moi
-            clicked_hq = False
-            if vision:
-                search_img = _base_zoomout_search_img(screenshot)
-                points = vision.find(
-                    search_img,
-                    threshold=threshold,
-                    debug_mode=dbg_mode,
-                    debug_log=debug_log,
-                    is_color=bool(match_color),
-                    color_tolerance=color_tol,
-                )
-                points = _base_zoomout_shift_points(points if points else [])
-                if not points:
-                    tpl_name = os.path.splitext(os.path.basename(template))[0] if template else "template"
-                    _save_roi_debug(search_img, tpl_name)
-                if points:
-                    if debug_save:
-                        try:
-                            os.makedirs("debug", exist_ok=True)
-                            ts_str = time.strftime("%Y%m%d_%H%M%S")
-                            tpl_name = os.path.splitext(os.path.basename(template))[0] if template else "template"
-                            shot_path = os.path.join("debug", f"base_zoomout_{tpl_name}_{ts_str}_screenshot.png")
-                            cv.imwrite(shot_path, screenshot)
-                            cx0, cy0 = int(points[0][0]), int(points[0][1])
-                            mw = getattr(vision, "needle_w", 80)
-                            mh = getattr(vision, "needle_h", 80)
-                            x0 = max(0, cx0 - mw)
-                            y0 = max(0, cy0 - mh)
-                            x1 = min(screenshot.shape[1], cx0 + mw)
-                            y1 = min(screenshot.shape[0], cy0 + mh)
-                            crop = screenshot[y0:y1, x0:x1]
-                            crop_path = os.path.join("debug", f"base_zoomout_{tpl_name}_{ts_str}_crop.png")
-                            if crop.size > 0:
-                                cv.imwrite(crop_path, crop)
-                            log.info("[Runner] base_zoomout debug saved: {} | {}".format(shot_path, crop_path))
-                        except Exception as e:
-                            log.info("[Runner] base_zoomout debug save failed: {}".format(e))
-                    sx, sy = wincap.get_screen_position((points[0][0], points[0][1]))
-                    pyautogui.click(sx, sy)
-                    time.sleep(2)
-                    clicked_hq = True
-                elif debug_save:
-                    try:
-                        os.makedirs("debug", exist_ok=True)
-                        ts_str = time.strftime("%Y%m%d_%H%M%S")
-                        tpl_name = os.path.splitext(os.path.basename(template))[0] if template else "template"
-                        shot_path = os.path.join("debug", f"base_zoomout_{tpl_name}_{ts_str}_not_found.png")
-                        cv.imwrite(shot_path, screenshot)
-                        log.info("[Runner] base_zoomout debug saved (not found): {}".format(shot_path))
-                    except Exception as e:
-                        log.info("[Runner] base_zoomout debug save failed: {}".format(e))
-
-            # Only scroll (zoom out) when WorldButton is visible = we are on base view.
-            # If only HQ visible (or neither), keep clicking HQ/World and retry until World appears.
-            if clicked_hq:
-                screenshot2 = wincap.get_screenshot() if hasattr(wincap, "get_screenshot") else None
-                if screenshot2 is not None and vision_world:
-                    search_img2 = _base_zoomout_search_img(screenshot2)
-                    points_w2 = vision_world.find(
-                        search_img2,
-                        threshold=threshold,
-                        debug_mode=dbg_mode,
-                        debug_log=debug_log,
-                        is_color=bool(match_color),
-                        color_tolerance=color_tol,
-                    )
-                    points_w2 = _base_zoomout_shift_points(points_w2 if points_w2 else [])
-                    if not points_w2:
-                        wb_name = os.path.splitext(os.path.basename(world_button))[0] if world_button else "WorldButton"
-                        _save_roi_debug(search_img2, wb_name)
-                    if points_w2:
-                        _do_zoomout_scroll()
-                        log.info("[Runner] {} → true (clicked HQ, saw World → scroll)".format(self._step_label(step)))
-                        self._advance_step(True)
-                        return "running"
-                if screenshot2 is not None and vision:
-                    points_hq2 = vision.find(
-                        _base_zoomout_search_img(screenshot2),
-                        threshold=threshold,
-                        debug_mode=dbg_mode,
-                        debug_log=debug_log,
-                        is_color=bool(match_color),
-                        color_tolerance=color_tol,
-                    )
-                    points_hq2 = _base_zoomout_shift_points(points_hq2 if points_hq2 else [])
-                    if points_hq2:
-                        sx2, sy2 = wincap.get_screen_position((points_hq2[0][0], points_hq2[0][1]))
-                        pyautogui.click(sx2, sy2)
-                        time.sleep(2)
-                        screenshot2 = wincap.get_screenshot() if hasattr(wincap, "get_screenshot") else screenshot2
-                        if screenshot2 is not None and vision_world:
-                            search_img2 = _base_zoomout_search_img(screenshot2)
-                            points_w2 = vision_world.find(
-                                search_img2,
-                                threshold=threshold,
-                                debug_mode=dbg_mode,
-                                debug_log=debug_log,
-                                is_color=bool(match_color),
-                                color_tolerance=color_tol,
-                            )
-                            points_w2 = _base_zoomout_shift_points(points_w2 if points_w2 else [])
-                            if points_w2:
-                                _do_zoomout_scroll()
-                                log.info("[Runner] {} → true (clicked HQ again, saw World → scroll)".format(self._step_label(step)))
-                                self._advance_step(True)
-                                return "running"
-                        log.info("[Runner] base_zoomout: saw HQ again (no World) → click HQ, retry")
-                        return "running"
-                log.info("[Runner] base_zoomout: after click HQ, no World/HQ → retry")
-                return "running"
-
-            # (2) World visible from start: click World → sleep 2 → click HQ → sleep 2 (return to base, reset center), then scroll.
-            if vision_world:
-                search_img_w = _base_zoomout_search_img(screenshot)
-                points_w = vision_world.find(
-                    search_img_w,
-                    threshold=threshold,
-                    debug_mode=dbg_mode,
-                    debug_log=debug_log,
-                    is_color=bool(match_color),
-                    color_tolerance=color_tol,
-                )
-                points_w = _base_zoomout_shift_points(points_w if points_w else [])
-                if not points_w:
-                    wb_name = os.path.splitext(os.path.basename(world_button))[0] if world_button else "WorldButton"
-                    _save_roi_debug(search_img_w, wb_name)
-                if points_w:
-                    if hasattr(wincap, "focus_window"):
-                        wincap.focus_window(force=True)
-                        time.sleep(0.05)
-                    sx_w, sy_w = wincap.get_screen_position((points_w[0][0], points_w[0][1]))
-                    pyautogui.click(sx_w, sy_w)
-                    time.sleep(2)
-                    screenshot_after_w = wincap.get_screenshot() if hasattr(wincap, "get_screenshot") else None
-                    if screenshot_after_w is not None and vision:
-                        search_hq = _base_zoomout_search_img(screenshot_after_w)
-                        points_hq = vision.find(
-                            search_hq,
-                            threshold=threshold,
-                            debug_mode=dbg_mode,
-                            debug_log=debug_log,
-                            is_color=bool(match_color),
-                            color_tolerance=color_tol,
-                        )
-                        points_hq = _base_zoomout_shift_points(points_hq if points_hq else [])
-                        if points_hq:
-                            sx_hq, sy_hq = wincap.get_screen_position((points_hq[0][0], points_hq[0][1]))
-                            pyautogui.click(sx_hq, sy_hq)
-                            time.sleep(2)
-                            screenshot_after_w = wincap.get_screenshot() if hasattr(wincap, "get_screenshot") else screenshot_after_w
-                    _do_zoomout_scroll()
-                    log.info("[Runner] {} → true (saw World first → click World, HQ, then scroll)".format(self._step_label(step)))
-                    self._advance_step(True)
-                    return "running"
-                # World template configured but not found: fall through to (3).
-
-            # (3) Neither HQ nor World: retry (no scroll until World is visible).
-            log.info("[Runner] base_zoomout: no World visible → retry (no scroll)")
+            ok = do_base_zoomout(
+                wincap, self.vision_cache, log, template, world_button,
+                screenshot=screenshot,
+                threshold=float(step.get("threshold", 0.75)),
+                scroll_times=int(step.get("scroll_times", 5)),
+                scroll_interval_sec=float(step.get("scroll_interval_sec", 0.1)),
+                roi_center_x=step.get("roi_center_x"),
+                roi_center_y=step.get("roi_center_y"),
+                roi_padding=float(step.get("roi_padding", 3.0)),
+                log_prefix="[Runner] ",
+                debug_log=bool(step.get("debug_log", False)),
+                match_color=bool(step.get("match_color", False)),
+                color_tolerance=step.get("color_match_tolerance"),
+            )
+            if ok:
+                self._advance_step(True)
+            else:
+                log.info("[Runner] base_zoomout: no World visible → retry (no scroll)")
             return "running"
 
         if step_type == "world_zoomout":
-            # Zoom out when on world map. Requires both template and world_button (same as base_zoomout). "On world" = template visible.
             template = step.get("template")
             world_button = step.get("world_button")
             if not template or not world_button:
@@ -1643,147 +1474,47 @@ class FunctionRunner:
                           template, world_button)
                 self._advance_step(False)
                 return "running"
-            threshold = step.get("threshold", 0.75)
-            scroll_times = step.get("scroll_times", 5)
-            scroll_interval = step.get("scroll_interval_sec", 0.1)
             timeout_sec = step.get("timeout_sec", 15)
-            debug_save = step.get("debug_save", False)
-            debug_log = step.get("debug_log", False)
-            match_color = step.get("match_color", False)
-            color_tol = step.get("color_match_tolerance")
-
             if getattr(self, "_world_zoomout_start", None) is None:
                 self._world_zoomout_start = time.time()
-
-            def _world_zoomout_scroll():
-                if hasattr(wincap, "focus_window"):
-                    wincap.focus_window(force=True)
-                    time.sleep(0.05)
-                cx = wincap.offset_x + wincap.w // 2
-                cy = wincap.offset_y + wincap.h // 2
-                pyautogui.moveTo(cx, cy)
-                time.sleep(0.05)
-                for i in range(scroll_times):
-                    pyautogui.scroll(-3)
-                    time.sleep(scroll_interval)
-                log.info("[Runner] world_zoomout scrolled x{} at center ({}, {})".format(scroll_times, cx, cy))
-
-            vision = self.vision_cache.get(template)
-            vision_world = self.vision_cache.get(world_button)
-            if not vision:
-                log.error("[Runner] world_zoomout template not in cache: %s", template)
+            ok = do_world_zoomout(
+                wincap, self.vision_cache, log, template, world_button,
+                screenshot=screenshot,
+                threshold=float(step.get("threshold", 0.75)),
+                scroll_times=int(step.get("scroll_times", 5)),
+                scroll_interval_sec=float(step.get("scroll_interval_sec", 0.1)),
+                roi_center_x=step.get("roi_center_x"),
+                roi_center_y=step.get("roi_center_y"),
+                roi_padding=float(step.get("roi_padding", 3.0)),
+                log_prefix="[Runner] ",
+                debug_log=bool(step.get("debug_log", False)),
+                match_color=bool(step.get("match_color", False)),
+                color_tolerance=step.get("color_match_tolerance"),
+            )
+            if ok:
+                self._world_zoomout_start = None
+                self._advance_step(True)
+                return "running"
+            elapsed = time.time() - self._world_zoomout_start
+            if elapsed >= timeout_sec:
+                log.warning("[Runner] world_zoomout: template not found after %.1fs (timeout) → abort step", elapsed)
+                self._world_zoomout_start = None
                 self._advance_step(False)
                 return "running"
-            dbg_mode = "info" if debug_log else None
-
-            _roi_offset = (0, 0)
-            _roi_bounds = None
-            _roi_cx = step.get("roi_center_x")
-            _roi_cy = step.get("roi_center_y")
-            if _roi_cx is not None and _roi_cy is not None:
-                _sh, _sw = screenshot.shape[:2]
-                _scale = get_global_scale()
-                _nw_px = max(1, int(vision.needle_w * _scale))
-                _nh_px = max(1, int(vision.needle_h * _scale))
-                _padding = float(step.get("roi_padding", 3.0))
-                _cx_px = int(_roi_cx * _sw)
-                _cy_px = int(_roi_cy * _sh)
-                _half_w = int(_nw_px * _padding)
-                _half_h = int(_nh_px * _padding)
-                _rx = max(0, _cx_px - _half_w)
-                _ry = max(0, _cy_px - _half_h)
-                _rx2 = min(_sw, _cx_px + _half_w)
-                _ry2 = min(_sh, _cy_px + _half_h)
-                _roi_offset = (_rx, _ry)
-                _roi_bounds = (_rx, _ry, _rx2, _ry2)
-                if debug_log:
-                    log.info("[Runner] world_zoomout ROI: center=({:.2f},{:.2f}) crop=({},{})->({},{})".format(
-                        _roi_cx, _roi_cy, _rx, _ry, _rx2, _ry2))
-
-            def _world_zoomout_search_img(img):
-                if _roi_bounds is None:
-                    return img
-                rx, ry, rx2, ry2 = _roi_bounds
-                return img[ry:ry2, rx:rx2]
-
-            def _world_zoomout_shift_points(pts):
-                if not pts or _roi_offset == (0, 0):
-                    return pts
-                ox, oy = _roi_offset
-                return [((p[0] + ox, p[1] + oy) + tuple(p[2:]) if len(p) > 2 else (p[0] + ox, p[1] + oy)) for p in pts]
-
-            search_img = _world_zoomout_search_img(screenshot)
-            points = vision.find(
-                search_img,
-                threshold=threshold,
-                debug_mode=dbg_mode,
-                debug_log=debug_log,
-                is_color=bool(match_color),
-                color_tolerance=color_tol,
-            )
-            points = _world_zoomout_shift_points(points if points else [])
-
-            if not points:
-                # On base: WorldButton visible → click it to go to world, then retry.
-                if vision_world:
-                    points_w = vision_world.find(
-                        search_img,
-                        threshold=threshold,
-                        debug_mode=dbg_mode,
-                        debug_log=debug_log,
-                        is_color=bool(match_color),
-                        color_tolerance=color_tol,
-                    )
-                    points_w = _world_zoomout_shift_points(points_w if points_w else [])
-                    if points_w:
-                        if hasattr(wincap, "focus_window"):
-                            wincap.focus_window(force=True)
-                            time.sleep(0.05)
-                        sx, sy = wincap.get_screen_position((points_w[0][0], points_w[0][1]))
-                        pyautogui.click(sx, sy)
-                        time.sleep(2)
-                        screenshot = wincap.get_screenshot() if hasattr(wincap, "get_screenshot") else screenshot
-                        search_img = _world_zoomout_search_img(screenshot)
-                        points = vision.find(
-                            search_img,
-                            threshold=threshold,
-                            debug_mode=dbg_mode,
-                            debug_log=debug_log,
-                            is_color=bool(match_color),
-                            color_tolerance=color_tol,
-                        )
-                        points = _world_zoomout_shift_points(points if points else [])
-                        log.info("[Runner] world_zoomout: on base → clicked WorldButton, refreshed screenshot")
-                        if points:
-                            self._world_zoomout_start = None
-                            _world_zoomout_scroll()
-                            log.info("[Runner] {} → true (world_zoomout: after click World → scroll)".format(self._step_label(step)))
-                            self._advance_step(True)
-                            return "running"
-                        return "running"
-                elapsed = time.time() - self._world_zoomout_start
-                if elapsed >= timeout_sec:
-                    log.warning("[Runner] world_zoomout: template not found after %.1fs (timeout) → abort step", elapsed)
-                    self._world_zoomout_start = None
-                    self._advance_step(False)
-                    return "running"
-                if debug_save:
-                    try:
+            if step.get("debug_save"):
+                try:
+                    vision = self.vision_cache.get(template)
+                    search_img, _ = _roi_crop(screenshot, vision, step.get("roi_center_x"), step.get("roi_center_y"), float(step.get("roi_padding", 3.0)))
+                    if search_img is not None and search_img.size > 0:
                         os.makedirs("debug", exist_ok=True)
                         ts_str = time.strftime("%Y%m%d_%H%M%S")
                         tpl_name = os.path.splitext(os.path.basename(template))[0]
                         path = os.path.join("debug", "world_zoomout_{}_{}_roi_not_found.png".format(tpl_name, ts_str))
                         cv.imwrite(path, search_img)
                         log.info("[Runner] world_zoomout debug_save: ROI saved → {}".format(path))
-                    except Exception as e:
-                        log.info("[Runner] world_zoomout debug_save failed: {}".format(e))
-                log.info("[Runner] world_zoomout: template not found (not on world) → retry")
-                return "running"
-
-            self._world_zoomout_start = None
-            _world_zoomout_scroll()
-            log.info("[Runner] {} → true (world_zoomout: template found → scroll)".format(self._step_label(step)))
-            self._advance_step(True)
+                except Exception as e:
+                    log.info("[Runner] world_zoomout debug_save failed: {}".format(e))
+            log.info("[Runner] world_zoomout: template not found (not on world) → retry")
             return "running"
 
         if step_type == "drag":

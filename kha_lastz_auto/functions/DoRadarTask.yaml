@@ -1,0 +1,80 @@
+# Function: FightBoomer
+description: "Magnifier -> Boomer -> set level (OCR) -> Search -> Team Up -> March"
+steps:
+  
+  - event_type: close_ui
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
+    threshold: 0.75
+
+
+  - event_type: match_click
+    template: buttons_template/Radar2.png
+    threshold: 0.7
+    one_shot: true
+    timeout_sec: 2
+
+  - event_type: sleep
+    duration_sec: 3
+
+  - event_type: match_click
+    template_array:
+      - buttons_template/Radar4.png
+      - buttons_template/Radar4-1.png
+    threshold: 0.95
+    one_shot: true
+    timeout_sec: 2
+ 
+  - event_type: match_click
+    template: buttons_template/RadarZombie.png
+    threshold: 0.85
+    one_shot: true
+    timeout_sec: 2
+    on_success_goto: 2
+
+  - event_type: match_click
+    template: buttons_template/Radar3.png
+    threshold: 0.6
+    one_shot: true
+    timeout_sec: 2
+    run_always: true
+
+  - event_type: sleep
+    duration_sec: 3
+    run_always: true
+  
+
+  - event_type: match_click
+    template: buttons_template/RadarAttack.png
+    threshold: 0.7
+    one_shot: true
+    timeout_sec: 2
+
+  - event_type: match_click
+    template: buttons_template/RadarHelp.png
+    threshold: 0.7
+    one_shot: true
+    run_always: true
+    
+    timeout_sec: 2
+
+  - event_type: match_click
+    template_array:
+      - buttons_template/March.png
+      - buttons_template/March1.png
+    threshold: 0.7
+    one_shot: true
+    timeout_sec: 2
+
+  - event_type: close_ui
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
+    threshold: 0.6
+    debug_log: true
+    run_always: true

@@ -13,6 +13,10 @@ class ExitBannerDetector:
         self._check_every = check_every
         self._tick        = 0
 
+    def reset(self):
+        """Reset tick counter so timing is fresh after Is Running toggled back ON."""
+        self._tick = 0
+
     def update(self, screenshot, wincap, log) -> bool:
         """Call once per detector tick.
 
