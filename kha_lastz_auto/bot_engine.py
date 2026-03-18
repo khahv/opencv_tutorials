@@ -1,6 +1,6 @@
 """
 Engine chay Function (YAML): load functions, thuc thi tung step.
-Step types: match_click, match_multi_click, match_count, sleep, send_zalo, click_position, wait_until_match, key_press, set_level, type_text, click_unless_visible, drag, close_ui, base_zoomout, world_zoomout.
+Step types: match_click, match_storm_click, match_multi_click, match_count, sleep, send_zalo, click_position, wait_until_match, key_press, set_level, type_text, click_unless_visible, drag, close_ui, base_zoomout, world_zoomout.
 Each step returns true/false. Next step is blocked (function aborted) if previous returned false, unless run_always: true is set.
 send_zalo: message (required), receiver_name (optional; ten hien thi trong danh sach chat, fallback DEFAULT_CLICK_AFTER_OPEN), repeat_interval_sec (optional; when set and trigger_active_cb provided, repeats while trigger active).
 """
@@ -16,6 +16,7 @@ from vision import Vision, get_global_scale
 from zoom_helpers import do_world_zoomout, do_base_zoomout, _roi_crop
 from pynput.mouse import Button, Controller
 from fast_clicker import FastClicker
+from window_click_guard import WindowClickGuard
 from ocr_utils import (
     read_level_from_roi    as _read_level_from_roi,
     read_raw_text_from_roi as _read_raw_text_from_roi,
@@ -179,14 +180,18 @@ def collect_templates(functions_dict):
     templates = set()
     for fn in functions_dict.values():
         for step in fn["steps"]:
-            if step.get("event_type") in ("match_click", "match_multi_click", "match_count", "match_move") and step.get("template"):
+            if step.get("event_type") in (
+                "match_click", "match_multi_click", "match_count", "match_move",
+                "match_storm_click",
+            ) and step.get("template"):
                 templates.add(step["template"])
             if step.get("event_type") == "match_click" and step.get("template_array"):
                 ta = step.get("template_array")
                 if isinstance(ta, list):
                     for t in ta:
-                        if t:
-                            templates.add(t)
+                        path = t.get("template") if isinstance(t, dict) else t
+                        if path:
+                            templates.add(path)
             if step.get("event_type") == "match_click" and step.get("refresh_template"):
                 templates.add(step["refresh_template"])
             if step.get("event_type") == "wait_until_match" and step.get("template"):
@@ -253,10 +258,16 @@ class FunctionRunner:
         self.wincap = None
         self.last_step_result = True  # True = previous step matched/succeeded
         self._step_retry_counts = {}  # {step_index: retry_count} for on_fail_goto
+        self._step_visit_counts = {}       # {step_index: visit_count} for max_tries / on_max_tries_reach_goto
+        self._step_visit_start_times = {}  # {step_index: step_start_time} to detect new visits
+        self._step_dedup_positions = {}    # {step_index: [(x, y)]} positions already clicked (cross-visit dedup)
         self._tried_positions = []    # [(x, y)] positions already clicked in current cycle
         self._rtr_cache = {}          # require_text_in_region cache: frozenset(points) → filtered points
         self._rtr_page_logged = False # True after printing truck list for current refresh cycle
         self._fast_clicker = FastClicker()
+        self._window_click_guard = WindowClickGuard()
+        self._storm_clicker_active = False   # True while match_storm_click is running
+        self._storm_start_t: float = 0.0
         self._step_pos_cache = None
         self._debug_click_saved = False
         self._step_last_click_t = None
@@ -301,6 +312,9 @@ class FunctionRunner:
         self.trigger_event = trigger_event
         self.trigger_active_cb = trigger_active_cb
         self._step_retry_counts = {}
+        self._step_visit_counts = {}
+        self._step_visit_start_times = {}
+        self._step_dedup_positions = {}
         self._tried_positions = []
         self._last_zero_refresh_t = 0
         self._last_truck_crop_path = None
@@ -336,6 +350,8 @@ class FunctionRunner:
 
     def stop(self):
         self._fast_clicker.stop()
+        self._window_click_guard.stop()
+        self._storm_clicker_active = False
         try:
             import ctypes
             ctypes.windll.user32.BlockInput(False)
@@ -349,6 +365,8 @@ class FunctionRunner:
         if self.state != "running" or screenshot is None or self.step_index >= len(self.steps):
             if self.state == "running" and self.step_index >= len(self.steps):
                 self._fast_clicker.stop()
+                self._window_click_guard.stop()
+                self._storm_clicker_active = False
                 try:
                     import ctypes
                     ctypes.windll.user32.BlockInput(False)
@@ -377,6 +395,29 @@ class FunctionRunner:
         if self.step_start_time is None:
             self.step_start_time = now
 
+        # ── max_tries visit counter ──────────────────────────────────────────────────────────
+        # Detect "new visit" by comparing the current step_start_time against the last recorded
+        # value for this step index. A new visit occurs each time _goto_step / _advance_step
+        # sets step_start_time to a fresh timestamp (i.e. different from the stored value).
+        _sidx = self.step_index
+        if self._step_visit_start_times.get(_sidx) != self.step_start_time:
+            self._step_visit_start_times[_sidx] = self.step_start_time
+            self._step_visit_counts[_sidx] = self._step_visit_counts.get(_sidx, 0) + 1
+
+        # Check max_tries for match_click steps (other types can opt in later if needed)
+        if step_type == "match_click":
+            _max_tries_v = step.get("max_tries")
+            _on_max_goto = step.get("on_max_tries_reach_goto")
+            if _max_tries_v is not None and _on_max_goto is not None:
+                _visits = self._step_visit_counts.get(_sidx, 0)
+                if _visits > int(_max_tries_v):
+                    log.info("[Runner] {} → max_tries ({}) reached ({} visits) → goto step {}".format(
+                        self._step_label(step), _max_tries_v, _visits, _on_max_goto))
+                    self._step_visit_counts[_sidx] = 0   # reset so it can be re-used later
+                    self._step_dedup_positions.pop(_sidx, None)  # clear dedup list on cycle reset
+                    self._goto_step(int(_on_max_goto))
+                    return "running"
+
         if step_type == "match_click":
             template = step.get("template")
             template_array = step.get("template_array")  # list of templates to try in order
@@ -386,7 +427,9 @@ class FunctionRunner:
             one_shot = step.get("one_shot", True)
             timeout_sec = step.get("timeout_sec") or 999
             # ── template_array: try each template in order, each gets its own timeout ───
+            # Each item may be a plain path string OR a dict {template, match_center_x/y, exclude_area_x/y, ...}
             _tpls = template_array if isinstance(template_array, list) and template_array else None
+            _tpl_overrides: dict = {}  # per-template param overrides from current dict item
             if _tpls:
                 # Persist index across ticks so we don't re-try A from scratch every frame.
                 tpl_idx = int(getattr(self, "_tpl_array_idx", 0) or 0)
@@ -394,20 +437,24 @@ class FunctionRunner:
                 if tpl_idx >= len(_tpls):
                     log.info("[Runner] {} → false (all {} templates exhausted)".format(
                         self._step_label(step), len(_tpls)))
-                    self._advance_step(False, step=step)
                     self._tpl_array_idx = 0
                     self._tpl_array_start_t = None
+                    self._fail_step(step, "(all templates exhausted)")
                     return "running"
 
-                # Reset per-template timeout timer when we switch template
+                # Extract per-template overrides when item is a dict
                 cur_tpl = _tpls[tpl_idx]
+                _tpl_overrides = cur_tpl if isinstance(cur_tpl, dict) else {}
+                cur_tpl_path = _tpl_overrides.get("template", cur_tpl) if _tpl_overrides else (cur_tpl or "")
+
+                # Reset per-template timeout timer when we switch template
                 last_tpl = getattr(self, "_tpl_array_last_tpl", None)
-                if last_tpl != cur_tpl or getattr(self, "_tpl_array_start_t", None) is None:
-                    self._tpl_array_last_tpl = cur_tpl
+                if last_tpl != cur_tpl_path or getattr(self, "_tpl_array_start_t", None) is None:
+                    self._tpl_array_last_tpl = cur_tpl_path
                     self._tpl_array_start_t = time.time()
                     self._step_pos_cache = None
 
-                template = cur_tpl  # override single-template path below
+                template = cur_tpl_path  # override single-template path below
                 # Use per-template timer for "timeout_sec"
                 self.step_start_time = getattr(self, "_tpl_array_start_t", now)
 
@@ -432,10 +479,16 @@ class FunctionRunner:
             click_random_offset_y = step.get("click_random_offset_y")   # ratio of needle_h (e.g. 0.4 = ±40%)
             click_offset_x = step.get("click_offset_x") or 0.0
             click_offset_y = step.get("click_offset_y") or 0.0
+            # Per-template overrides take priority; fall back to step-level value then 0.0
+            match_center_x = float(_tpl_overrides.get("match_center_x", step.get("match_center_x") or 0.0))
+            match_center_y = float(_tpl_overrides.get("match_center_y", step.get("match_center_y") or 0.0))
             click_storm_sec      = step.get("click_storm_sec") or 0.0        # bypass screenshot: tight click loop for N seconds
             click_storm_max_rate  = step.get("click_storm_max_rate") or 0    # max clicks/s in storm (0 = unlimited)
             click_storm_offset_x  = int(step.get("click_storm_offset_x") or 0)   # ±px random X offset
             click_storm_offset_y  = int(step.get("click_storm_offset_y") or 0)   # ±px random Y offset
+            # BlockInput during storm is disabled by default: BlockInput(True) called from runner thread
+            # blocks SendInput from FastClicker's background thread, so clicks never reach the game.
+            click_storm_block_input = bool(step.get("click_storm_block_input", False))
             _corner_cfg = step.get("click_storm_corner")                          # {offset_x, offset_y, every} or {x, y, every}
             if _corner_cfg:
                 if "offset_x" in _corner_cfg or "offset_y" in _corner_cfg:
@@ -564,7 +617,8 @@ class FunctionRunner:
             if not points and _tpls and (now - self.step_start_time >= timeout_sec):
                 tpl_idx = int(getattr(self, "_tpl_array_idx", 0) or 0)
                 cur_tpl = _tpls[tpl_idx] if 0 <= tpl_idx < len(_tpls) else None
-                tpl_name = os.path.splitext(os.path.basename(cur_tpl))[0] if cur_tpl else str(tpl_idx)
+                _cur_tpl_path = (cur_tpl.get("template", "") if isinstance(cur_tpl, dict) else cur_tpl) or ""
+                tpl_name = os.path.splitext(os.path.basename(_cur_tpl_path))[0] if _cur_tpl_path else str(tpl_idx)
                 log.info("[Runner] {} [{}] → not found in {}s, trying next template".format(
                     self._step_label(step), tpl_name, timeout_sec))
                 self._tpl_array_idx = tpl_idx + 1
@@ -582,7 +636,7 @@ class FunctionRunner:
                         _ref_pts = _v_ref.find(screenshot, threshold=step.get("threshold", 0.75), debug_mode=None)
                         if _ref_pts:
                             _rsx, _rsy = wincap.get_screen_position(tuple(_ref_pts[0]))
-                            pyautogui.click(_rsx, _rsy)
+                            self._safe_click(_rsx, _rsy, wincap, "match_click refresh")
                             log.info("[Runner] {} → 0 trucks found → clicked refresh, sleeping {:.1f}s".format(self._step_label(step), refresh_sleep_sec))
                             time.sleep(refresh_sleep_sec)
                             self._tried_positions = []
@@ -699,6 +753,120 @@ class FunctionRunner:
                                 self._step_label(step), _pt[0], _pt[1], _mean, _rbr_min))
                     points = _passed
 
+                # ── exclude_template: skip matches that contain a given template inside them ──
+                # exclude_template: str or list[str] — any match containing one of these is rejected.
+                # exclude_area_x / exclude_area_y (default 1.0): multiplier on the crop half-size.
+                #   1.0 = exactly the matched template's bounding box (cx ± mw/2, cy ± mh/2).
+                #   2.0 = double the crop in that axis (cx ± mw, cy ± mh), etc.
+                _excl_raw = step.get("exclude_template")
+                if _excl_raw and points:
+                    _excl_tpls = _excl_raw if isinstance(_excl_raw, list) else [_excl_raw]
+                    _excl_visions = [v for v in (self._get_vision(t) for t in _excl_tpls) if v is not None]
+                    _excl_threshold = float(step.get("exclude_threshold", threshold))
+                    _excl_ax = float(_tpl_overrides.get("exclude_area_x", step.get("exclude_area_x", 1.0)))
+                    _excl_ay = float(_tpl_overrides.get("exclude_area_y", step.get("exclude_area_y", 1.0)))
+                    _excl_match_color = bool(step.get("exclude_match_color", False))
+                    _excl_color_tol = step.get("exclude_color_tolerance")
+                    _excl_debug_save = step.get("debug_save", False)
+                    if _excl_visions:
+                        _passed = []
+                        for _pt in points:
+                            cx, cy = _pt[0], _pt[1]
+                            _sh, _sw = screenshot.shape[:2]
+                            mw = _pt[2] if len(_pt) >= 3 else vision.needle_w
+                            mh = _pt[3] if len(_pt) >= 4 else vision.needle_h
+                            # shift crop center by match_center_x/y so exclude check targets the same spot as the click
+                            _ecx = cx + int(match_center_x * _sw)
+                            _ecy = cy + int(match_center_y * _sh)
+                            _half_x = int(mw / 2 * _excl_ax)
+                            _half_y = int(mh / 2 * _excl_ay)
+                            _rx  = max(0, _ecx - _half_x)
+                            _ry  = max(0, _ecy - _half_y)
+                            _rx2 = min(_sw, _ecx + _half_x)
+                            _ry2 = min(_sh, _ecy + _half_y)
+                            _crop = screenshot[_ry:_ry2, _rx:_rx2]
+                            _excluded = False
+                            if debug_log:
+                                log.info("[Runner] {} exclude check ({},{}): crop={}×{}px".format(
+                                    self._step_label(step), _ecx, _ecy,
+                                    _rx2 - _rx, _ry2 - _ry))
+                            for _ev in _excl_visions:
+                                # Use match_score() (direct minMaxLoc) instead of find_multi_with_scores.
+                                # find_multi_with_scores calls groupRectangles; with a very low threshold
+                                # (0.01) almost all result pixels pass, flooding groupRectangles with
+                                # thousands of near-identical rects which it averages into wrong cluster
+                                # positions — the true best-match peak gets buried and the reported score
+                                # can be far below the real value (e.g. 0.58 instead of 0.99).
+                                # match_score() simply calls minMaxLoc on the matchTemplate result and
+                                # returns the actual best score, which is exactly what we need here.
+                                if _excl_match_color:
+                                    # For color matching: run BGR matchTemplate directly and take best val
+                                    _norm_c, _ = _ev._norm_haystack(_crop)
+                                    if len(_norm_c.shape) == 2:
+                                        _norm_c = cv.cvtColor(_norm_c, cv.COLOR_GRAY2BGR)
+                                    _needle_c = _ev.needle_img if len(_ev.needle_img.shape) == 3 else \
+                                        cv.cvtColor(_ev.needle_img, cv.COLOR_GRAY2BGR)
+                                    if _ev.needle_w <= _norm_c.shape[1] and _ev.needle_h <= _norm_c.shape[0]:
+                                        _res_c = cv.matchTemplate(_norm_c, _needle_c, _ev.method)
+                                        _, _best_score, _, _ = cv.minMaxLoc(_res_c)
+                                        _best_score = float(_best_score)
+                                    else:
+                                        _best_score = 0.0
+                                else:
+                                    _best_score = _ev.match_score(_crop)
+                                if _best_score >= _excl_threshold:
+                                    log.info("[Runner] {} ({},{}) → exclude_template [{}] match score={:.3f} (thresh={:.2f}) → skip".format(
+                                        self._step_label(step), _ecx, _ecy,
+                                        _ev.needle_name, _best_score, _excl_threshold))
+                                    _excluded = True
+                                    break
+                                elif debug_log:
+                                    log.info("[Runner] {} ({},{}) → exclude_template [{}] best score={:.3f} < {:.2f} → keep".format(
+                                        self._step_label(step), _ecx, _ecy,
+                                        _ev.needle_name, _best_score, _excl_threshold))
+                            if _excl_debug_save:
+                                try:
+                                    import datetime
+                                    _ts = datetime.datetime.now().strftime("%H%M%S_%f")[:-3]
+                                    _tag = "excluded" if _excluded else "kept"
+                                    _dbg_dir = "debug_exclude"
+                                    os.makedirs(_dbg_dir, exist_ok=True)
+                                    _fname = os.path.join(_dbg_dir,
+                                        "exclude_{}_{}_{},{}.png".format(_tag, _ts, _ecx, _ecy))
+                                    if _crop is not None and _crop.size > 0:
+                                        cv.imwrite(_fname, _crop)
+                                        log.info("[Runner] {} exclude debug_save → {}".format(
+                                            self._step_label(step), os.path.abspath(_fname)))
+                                    else:
+                                        log.warning("[Runner] {} exclude debug_save: crop empty at ({},{})".format(
+                                            self._step_label(step), _ecx, _ecy))
+                                except Exception as _de:
+                                    log.warning("[Runner] exclude debug_save failed: {}".format(_de))
+                            if not _excluded:
+                                _passed.append(_pt)
+                        points = _passed
+
+                # ── dedup_enable: skip positions already clicked in previous visits to this step ──
+                # Unlike track_tried (resets each refresh), dedup persists across on_fail_goto retries
+                # until on_max_tries_reach_goto fires (or the function ends).
+                _dedup = step.get("dedup_enable", False)
+                if _dedup and points:
+                    _dedup_tol_x = int(step.get("dedup_tolerance_x", 30))
+                    _dedup_tol_y = int(step.get("dedup_tolerance_y", 30))
+                    _seen = self._step_dedup_positions.get(self.step_index, [])
+                    if _seen:
+                        _before = len(points)
+                        points = [
+                            pt for pt in points
+                            if not any(
+                                abs(pt[0] - sx) <= _dedup_tol_x and abs(pt[1] - sy) <= _dedup_tol_y
+                                for sx, sy in _seen
+                            )
+                        ]
+                        if len(points) < _before and debug_log:
+                            log.info("[Runner] {} dedup_enable: filtered {}/{} (already clicked)".format(
+                                self._step_label(step), _before - len(points), _before))
+
                 # ── track_tried: skip positions already clicked in this cycle ──────────
                 track_tried = step.get("track_tried", False)
                 _rtr_density_map = getattr(self, '_rtr_density_map_last', {})
@@ -756,7 +924,7 @@ class FunctionRunner:
                             _ref_pts = _v_ref.find(screenshot, threshold=threshold, debug_mode=None)
                             if _ref_pts:
                                 _rsx, _rsy = wincap.get_screen_position(tuple(_ref_pts[0]))
-                                pyautogui.click(_rsx, _rsy)
+                                self._safe_click(_rsx, _rsy, wincap, "match_click refresh")
                                 log.info("[Runner] {} → all {} truck(s) tried → clicked refresh, sleeping {:.1f}s".format(
                                     self._step_label(step), len(self._tried_positions), refresh_sleep_sec))
                                 time.sleep(refresh_sleep_sec)
@@ -766,15 +934,35 @@ class FunctionRunner:
                                 self.step_start_time = time.time()
                                 return "running"
                         log.info("[Runner] {} → all tried, no refresh available → abort".format(self._step_label(step)))
-                        self._advance_step(False, step=step)
+                        self._fail_step(step, "(all tried, no refresh)")
                         return "running"
                     points = untried
+                # Guard: all candidates filtered out (exclude_template / dedup / track_tried) → skip this tick
+                if not points:
+                    # If template_array is active and timeout elapsed, advance to the next template
+                    # (same logic as "not found" timeout above, but triggered by filtering, not by zero raw matches)
+                    if _tpls and (now - self.step_start_time >= timeout_sec):
+                        tpl_idx = int(getattr(self, "_tpl_array_idx", 0) or 0)
+                        _cur_tpl = _tpls[tpl_idx] if 0 <= tpl_idx < len(_tpls) else None
+                        _cur_tpl_path = (_cur_tpl.get("template", "") if isinstance(_cur_tpl, dict) else _cur_tpl) or ""
+                        _tpl_name = os.path.splitext(os.path.basename(_cur_tpl_path))[0] if _cur_tpl_path else str(tpl_idx)
+                        log.info("[Runner] {} [{}] → all candidates filtered in {}s, trying next template".format(
+                            self._step_label(step), _tpl_name, timeout_sec))
+                        self._tpl_array_idx = tpl_idx + 1
+                        self._tpl_array_start_t = None
+                        self._tpl_array_last_tpl = None
+                        self._step_pos_cache = None
+                    return "running"
                 # ─────────────────────────────────────────────────────────────────────
                 # matched mw and mh are used to scale click_offset_x/y
                 cx, cy, mw, mh = (points[0][0], points[0][1], points[0][2], points[0][3]) if len(points[0]) >= 4 else (points[0][0], points[0][1], vision.needle_w, vision.needle_h)
                 center = [cx, cy]
                 center[0] += int(click_offset_x * mw)
                 center[1] += int(click_offset_y * mh)
+                if match_center_x or match_center_y:
+                    _msh, _msw = screenshot.shape[:2]
+                    center[0] += int(match_center_x * _msw)
+                    center[1] += int(match_center_y * _msh)
                 if click_random_offset_x is not None:
                     rx = int(click_random_offset_x * mw)
                     if rx > 0:
@@ -790,11 +978,12 @@ class FunctionRunner:
                 sx, sy = wincap.get_screen_position(tuple(center))
                 raw_center = (cx, cy)
                 if debug_log:
-                    log.info("[Runner] {} | raw_center=({},{}) needle=({}x{}) matched=({}x{}) offset=({},{}) after_offset=({},{}) screen=({},{})".format(
+                    _mc_str = " match_center=({},{})".format(match_center_x, match_center_y) if (match_center_x or match_center_y) else ""
+                    log.info("[Runner] {} | raw_center=({},{}) needle=({}x{}) matched=({}x{}) offset=({},{}) after_offset=({},{}) screen=({},{}){}".format(
                         self._step_label(step), raw_center[0], raw_center[1],
                         vision.needle_w, vision.needle_h, mw, mh,
                         click_offset_x, click_offset_y,
-                        center[0], center[1], sx, sy))
+                        center[0], center[1], sx, sy, _mc_str))
                 # For YellowTruckSmall: save every truck click (timestamp in filename prevents overwrite)
                 # For other steps: save only once per step activation to avoid spam
                 if debug_click:
@@ -810,13 +999,18 @@ class FunctionRunner:
                 # No screenshot is taken while the clicker is running — zero overhead.
                 if click_storm_sec > 0 and not one_shot:
                     if not self._fast_clicker.is_running:
-                        # First time: block user input then start the clicker at detected position
-                        try:
-                            import ctypes
-                            if ctypes.windll.user32.BlockInput(True):
-                                log.info("[Runner] {} → storm: BlockInput(True) (blocking user mouse/kb)".format(self._step_label(step)))
-                        except Exception as e:
-                            log.warning("[Runner] storm BlockInput(True) failed: {}".format(e))
+                        # BlockInput is opt-in (click_storm_block_input: true) and disabled by default.
+                        # Reason: BlockInput(True) is called from the runner thread, but FastClicker
+                        # injects clicks via SendInput on its own background thread — Windows blocks
+                        # SendInput from threads that did not call BlockInput, so clicks never reach
+                        # the game when BlockInput is active.
+                        if click_storm_block_input:
+                            try:
+                                import ctypes
+                                if ctypes.windll.user32.BlockInput(True):
+                                    log.info("[Runner] {} → storm: BlockInput(True) (blocking user mouse/kb)".format(self._step_label(step)))
+                            except Exception as e:
+                                log.warning("[Runner] storm BlockInput(True) failed: {}".format(e))
                         self._storm_start_t = time.time()
                         self._storm_position_refresh_t = time.time()
                         self._fast_clicker.start(sx, sy,
@@ -847,12 +1041,13 @@ class FunctionRunner:
                         _elapsed = max(0.001, time.time() - getattr(self, '_storm_start_t', time.time()))
                         if _n >= max_clicks or _elapsed >= click_storm_sec:
                             self._fast_clicker.stop()
-                            try:
-                                import ctypes
-                                ctypes.windll.user32.BlockInput(False)
-                                log.info("[Runner] {} → storm ended: BlockInput(False)".format(self._step_label(step)))
-                            except Exception as e:
-                                log.warning("[Runner] storm BlockInput(False) failed: {}".format(e))
+                            if click_storm_block_input:
+                                try:
+                                    import ctypes
+                                    ctypes.windll.user32.BlockInput(False)
+                                    log.info("[Runner] {} → storm ended: BlockInput(False)".format(self._step_label(step)))
+                                except Exception as e:
+                                    log.warning("[Runner] storm BlockInput(False) failed: {}".format(e))
                             self.step_click_count += _n
                             _rate = round(_n / _elapsed, 0)
                             log.info("[Runner] {} | storm={} clicks in {:.1f}s (~{:.0f}/s)".format(
@@ -863,7 +1058,8 @@ class FunctionRunner:
 
                 # Non-storm path: move cursor with pynput then click
                 try:
-                    _mouse_ctrl.position = (sx, sy)
+                    if not self._safe_move(sx, sy, wincap, "match_click"):
+                        return "running"
                     time.sleep(0.05) # Tang len 0.05s de chac chan game nhan ra chuot dang o tren nut
                 except Exception as e:
                     log.warning("[Runner] Failed to set mouse position: {}".format(e))
@@ -914,6 +1110,10 @@ class FunctionRunner:
                             time.sleep(remaining)
                 if step.get("track_tried", False):
                     self._tried_positions.append(tuple(points[0]))
+                if step.get("dedup_enable", False):
+                    _sidx_click = self.step_index
+                    _cx_rec, _cy_rec = points[0][0], points[0][1]
+                    self._step_dedup_positions.setdefault(_sidx_click, []).append((_cx_rec, _cy_rec))
                 if one_shot:
                     self._last_click_pos = tuple(center)
                     _click_truck_pt = tuple(points[0])
@@ -940,7 +1140,7 @@ class FunctionRunner:
                     return "running"
             if now - self.step_start_time >= timeout_sec:
                 log.info("[Runner] {} → false (not found in {}s)".format(self._step_label(step), timeout_sec))
-                self._advance_step(False, step=step)
+                self._fail_step(step, "(timeout)")
             return "running"
 
         if step_type == "match_move":
@@ -1005,7 +1205,8 @@ class FunctionRunner:
                 for pt in points:
                     sx, sy = wincap.get_screen_position((pt[0], pt[1]))
                     try:
-                        _mouse_ctrl.position = (sx, sy)
+                        if not self._safe_move(sx, sy, wincap, "match_multi_click"):
+                            continue
                         time.sleep(0.05)
                     except: pass
                     
@@ -1112,7 +1313,9 @@ class FunctionRunner:
             py = int(wincap.h * oy)
             sx, sy = wincap.get_screen_position((px, py))
             try:
-                _mouse_ctrl.position = (sx, sy)
+                if not self._safe_move(sx, sy, wincap, "click_position"):
+                    self._advance_step(False)
+                    return "running"
                 time.sleep(0.05)
             except: pass
             
@@ -1258,7 +1461,8 @@ class FunctionRunner:
                 pts = vision_plus.find(screenshot, threshold=threshold, debug_mode=None)
                 if pts:
                     sx, sy = wincap.get_screen_position((pts[0][0], pts[0][1]))
-                    _mouse_ctrl.position = (sx, sy)
+                    if not self._safe_move(sx, sy, wincap, "set_level plus"):
+                        return "running"
                     _mouse_ctrl.press(Button.left)
                     time.sleep(0.05)
                     _mouse_ctrl.release(Button.left)
@@ -1272,7 +1476,7 @@ class FunctionRunner:
                 pts = vision_minus.find(screenshot, threshold=threshold, debug_mode=None)
                 if pts:
                     sx, sy = wincap.get_screen_position((pts[0][0], pts[0][1]))
-                    pyautogui.click(sx, sy)
+                    self._safe_click(sx, sy, wincap, "set_level minus")
                     log.info("[Runner] set_level: Lv.{} -> click Minus (target Lv.{})".format(current, target_level))
                     time.sleep(click_interval)
                 else:
@@ -1298,7 +1502,7 @@ class FunctionRunner:
                     pts = v_nav.find(screenshot, threshold=threshold, debug_mode=None)
                     if pts:
                         sx, sy = wincap.get_screen_position((pts[0][0], pts[0][1]))
-                        pyautogui.click(sx, sy)
+                        self._safe_click(sx, sy, wincap, "click_unless_visible")
                         log.info("[Runner] {} → true (not visible, clicked nav)".format(self._step_label(step)))
                     else:
                         log.info("[Runner] {} → true (not visible, nav absent too)".format(self._step_label(step)))
@@ -1510,7 +1714,7 @@ class FunctionRunner:
                         if _pb:
                             _bx, _by = _pb[0][0], _pb[0][1]
                             _bsx, _bsy = wincap.get_screen_position((_bx, _by))
-                            pyautogui.click(_bsx, _bsy)
+                            self._safe_click(_bsx, _bsy, wincap, "close_ui BackButton")
                             if debug_log:
                                 log.info("[Runner] close_ui → clicked BackButton ({},{})".format(_bx, _by))
                             _clicked_back = True
@@ -1518,7 +1722,7 @@ class FunctionRunner:
                         _px = int(wincap.w * click_x)
                         _py = int(wincap.h * click_y)
                         _sx, _sy = wincap.get_screen_position((_px, _py))
-                        pyautogui.click(_sx, _sy)
+                        self._safe_click(_sx, _sy, wincap, "close_ui default")
                     time.sleep(1)
                     _fresh = wincap.get_screenshot() if hasattr(wincap, "get_screenshot") else None
                     if _fresh is not None:
@@ -2134,7 +2338,7 @@ class FunctionRunner:
                     ref_pts = refresh_vision.find(ref_scr, threshold=0.6)
                     if ref_pts:
                         rsx, rsy = wincap.get_screen_position(tuple(ref_pts[0][:2]))
-                        pyautogui.click(rsx, rsy)
+                        self._safe_click(rsx, rsy, wincap, "find_truck refresh")
                         log.info("[Runner] find_truck → refreshed #{} (all {} in batch tried)".format(
                             refresh_count + 1, len(batch)))
                         time.sleep(refresh_sleep_sec)
@@ -2154,7 +2358,7 @@ class FunctionRunner:
             setattr(self, _tried_key, tried_positions)
 
             sx, sy = wincap.get_screen_position((cx, cy))
-            pyautogui.click(sx, sy)
+            self._safe_click(sx, sy, wincap, "find_truck")
             log.info("[Runner] find_truck → clicked truck ({},{}) score={:.3f}".format(cx, cy, score))
             time.sleep(sleep_after_click)
 
@@ -2280,9 +2484,273 @@ class FunctionRunner:
             self._advance_step(True)
             return "running"
 
+        # ── match_storm_click ────────────────────────────────────────────────────
+        # Dedicated storm-click step: find template → guard outside clicks → FastClick.
+        # YAML keys:
+        #   template, threshold (default 0.75)
+        #   timeout_sec          — wait up to N seconds for template (default 999)
+        #   storm_sec            — max storm duration once found (default 60)
+        #   max_clicks           — stop after this many clicks (default 0 = unlimited)
+        #   offset_x/y           — ±random click offset as fraction of window size (default 0)
+        #                          e.g. 0.03 = ±3% of window width/height in pixels
+        #   guard_outside        — block user clicks outside game window (default true)
+        #   position_refresh_sec — re-detect template every N seconds and reposition (default 0 = off)
+        #                          template gone on refresh → storm stops immediately
+        #   offset_change_time   — seconds between offset re-randomizations (default 1.0)
+        #                          all clicks within the window land on the same pixel
+        #   close_ui_check       — every 1s, if template not visible click once at close_ui
+        #                          position to dismiss any accidentally-opened UI (default true)
+        #   close_ui_click_x/y   — fractional position to click when dismissing UI (default 0.03, 0.08)
+        #   close_ui_back_button — optional template path for a BackButton; clicked instead of
+        #                          close_ui_click_x/y when visible
+        #   corner               — {offset_x, offset_y, every} to keep window focused (optional)
+        if step_type == "match_storm_click":
+            template      = step.get("template")
+            threshold     = float(step.get("threshold", 0.75))
+            timeout_sec   = float(step.get("timeout_sec") or 999)
+            storm_sec     = float(step.get("storm_sec") or 60)
+            max_clicks    = int(step.get("max_clicks") or 0)
+            # offset_x/y are relative to game window size (0.0–1.0 fraction).
+            # e.g. offset_x: 0.03 on a 1080px-wide window → ±32px per click.
+            offset_x      = int(wincap.w * float(step.get("offset_x") or 0))
+            offset_y      = int(wincap.h * float(step.get("offset_y") or 0))
+            guard_outside = bool(step.get("guard_outside", True))
+            pos_refresh          = float(step.get("position_refresh_sec") or 0)
+            offset_change_time   = float(step.get("offset_change_time", 1.0))
+            close_ui_check   = bool(step.get("close_ui_check", True))
+            close_ui_click_x = float(step.get("close_ui_click_x", 0.03))
+            close_ui_click_y = float(step.get("close_ui_click_y", 0.08))
+            close_ui_back_btn = step.get("close_ui_back_button")
+
+            _corner_cfg = step.get("corner")
+            if _corner_cfg:
+                if "offset_x" in _corner_cfg or "offset_y" in _corner_cfg:
+                    _cox = _corner_cfg.get("offset_x", 0.05)
+                    _coy = _corner_cfg.get("offset_y", 0.05)
+                    _corner_pos = wincap.get_screen_position(
+                        (int(wincap.w * _cox), int(wincap.h * _coy))
+                    )
+                else:
+                    _corner_pos = (int(_corner_cfg["x"]), int(_corner_cfg["y"]))
+            else:
+                _corner_pos = None
+            _corner_every = int((_corner_cfg or {}).get("every", 1000))
+
+            elapsed = now - self.step_start_time
+
+            # ── Storm already running: check completion / position refresh ─────
+            if self._storm_clicker_active:
+                _n       = self._fast_clicker.click_count
+                _elapsed = max(0.001, now - self._storm_start_t)
+                _done    = (max_clicks > 0 and _n >= max_clicks) or (_elapsed >= storm_sec)
+                if _done:
+                    self._fast_clicker.stop()
+                    self._window_click_guard.stop()
+                    self._storm_clicker_active = False
+                    _rate = round(_n / _elapsed)
+                    log.info(
+                        "[Runner] {} → storm ended: {} clicks in {:.1f}s (~{}/s)".format(
+                            self._step_label(step), _n, _elapsed, _rate,
+                        )
+                    )
+                    self._advance_step(True, step=step)
+                    return "running"
+
+                # Re-detect template position and restart FastClicker at new coords.
+                # If template is gone on refresh → stop storm immediately.
+                if pos_refresh > 0:
+                    _refresh_elapsed = now - getattr(self, "_storm_pos_refresh_t", self._storm_start_t)
+                    if _refresh_elapsed >= pos_refresh:
+                        self._storm_pos_refresh_t = now
+                        vision = self._get_vision(template)
+                        pts = vision.find(screenshot, threshold=threshold) if vision else []
+                        if pts:
+                            _cx, _cy = int(pts[0][0]), int(pts[0][1])
+                            _sx, _sy = wincap.get_screen_position((_cx, _cy))
+                            _rl, _rt = wincap.get_screen_position((0, 0))
+                            _rr, _rb = _rl + wincap.w, _rt + wincap.h
+                            if not (_rl <= _sx < _rr and _rt <= _sy < _rb):
+                                log.warning(
+                                    "[Runner] {} → refresh target ({},{}) outside game window, "
+                                    "skipping reposition".format(
+                                        self._step_label(step), _sx, _sy,
+                                    )
+                                )
+                            else:
+                                self._fast_clicker.stop()
+                                self._fast_clicker.start(
+                                    _sx, _sy,
+                                    rate=0,
+                                    offset_x=offset_x,
+                                    offset_y=offset_y,
+                                    corner_pos=_corner_pos,
+                                    corner_every=_corner_every,
+                                    win_bounds=(_rl, _rt, _rr, _rb),
+                                    offset_change_time=offset_change_time,
+                                )
+                                log.info(
+                                    "[Runner] {} → position refresh at ({},{})".format(
+                                        self._step_label(step), _sx, _sy,
+                                    )
+                                )
+                        else:
+                            # Template disappeared → stop storm
+                            _n = self._fast_clicker.click_count
+                            _elapsed = max(0.001, now - self._storm_start_t)
+                            self._fast_clicker.stop()
+                            self._window_click_guard.stop()
+                            self._storm_clicker_active = False
+                            log.info(
+                                "[Runner] {} → template gone on refresh, storm stopped "
+                                "({} clicks in {:.1f}s)".format(
+                                    self._step_label(step), _n, _elapsed,
+                                )
+                            )
+                            self._advance_step(True, step=step)
+
+                # ── close_ui_check: every 1s, if template not visible → dismiss UI ──
+                # Runs on its own 1-second timer, independent of position_refresh_sec.
+                if close_ui_check:
+                    _cui_elapsed = now - getattr(self, "_storm_cui_check_t", self._storm_start_t)
+                    if _cui_elapsed >= 1.0:
+                        self._storm_cui_check_t = now
+                        _cui_vision = self._get_vision(template)
+                        _cui_visible = bool(
+                            _cui_vision and _cui_vision.find(screenshot, threshold=threshold)
+                        )
+                        if not _cui_visible:
+                            # Template not visible → a UI overlay may have appeared.
+                            # Click once to dismiss it: prefer BackButton if configured and found.
+                            _dismissed = False
+                            if close_ui_back_btn:
+                                _vback = self._get_vision(close_ui_back_btn)
+                                if _vback:
+                                    _bpts = _vback.find(screenshot, threshold=0.75)
+                                    if _bpts:
+                                        _bsx, _bsy = wincap.get_screen_position(
+                                            (int(_bpts[0][0]), int(_bpts[0][1]))
+                                        )
+                                        self._safe_click(_bsx, _bsy, wincap, "storm close_ui_check back")
+                                        log.info(
+                                            "[Runner] {} → close_ui_check: BackButton clicked "
+                                            "({},{})".format(self._step_label(step), _bsx, _bsy)
+                                        )
+                                        _dismissed = True
+                            if not _dismissed:
+                                _cpx = int(wincap.w * close_ui_click_x)
+                                _cpy = int(wincap.h * close_ui_click_y)
+                                _csx, _csy = wincap.get_screen_position((_cpx, _cpy))
+                                self._safe_click(_csx, _csy, wincap, "storm close_ui_check")
+                                log.info(
+                                    "[Runner] {} → close_ui_check: dismissed UI at ({},{})".format(
+                                        self._step_label(step), _csx, _csy,
+                                    )
+                                )
+
+                return "running"
+
+            # ── Storm not started yet: search for template ─────────────────────
+            if elapsed >= timeout_sec:
+                log.info("[Runner] {} → timeout ({:.0f}s), not found".format(
+                    self._step_label(step), timeout_sec))
+                self._advance_step(False, step=step)
+                return "running"
+
+            vision = self._get_vision(template)
+            if vision is None:
+                log.warning("[Runner] {} → template not found: {}".format(
+                    self._step_label(step), template))
+                self._advance_step(False, step=step)
+                return "running"
+
+            points = vision.find(screenshot, threshold=threshold)
+            if not points:
+                return "running"   # keep searching
+
+            cx, cy = int(points[0][0]), int(points[0][1])
+            sx, sy = wincap.get_screen_position((cx, cy))
+
+            # Sanity-check: click target must be inside game window bounds
+            _win_left, _win_top = wincap.get_screen_position((0, 0))
+            _win_right  = _win_left + wincap.w
+            _win_bottom = _win_top  + wincap.h
+            if not (_win_left <= sx < _win_right and _win_top <= sy < _win_bottom):
+                log.warning(
+                    "[Runner] {} → click target ({},{}) outside game window "
+                    "(%d,%d)→(%d,%d), skipping".format(
+                        self._step_label(step), sx, sy,
+                    ) % (_win_left, _win_top, _win_right, _win_bottom)
+                )
+                return "running"
+
+            # Install guard before starting FastClicker
+            if guard_outside:
+                self._window_click_guard.start(_win_left, _win_top, _win_right, _win_bottom)
+
+            self._storm_start_t = now
+            self._storm_pos_refresh_t = now
+            self._storm_cui_check_t = now
+            self._storm_clicker_active = True
+            self._fast_clicker.start(
+                sx, sy,
+                rate=0,
+                offset_x=offset_x,
+                offset_y=offset_y,
+                corner_pos=_corner_pos,
+                corner_every=_corner_every,
+                win_bounds=(_win_left, _win_top, _win_right, _win_bottom),
+                offset_change_time=offset_change_time,
+            )
+            log.info(
+                "[Runner] {} → storm started at ({},{}) storm_sec={} max_clicks={} guard={}".format(
+                    self._step_label(step), sx, sy, storm_sec,
+                    max_clicks or "unlimited", guard_outside,
+                )
+            )
+            return "running"
+
         # unknown type -> skip (true so next step still runs)
         self._advance_step(True)
         return "running"
+
+    def _safe_click(self, sx: int, sy: int, wincap, label: str = "") -> bool:
+        """Click at screen coords (sx, sy) only if inside game window bounds.
+
+        Returns True when the click fires, False when skipped (out of bounds).
+        All regular click operations go through this to prevent accidental
+        clicks outside the game window.
+        """
+        _l, _t = wincap.get_screen_position((0, 0))
+        _r = _l + wincap.w
+        _b = _t + wincap.h
+        if not (_l <= sx < _r and _t <= sy < _b):
+            log.warning(
+                "[Runner] safe_click skipped (%d,%d) outside game window (%d,%d)→(%d,%d)%s",
+                sx, sy, _l, _t, _r, _b,
+                " [{}]".format(label) if label else "",
+            )
+            return False
+        pyautogui.click(sx, sy)
+        return True
+
+    def _safe_move(self, sx: int, sy: int, wincap, label: str = "") -> bool:
+        """Move mouse to (sx, sy) only if inside game window bounds.
+
+        Returns True when the move is applied, False when skipped.
+        Caller is responsible for the subsequent press/release.
+        """
+        _l, _t = wincap.get_screen_position((0, 0))
+        _r = _l + wincap.w
+        _b = _t + wincap.h
+        if not (_l <= sx < _r and _t <= sy < _b):
+            log.warning(
+                "[Runner] safe_move skipped (%d,%d) outside game window (%d,%d)→(%d,%d)%s",
+                sx, sy, _l, _t, _r, _b,
+                " [{}]".format(label) if label else "",
+            )
+            return False
+        _mouse_ctrl.position = (sx, sy)
+        return True
 
     def _step_label(self, step):
         """Tra ve chuoi mo ta ngan gon cho step, dung trong log."""
@@ -2340,6 +2808,40 @@ class FunctionRunner:
         self._step_last_click_t = None
         self._debug_click_saved = False
         self._step_pos_cache = None
+
+    def _fail_step(self, step, reason: str = "") -> None:
+        """Handle a step failure: jump to on_fail_goto (with optional max_retries), or advance normally.
+
+        This centralises the on_fail_goto logic so every event type can use it
+        without duplicating the retry-counter bookkeeping.
+        """
+        on_fail_goto = step.get("on_fail_goto")
+        if on_fail_goto is None:
+            self._advance_step(False, step=step)
+            return
+
+        max_retries = step.get("max_retries")  # None = unlimited
+        label = self._step_label(step)
+        target = int(on_fail_goto)
+
+        if max_retries is None:
+            log.info("[Runner] {} {} → goto step {} (unlimited retries)".format(
+                label, reason, target))
+            self._goto_step(target)
+            return
+
+        max_retries = int(max_retries)
+        cur_idx = self.step_index
+        retry_count = self._step_retry_counts.get(cur_idx, 0) + 1
+        if retry_count <= max_retries:
+            self._step_retry_counts[cur_idx] = retry_count
+            log.info("[Runner] {} {} → goto step {} (retry {}/{})".format(
+                label, reason, target, retry_count, max_retries))
+            self._goto_step(target)
+        else:
+            log.info("[Runner] {} {} → max_retries ({}) reached → advance".format(
+                label, reason, max_retries))
+            self._advance_step(False, step=step)
 
 
 def load_config(config_path="config.yaml"):

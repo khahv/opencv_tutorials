@@ -687,7 +687,7 @@ alliance_attack_detector = AllianceAttackDetector(
 )
 
 treasure_detector = TreasureDetector(
-    treasure_template_path="buttons_template/Treasure1.png",
+    treasure_template_path="buttons_template/Treasure1-3.png",
     threshold=0.70,
     clear_sec=10.0,
     re_trigger_interval_sec=60.0,  # emit "started" again while visible; per-function cooldown in config throttles actual runs

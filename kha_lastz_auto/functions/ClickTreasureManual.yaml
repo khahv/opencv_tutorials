@@ -1,21 +1,25 @@
-# Function: ClickTreasure (click lien tuc vao Treasure Helicopter)
+# Function: ClickTreasureManual (click lien tuc vao Treasure Helicopter)
 description: "Click lien tuc vao Treasure Helicopter khi match"
 steps:
-  - event_type: match_click
-    template: buttons_template/Treasure3.png
+  - event_type: match_storm_click
+    template: buttons_template/TreasureTest.png
     threshold: 0.6
     run_always: true
-    one_shot: false
-    timeout_sec: 60
+    timeout_sec: 60      # wait up to 60s for template to appear
+    storm_sec: 300       # click for up to 300s once found
     max_clicks: 3000
-    click_offset_y: 0.1
-    cache_position: true
-    click_storm_sec: 60         # detect once, storm for entire session (no detection gaps)
-    click_storm_offset_x: 30   # ±30px random X offset per click
-    click_storm_offset_y: 30   # ±30px random Y offset per click
-    click_storm_corner:        # every N clicks, send 1 click to this position
-      offset_x: 0.05          # 5% from left edge of game window (same as click_position)
-      offset_y: 0.05          # 5% from top edge of game window
-      every: 20               # click corner once per 20 normal clicks
-    debug_click: false
-    debug_log: false
+    offset_change_time: 2
+    offset_x: 0.03       # ±3% of window width (~32px on 1080px window)
+    offset_y: 0.03       # ±3% of window height (~58px on 1920px window)
+    guard_outside: true  # block user clicks outside game window
+    close_ui_check: true           # mặc định true, tắt thì set false
+    close_ui_click_x: 0.03        # vị trí click để dismiss UI (default)
+    close_ui_click_y: 0.08
+    close_ui_back_button: buttons_template/BackButton.png  # optional
+
+
+    #position_refresh_sec: 1
+    corner:              # every N clicks, send 1 click here to keep window focused
+      offset_x: 0.05
+      offset_y: 0.05
+      every: 20

@@ -9,10 +9,8 @@ steps:
 
   - event_type: match_click
     template_array:
-      - buttons_template/Treasure1.png
-      - buttons_template/Treasure1-1.png
-      - buttons_template/Treasure1-2.png
-    threshold: 0.6
+      - buttons_template/Treasure1-3.png
+    threshold: 0.7
     one_shot: true
     timeout_sec: 10
     debug_log: true
@@ -35,23 +33,20 @@ steps:
     duration_sec: 2
 
 
-  - event_type: match_click
+  - event_type: match_storm_click
     template: buttons_template/Treasure3.png
     threshold: 0.6
     run_always: true
-    one_shot: false
     timeout_sec: 5
+    storm_sec: 300
     max_clicks: 3000
-    click_offset_y: 0.1
-    cache_position: true
-    click_storm_sec: 300         # detect once, storm for entire session (no detection gaps)
-    position_refresh_interval: 1  # every 10s re-detect template on fresh screenshot and update click position
-    click_storm_offset_x: 30   # ±30px random X offset per click
-    click_storm_offset_y: 30   # ±30px random Y offset per click
-    click_storm_corner:        # every N clicks, send 1 click to this position
-      offset_x: 0.05          # 5% from left edge of game window (same as click_position)
-      offset_y: 0.05          # 5% from top edge of game window
-      every: 20               # click corner once per 20 normal clicks
-    debug_click: false
-    debug_log: false
+    offset_x: 30
+    offset_y: 30
+    offset_change_time: 2
+    guard_outside: true  # block user clicks outside game window
+    close_ui_check: true           # mặc định true, tắt thì set false
+    close_ui_click_x: 0.03        # vị trí click để dismiss UI (default)
+    close_ui_click_y: 0.08
+    close_ui_back_button: buttons_template/BackButton.png  # optional
+
 

@@ -146,6 +146,20 @@ class Vision:
         norm = cv.resize(haystack_img, (nw, nh), interpolation=interp)
         return norm, scale
 
+    def match_score(self, haystack_img) -> float:
+        """Return the best grayscale matchTemplate score (0..1).
+
+        Returns -1.0 when the haystack is too small to match against the needle,
+        so callers can distinguish "couldn't search" from "searched and scored low".
+        """
+        norm, _scale = self._norm_haystack(haystack_img)
+        if self.needle_w > norm.shape[1] or self.needle_h > norm.shape[0]:
+            return -1.0
+        norm_gray = _get_gray(norm)
+        result = cv.matchTemplate(norm_gray, self.needle_gray, self.method)
+        _, max_val, _, _ = cv.minMaxLoc(result)
+        return float(max_val)
+
     @timeit
     def exists(self, haystack_img, threshold=0.5, debug_log=False) -> bool:
         """Fast existence check — matchTemplate on grayscale only."""

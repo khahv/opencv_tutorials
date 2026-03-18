@@ -49,8 +49,8 @@ steps:
     refresh_sleep_sec: 1.5        # wait for new truck list after refresh
     max_refreshes: 200
     timeout_sec: 5000
-    debug_log: true
-    debug_save: true
+    # debug_log: true
+    # debug_save: true
 
     # Filter 1 – OrangeHeroFragment must appear exactly fragment_count times
     fragment_template: buttons_template/OrangeHeroFragment.png

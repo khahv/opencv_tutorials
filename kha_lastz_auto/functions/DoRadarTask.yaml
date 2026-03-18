@@ -12,51 +12,87 @@ steps:
     template: buttons_template/Radar2.png
     threshold: 0.7
     one_shot: true
-    timeout_sec: 2
+    timeout_sec: 4
 
   - event_type: sleep
-    duration_sec: 3
+    duration_sec: 1
+
+  - event_type: match_click
+    template: buttons_template/RadarLaura.png
+    threshold: 0.7
+    one_shot: true
+    timeout_sec: 3
+
+  - event_type: sleep
+    duration_sec: 1
+    run_always: true
 
   - event_type: match_click
     template_array:
-      - buttons_template/Radar4.png
-      - buttons_template/Radar4-1.png
-    threshold: 0.95
+      - template: buttons_template/Radar5-1.png
+        match_center_x: 0.0
+        match_center_y: 0.0
+        exclude_area_x: 1.7
+        exclude_area_y: 1.6
+      - template: buttons_template/Radar5-2.png
+        match_center_x: 0.0
+        match_center_y: -0.05
+        exclude_area_x: 1.7
+        exclude_area_y: 2.0
+    exclude_template: buttons_template/RadarRedDot.png
+    exclude_threshold: 0.85
+
+    threshold: 0.8
     one_shot: true
     timeout_sec: 2
- 
+    debug_log: true
+
+    max_tries: 30
+    on_max_tries_reach_goto: 11
+    dedup_enable: true
+    debug_save: true
+
+ # found Radar Zombie, go to previous step (step 5)
   - event_type: match_click
     template: buttons_template/RadarZombie.png
     threshold: 0.85
     one_shot: true
     timeout_sec: 2
-    on_success_goto: 2
+    on_success_goto: 5
 
+  
+  # - event_type: match_click
+  #   template: buttons_template/RadarTownIcon.png
+  #   threshold: 0.85
+  #   match_color: true
+  #   one_shot: true
+  #   timeout_sec: 2
+  #   on_fail_goto: 0
+
+  # click go button  
   - event_type: match_click
-    template: buttons_template/Radar3.png
-    threshold: 0.6
+    template_array:
+      - buttons_template/Radar3.png
+      - buttons_template/RadarTownIcon.png
+    threshold: 0.8
     one_shot: true
     timeout_sec: 2
+    debug_log: true
     run_always: true
+    on_fail_goto: 5
 
   - event_type: sleep
-    duration_sec: 3
+    duration_sec: 1
     run_always: true
   
 
   - event_type: match_click
-    template: buttons_template/RadarAttack.png
+    template_array:
+      - buttons_template/RadarAttack.png
+      - buttons_template/RadarHelp.png
     threshold: 0.7
     one_shot: true
-    timeout_sec: 2
-
-  - event_type: match_click
-    template: buttons_template/RadarHelp.png
-    threshold: 0.7
-    one_shot: true
-    run_always: true
-    
-    timeout_sec: 2
+    timeout_sec: 5
 
   - event_type: match_click
     template_array:

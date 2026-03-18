@@ -42,6 +42,7 @@ class TreasureDetector:
             None       — no state change
         """
         search_img = screenshot
+        crop_info = "full"
         if self._roi_center_x is not None and self._roi_center_y is not None and screenshot is not None:
             sh, sw = screenshot.shape[:2]
             scale = get_global_scale()
@@ -56,7 +57,21 @@ class TreasureDetector:
             rx2 = min(sw, cx_px + half_w)
             ry2 = min(sh, cy_px + half_h)
             search_img = screenshot[ry:ry2, rx:rx2]
-        icon = self._vision.exists(search_img, threshold=self._threshold)
+            crop_h, crop_w = search_img.shape[:2]
+            crop_info = (
+                "roi=({},{})→({},{}) crop={}x{} "
+                "needle={}x{} scale={:.2f}".format(
+                    rx, ry, rx2, ry2, crop_w, crop_h,
+                    self._vision.needle_w, self._vision.needle_h, scale,
+                )
+            )
+
+        score = self._vision.match_score(search_img)
+        icon = score >= self._threshold
+        log.debug(
+            "[TreasureDetector] score=%.3f threshold=%.2f found=%s visible=%s %s",
+            score, self._threshold, icon, self._treasure_visible, crop_info,
+        )
         now = time.time()
 
         if not self._treasure_visible:
