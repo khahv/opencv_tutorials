@@ -161,11 +161,15 @@ class ConnectionDetector:
             return True
         return (now_ts - self._last_run_time) >= self._interval_sec
 
-    def update(self, wincap, vision_cache, log, current_screenshot=None):
+    def update(self, wincap, vision_cache, log, current_screenshot=None, is_busy=None):
         """
         Call every detector tick. Process check runs every tick (restart LastZ soon after window closed).
         Full connection check (close_ui, world_zoomout, BuffIcon) runs every interval_sec (e.g. 5 min).
         When current_screenshot is provided and PasswordSlot is visible (login screen), skip full check.
+
+        Args:
+            is_busy: optional callable returning True while a bot function is actively running.
+                     Full check is deferred (interval reset) to avoid interfering with running functions.
         """
         now = time.time()
         pid = self._lastz_pid_ref.get("pid")
@@ -201,6 +205,11 @@ class ConnectionDetector:
 
         # 2) Full connection check only every interval_sec (e.g. 5 min)
         if not self.should_run(now):
+            return
+        # Defer full check while a bot function is running — avoid interfering with active game actions
+        if is_busy and is_busy():
+            log.debug("[ConnectionDetector] Full check deferred — bot function is running")
+            self._last_run_time = now  # reset interval, check again after interval_sec
             return
         # Skip connection check when on login screen (PasswordSlot visible)
         if current_screenshot is not None:

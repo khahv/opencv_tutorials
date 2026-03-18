@@ -159,13 +159,16 @@ class Vision:
 
     @timeit
     def find(self, haystack_img, threshold=0.5, debug_mode=None, is_color=False,
-             debug_log=False, multi=False, color_tolerance=None, ratio_test=None, min_inliers=None):
+             debug_log=False, multi=False, color_tolerance=None, ratio_test=None, min_inliers=None,
+             log_all_scores=False, log_scores_floor=0.3, log_scores_top_k=20):
         """
         Find needle in haystack. Returns list of (cx, cy, w, h) in haystack coords.
         is_color=False → grayscale matchTemplate.
         is_color=True  → BGR matchTemplate (color preserved).
         multi=True + is_color → return all matches (groupRectangles).
         color_tolerance → optional BGR mean distance filter when is_color=True.
+        log_all_scores=True → log top-K candidate positions and scores (including below threshold)
+                              for threshold tuning. Marks each ✓ (pass) or ✗ (fail).
         """
         norm, scale = self._norm_haystack(haystack_img)
         nw, nh = self.needle_w, self.needle_h
@@ -181,6 +184,35 @@ class Vision:
         else:
             norm_gray = _get_gray(norm)
             result = cv.matchTemplate(norm_gray, self.needle_gray, self.method)
+
+        if log_all_scores:
+            _floor = min(log_scores_floor, max(0.0, threshold - 0.3))
+            _score_locs = list(zip(*np.where(result >= _floor)[::-1]))
+            if not _score_locs:
+                # show at least the single best
+                _, _bv, _, _bl = cv.minMaxLoc(result)
+                _score_locs = [_bl]
+            # (x, y, score) sorted desc
+            _score_pts = sorted(
+                [(int(loc[0]), int(loc[1]), float(result[loc[1], loc[0]])) for loc in _score_locs],
+                key=lambda t: t[2], reverse=True
+            )
+            # group nearby to avoid duplicate peaks (within half needle size)
+            _half_nw, _half_nh = max(nw // 2, 4), max(nh // 2, 4)
+            _grouped: list = []
+            for x, y, sc in _score_pts:
+                if not any(abs(x - gx) < _half_nw and abs(y - gy) < _half_nh for gx, gy, _ in _grouped):
+                    _grouped.append((x, y, sc))
+            _top = _grouped[:log_scores_top_k]
+            _parts = [
+                "({},{}) {:.3f}{}".format(
+                    int((x + nw // 2) * scale), int((y + nh // 2) * scale),
+                    sc, " \u2713" if sc >= threshold else " \u2717"
+                )
+                for x, y, sc in _top
+            ]
+            _log.info("[vision:scores] [%s] threshold=%.2f | %s",
+                      self.needle_name, threshold, " | ".join(_parts))
 
         locs = list(zip(*np.where(result >= threshold)[::-1]))
         if not locs:
@@ -274,3 +306,69 @@ class Vision:
         if debug_log and points:
             _log.debug("[vision:debug] [%s] Match: %d (Thresh: %.2f)", self.needle_name, len(points), threshold)
         return points
+
+    def find_multi_with_scores(self, haystack_img, threshold: float = 0.5,
+                               is_color: bool = False, color_tolerance=None) -> list:
+        """
+        Like find(multi=True) but returns (cx, cy, w, h, score) tuples sorted by score desc.
+        Use for selecting the top-N best matches (e.g. yellow trucks).
+        """
+        norm, scale = self._norm_haystack(haystack_img)
+        nw, nh = self.needle_w, self.needle_h
+        if nw > norm.shape[1] or nh > norm.shape[0]:
+            return []
+
+        if is_color:
+            if len(norm.shape) == 2:
+                norm = cv.cvtColor(norm, cv.COLOR_GRAY2BGR)
+            needle_bgr = self.needle_img if len(self.needle_img.shape) == 3 else \
+                cv.cvtColor(self.needle_img, cv.COLOR_GRAY2BGR)
+            result = cv.matchTemplate(norm, needle_bgr, self.method)
+        else:
+            norm_gray = _get_gray(norm)
+            result = cv.matchTemplate(norm_gray, self.needle_gray, self.method)
+
+        locs = list(zip(*np.where(result >= threshold)[::-1]))
+        if not locs:
+            return []
+
+        rects = []
+        for loc in locs:
+            r = [int(loc[0]), int(loc[1]), nw, nh]
+            rects.append(r)
+            rects.append(r)
+        rects, _ = cv.groupRectangles(rects, groupThreshold=1, eps=0.5)
+        if not len(rects):
+            return []
+
+        # Optional color_tolerance filter
+        if is_color and color_tolerance is not None:
+            hay = norm if len(norm.shape) == 3 else cv.cvtColor(norm, cv.COLOR_GRAY2BGR)
+            needle_bgr = self.needle_img if len(self.needle_img.shape) == 3 else \
+                cv.cvtColor(self.needle_img, cv.COLOR_GRAY2BGR)
+            needle_mean = np.mean(needle_bgr.astype(np.float32).reshape(-1, 3), axis=0)
+            filtered = []
+            for (x, y, w, h) in rects:
+                region = hay[y:y+h, x:x+w].astype(np.float32)
+                dist = float(np.linalg.norm(np.mean(region.reshape(-1, 3), axis=0) - needle_mean))
+                if dist <= color_tolerance:
+                    filtered.append((x, y, w, h))
+            rects = filtered
+            if not rects:
+                return []
+
+        results: list = []
+        for (x, y, w, h) in rects:
+            # Max score within the grouped region
+            r_h = min(h, result.shape[0] - y)
+            r_w = min(w, result.shape[1] - x)
+            if r_h > 0 and r_w > 0:
+                score = float(np.max(result[y:y + r_h, x:x + r_w]))
+            else:
+                score = float(result[max(0, y), max(0, x)])
+            cx = int((x + w // 2) * scale)
+            cy = int((y + h // 2) * scale)
+            results.append((cx, cy, int(w * scale), int(h * scale), score))
+
+        results.sort(key=lambda t: t[4], reverse=True)
+        return results

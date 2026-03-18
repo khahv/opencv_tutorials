@@ -5,11 +5,13 @@ steps:
   - event_type: close_ui
     template: buttons_template/HeadquartersButton.png
     world_button: buttons_template/WorldButton.png
-    threshold: 0.75
+    back_button: buttons_template/BackButton.png
 
   - event_type: base_zoomout
     template: buttons_template/HeadquartersButton.png
     world_button: buttons_template/WorldButton.png
+    back_button: buttons_template/BackButton.png
+    back_button_threshold: 0.8
     threshold: 0.75
     scroll_times: 5
     debug_log: true

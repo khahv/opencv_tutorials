@@ -75,9 +75,12 @@ def read_region_easy(crop_bgr, digits_only=False, pattern=None, debug_label=None
     elif max(h, w) < 150:
         crop_bgr = cv.resize(crop_bgr, (w * 2, h * 2), interpolation=cv.INTER_CUBIC)
 
-    if debug_label:
+    import datetime
+    _ts = datetime.datetime.now().strftime("%H%M%S_%f")[:-3]
+    _debug_label_ts = "{}_{}".format(debug_label, _ts) if debug_label else None
+    if _debug_label_ts:
         os.makedirs("debug_ocr", exist_ok=True)
-        cv.imwrite("debug_ocr/{}_raw.png".format(debug_label), crop_bgr)
+        cv.imwrite("debug_ocr/{}_raw.png".format(_debug_label_ts), crop_bgr)
 
     # For digits_only: threshold to isolate white/bright text (game UI numbers are
     # white with dark outline on colored backgrounds). This removes icon/background
@@ -87,8 +90,8 @@ def read_region_easy(crop_bgr, digits_only=False, pattern=None, debug_label=None
         gray = cv.cvtColor(crop_bgr, cv.COLOR_BGR2GRAY)
         _, mask = cv.threshold(gray, 180, 255, cv.THRESH_BINARY)
         ocr_input = cv.cvtColor(mask, cv.COLOR_GRAY2BGR)
-        if debug_label:
-            cv.imwrite("debug_ocr/{}_thresh.png".format(debug_label), ocr_input)
+        if _debug_label_ts:
+            cv.imwrite("debug_ocr/{}_thresh.png".format(_debug_label_ts), ocr_input)
 
     try:
         if digits_only:
@@ -108,19 +111,19 @@ def read_region_easy(crop_bgr, digits_only=False, pattern=None, debug_label=None
         raw = re.sub(r"[^\d,.]", "", raw)
 
     if not raw:
-        if debug_label:
-            _log.info("[OCR] {} raw=(empty)".format(debug_label))
+        if _debug_label_ts:
+            _log.info("[OCR] {} raw=(empty)".format(_debug_label_ts))
         return ""
 
-    if debug_label:
-        _log.info("[OCR] {} raw={!r}".format(debug_label, raw))
+    if _debug_label_ts:
+        _log.info("[OCR] {} raw={!r}".format(_debug_label_ts, raw))
 
     if pattern:
         # Normalize OCR noise: ",." often read instead of "," (e.g. 65,292,.028 → 65,292,028)
         raw = raw.replace(",.", ",")
         m = re.search(pattern, raw)
-        if debug_label and not m:
-            _log.info("[OCR] {} pattern {!r} → no match".format(debug_label, pattern))
+        if _debug_label_ts and not m:
+            _log.info("[OCR] {} pattern {!r} → no match".format(_debug_label_ts, pattern))
         return m.group(1) if m else ""
 
     return raw

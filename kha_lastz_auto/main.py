@@ -688,7 +688,7 @@ alliance_attack_detector = AllianceAttackDetector(
 
 treasure_detector = TreasureDetector(
     treasure_template_path="buttons_template/Treasure1.png",
-    threshold=0.65,
+    threshold=0.70,
     clear_sec=10.0,
     re_trigger_interval_sec=60.0,  # emit "started" again while visible; per-function cooldown in config throttles actual runs
     roi_center_x=0.74,
@@ -771,7 +771,8 @@ def _detector_loop():
                 _last_detector_screenshot_fail_log = _now
             # Still run connection_detector so it can check process and restart LastZ if needed
             try:
-                connection_detector.update(wincap, vision_cache, log, current_screenshot=None)
+                connection_detector.update(wincap, vision_cache, log, current_screenshot=None,
+                                           is_busy=lambda: runner.state == "running")
             except Exception as conn_e:
                 log.error("[Detector] connection_detector on screenshot fail: {}".format(conn_e))
             continue
@@ -836,7 +837,8 @@ def _detector_loop():
 
         # ── Connection detector (every 5 min when Is Running: world_zoomout → click middle → BuffIcon; kill+restart if disconnected) ──
         try:
-            connection_detector.update(wincap, vision_cache, log, current_screenshot=img)
+            connection_detector.update(wincap, vision_cache, log, current_screenshot=img,
+                                       is_busy=lambda: runner.state == "running")
         except Exception as e:
             log.error("[Detector] #{} connection_detector crashed: {}".format(_tick, e))
     log.info("[Detector] Background thread exited")

@@ -201,13 +201,15 @@ def do_base_zoomout(
     color_tolerance=None,
 ):
     """
-    Zoom out from base to world view: find HQ or World, click in sequence, then scroll (one attempt).
+    Navigate to base view then scroll to zoom out the map.
+
+    Logic (each step uses a fresh screenshot, sleep 2s before checking):
+    - WorldButton visible → on base view → stop clicking → scroll → done
+    - HeadquartersButton visible (World not visible) → on world view → click HQ → sleep 2s → fresh screenshot → repeat
+    - Loop up to 3 attempts; scroll only once WorldButton is confirmed visible.
+
     Returns True if scroll was performed; False otherwise.
     """
-    if screenshot is None and hasattr(wincap, "get_screenshot"):
-        screenshot = wincap.get_screenshot()
-    if screenshot is None:
-        return False
     vision = vision_cache.get(template_path)
     vision_world = vision_cache.get(world_button_path) if world_button_path else None
     if not vision or not vision_world:
@@ -215,12 +217,20 @@ def do_base_zoomout(
             log.warning("%sbase_zoomout: template or world_button not in cache", log_prefix)
         return False
 
-    search_img, roi_offset = _roi_crop(screenshot, vision, roi_center_x, roi_center_y, roi_padding)
-    if search_img is None or search_img.size == 0:
-        search_img = screenshot
-        roi_offset = (0, 0)
-
     find_kw = _find_kwargs(debug_log=debug_log, match_color=match_color, color_tolerance=color_tolerance)
+
+    def _detect(scr):
+        """Return (hq_points, world_points) from a screenshot using ROI crop."""
+        si_hq, off_hq = _roi_crop(scr, vision, roi_center_x, roi_center_y, roi_padding)
+        if si_hq is None or si_hq.size == 0:
+            si_hq, off_hq = scr, (0, 0)
+        hq = _shift_points(vision.find(si_hq, threshold=threshold, **find_kw) or [], off_hq)
+
+        si_w, off_w = _roi_crop(scr, vision_world, roi_center_x, roi_center_y, roi_padding)
+        if si_w is None or si_w.size == 0:
+            si_w, off_w = scr, (0, 0)
+        world = _shift_points(vision_world.find(si_w, threshold=threshold, **find_kw) or [], off_w)
+        return hq, world
 
     def _scroll():
         if hasattr(wincap, "focus_window"):
@@ -236,62 +246,55 @@ def do_base_zoomout(
         if log_prefix:
             log.info("%sbase_zoomout scrolled x%d at center", log_prefix, scroll_times)
 
-    # (1) HQ visible: click HQ → then check World → scroll if World visible
-    points_hq = vision.find(search_img, threshold=threshold, **find_kw)
-    points_hq = _shift_points(points_hq if points_hq else [], roi_offset)
-    if points_hq and len(points_hq) > 0:
-        sx, sy = wincap.get_screen_position((points_hq[0][0], points_hq[0][1]))
-        pyautogui.click(sx, sy)
-        time.sleep(2)
-        scr2 = wincap.get_screenshot() if hasattr(wincap, "get_screenshot") else None
-        if scr2 is not None:
-            search2, off2 = _roi_crop(scr2, vision_world, roi_center_x, roi_center_y, roi_padding)
-            if search2 is None or search2.size == 0:
-                search2, off2 = scr2, (0, 0)
-            points_w = vision_world.find(search2, threshold=threshold, **find_kw)
-            points_w = _shift_points(points_w if points_w else [], off2)
-            if points_w and len(points_w) > 0:
-                _scroll()
-                return True
-            points_hq2 = vision.find(search2, threshold=threshold, **find_kw)
-            points_hq2 = _shift_points(points_hq2 if points_hq2 else [], off2)
-            if points_hq2 and len(points_hq2) > 0:
-                sx2, sy2 = wincap.get_screen_position((points_hq2[0][0], points_hq2[0][1]))
-                pyautogui.click(sx2, sy2)
-                time.sleep(2)
-                scr3 = wincap.get_screenshot() if hasattr(wincap, "get_screenshot") else None
-                if scr3 is not None:
-                    search3, off3 = _roi_crop(scr3, vision_world, roi_center_x, roi_center_y, roi_padding)
-                    if search3 is None or search3.size == 0:
-                        search3, off3 = scr3, (0, 0)
-                    points_w3 = vision_world.find(search3, threshold=threshold, **find_kw)
-                    points_w3 = _shift_points(points_w3 if points_w3 else [], off3)
-                    if points_w3 and len(points_w3) > 0:
-                        _scroll()
-                        return True
+    # Always start with a fresh screenshot
+    scr = wincap.get_screenshot() if hasattr(wincap, "get_screenshot") else None
+    if scr is None:
         return False
 
-    # (2) World visible first: click World → click HQ → scroll
-    points_w = vision_world.find(search_img, threshold=threshold, **find_kw)
-    points_w = _shift_points(points_w if points_w else [], roi_offset)
-    if points_w and len(points_w) > 0:
+    # Special case: if WorldButton already visible on entry → we're on base.
+    # Click World once to go to world view first, then run the main loop below.
+    hq_pts_init, world_pts_init = _detect(scr)
+    if world_pts_init:
+        if log_prefix:
+            log.info("%sbase_zoomout WorldButton visible at start (on base), clicking World to enter world view", log_prefix)
         if hasattr(wincap, "focus_window"):
             wincap.focus_window(force=True)
             time.sleep(0.05)
-        sx_w, sy_w = wincap.get_screen_position((points_w[0][0], points_w[0][1]))
+        sx_w, sy_w = wincap.get_screen_position((world_pts_init[0][0], world_pts_init[0][1]))
         pyautogui.click(sx_w, sy_w)
         time.sleep(2)
-        scr_after = wincap.get_screenshot() if hasattr(wincap, "get_screenshot") else None
-        if scr_after is not None:
-            search_after, off_after = _roi_crop(scr_after, vision, roi_center_x, roi_center_y, roi_padding)
-            if search_after is None or search_after.size == 0:
-                search_after, off_after = scr_after, (0, 0)
-            points_hq_after = vision.find(search_after, threshold=threshold, **find_kw)
-            points_hq_after = _shift_points(points_hq_after if points_hq_after else [], off_after)
-            if points_hq_after and len(points_hq_after) > 0:
-                sx_hq, sy_hq = wincap.get_screen_position((points_hq_after[0][0], points_hq_after[0][1]))
-                pyautogui.click(sx_hq, sy_hq)
-                time.sleep(2)
-        _scroll()
-        return True
+        scr = wincap.get_screenshot() if hasattr(wincap, "get_screenshot") else None
+        if scr is None:
+            return False
+
+    for attempt in range(3):
+        hq_pts, world_pts = _detect(scr)
+
+        # WorldButton visible → on base → scroll and done
+        if world_pts:
+            if log_prefix:
+                log.info("%sbase_zoomout WorldButton visible (attempt %d), scrolling", log_prefix, attempt + 1)
+            _scroll()
+            return True
+
+        # HeadquartersButton visible → on world view → click HQ to navigate to base
+        if hq_pts:
+            if log_prefix:
+                log.info("%sbase_zoomout HQ visible (attempt %d), clicking to navigate to base", log_prefix, attempt + 1)
+            if hasattr(wincap, "focus_window"):
+                wincap.focus_window(force=True)
+                time.sleep(0.05)
+            sx, sy = wincap.get_screen_position((hq_pts[0][0], hq_pts[0][1]))
+            pyautogui.click(sx, sy)
+            time.sleep(2)
+            scr = wincap.get_screenshot() if hasattr(wincap, "get_screenshot") else None
+            if scr is None:
+                return False
+            continue
+
+        # Neither button visible → unknown state, stop
+        if log_prefix:
+            log.warning("%sbase_zoomout: neither HQ nor World visible (attempt %d), aborting", log_prefix, attempt + 1)
+        break
+
     return False

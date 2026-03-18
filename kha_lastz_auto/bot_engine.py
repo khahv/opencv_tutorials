@@ -161,6 +161,19 @@ def _crop_region_relative(screenshot, cx, cy, needle_w, needle_h,
     return crop if crop.size > 0 else None
 
 
+def _iter_templates(step, single_key, list_key):
+    """Yield all template paths from a step that supports both a single key and a list key."""
+    tpl_list = step.get(list_key)
+    if tpl_list and isinstance(tpl_list, list):
+        for t in tpl_list:
+            if t:
+                yield t
+    else:
+        tpl = step.get(single_key)
+        if tpl:
+            yield tpl
+
+
 def collect_templates(functions_dict):
     """Lay danh sach duong dan template tu tat ca steps de tao vision cache."""
     templates = set()
@@ -195,10 +208,20 @@ def collect_templates(functions_dict):
                     templates.add(step["template"])
                 if step.get("world_button"):
                     templates.add(step["world_button"])
+                if step.get("back_button"):
+                    templates.add(step["back_button"])
             if step.get("event_type") == "ocr_log":
                 tpl = step.get("anchor_template") or step.get("template")
                 if tpl:
                     templates.add(tpl)
+            if step.get("event_type") == "find_truck":
+                # single template or list of templates
+                for tpl in _iter_templates(step, "template", "templates"):
+                    templates.add(tpl)
+                for key in ("refresh_template", "fragment_template", "ocr_anchor_template"):
+                    tpl = step.get(key)
+                    if tpl:
+                        templates.add(tpl)
     return list(templates)
 
 
@@ -253,6 +276,16 @@ class FunctionRunner:
                 self.functions = new_functions
         except Exception as e:
             log.warning("[Runner] Failed to reload functions from disk: {}".format(e))
+
+        # Reload fn_settings from .env_config so UI-saved and manually-edited values are always fresh
+        try:
+            from config_manager import load_fn_settings
+            fresh = load_fn_settings()
+            self.fn_settings.clear()
+            self.fn_settings.update(fresh)
+            log.debug("[Runner] fn_settings reloaded: {}".format(self.fn_settings))
+        except Exception as e:
+            log.warning("[Runner] Failed to reload fn_settings: {}".format(e))
 
         if function_name not in self.functions:
             log.info("[Runner] Function not found: {}".format(function_name))
@@ -428,6 +461,7 @@ class FunctionRunner:
             debug_log    = step.get("debug_log", False)
             match_color  = step.get("match_color", False)   # True = BGR match (color-sensitive)
             color_match_tolerance  = step.get("color_match_tolerance")   # BGR mean-color distance cap
+            log_all_scores = step.get("log_all_scores", False)   # log all candidate scores for threshold tuning
             ocr_name_region        = step.get("ocr_name_region")          # [x,y,w,h] ratios → OCR name to the left of truck
             cache_position = step.get("cache_position", False) or step.get("cache_frames", 0) > 0  # match once, reuse forever
 
@@ -479,15 +513,21 @@ class FunctionRunner:
             else:
                 dbg = 'info' if (debug_click or debug_log) else None
                 meta_list = None
+                # track_tried needs all matches (not just the single best) to iterate trucks one by one
+                _use_multi = bool(step.get("track_tried", False))
                 if match_color:
                     result = vision.find(search_img, threshold=threshold, debug_mode=dbg,
                                         is_color=True, debug_log=debug_log,
                                         color_tolerance=color_match_tolerance,
-                                        ratio_test=ratio_test, min_inliers=min_inliers)
+                                        ratio_test=ratio_test, min_inliers=min_inliers,
+                                        log_all_scores=log_all_scores,
+                                        multi=_use_multi)
                     points = result[0] if isinstance(result, tuple) else result
                     meta_list = result[1] if isinstance(result, tuple) and len(result) > 1 else None
                 else:
-                    points = vision.find(search_img, threshold=threshold, debug_mode=dbg, debug_log=debug_log, ratio_test=ratio_test, min_inliers=min_inliers)
+                    points = vision.find(search_img, threshold=threshold, debug_mode=dbg, debug_log=debug_log,
+                                        ratio_test=ratio_test, min_inliers=min_inliers,
+                                        log_all_scores=log_all_scores)
                 # Translate ROI-local coords back to full screenshot coords
                 if points and _roi_offset != (0, 0):
                     ox, oy = _roi_offset
@@ -1366,25 +1406,30 @@ class FunctionRunner:
             template = step.get("template")
             world_button = step.get("world_button")
             threshold = step.get("threshold", 0.75)
+            # back_button uses its own threshold (default higher) to avoid false positives
+            back_button_threshold = float(step.get("back_button_threshold", 0.80))
             debug_log = step.get("debug_log", False)
-            match_color = step.get("match_color", False)
-            color_tol = step.get("color_match_tolerance")
+            debug_save = step.get("debug_save", False)
+            match_color = step.get("match_color", True)
+            color_tol = step.get("color_match_tolerance", 80)
             click_x = float(step.get("click_x", 0.03))
             click_y = float(step.get("click_y", 0.08))
             max_tries = int(step.get("max_tries", 10))
+            back_button  = step.get("back_button")
             vision = self.vision_cache.get(template) if template else None
             vision_world = self.vision_cache.get(world_button) if world_button else None
+            vision_back  = self.vision_cache.get(back_button) if back_button else None
             dbg_mode = "info" if debug_log else None
             _roi_offset = (0, 0)
             _roi_bounds = None
-            _roi_cx = step.get("roi_center_x")
-            _roi_cy = step.get("roi_center_y")
+            _roi_cx = step.get("roi_center_x", 0.93)
+            _roi_cy = step.get("roi_center_y", 0.96)
             if _roi_cx is not None and _roi_cy is not None and vision:
                 _sh, _sw = screenshot.shape[:2]
                 _scale = get_global_scale()
                 _nw_px = max(1, int(vision.needle_w * _scale))
                 _nh_px = max(1, int(vision.needle_h * _scale))
-                _padding = float(step.get("roi_padding", 3.0))
+                _padding = float(step.get("roi_padding", 2.0))
                 _cx_px = int(_roi_cx * _sw)
                 _cy_px = int(_roi_cy * _sh)
                 _half_w = int(_nw_px * _padding)
@@ -1410,6 +1455,12 @@ class FunctionRunner:
 
             scr = screenshot
             for _try in range(max_tries):
+                # Stop immediately if the bot was paused/cancelled mid-loop
+                if self.bot_paused and self.bot_paused.get("paused", False):
+                    if debug_log:
+                        log.info("[Runner] close_ui → aborted (bot paused)")
+                    return "running"
+
                 _search = _close_ui_search_img(scr)
                 _phq = vision.find(_search, threshold=threshold, debug_mode=dbg_mode, debug_log=debug_log,
                                    is_color=bool(match_color), color_tolerance=color_tol) if vision else []
@@ -1417,6 +1468,32 @@ class FunctionRunner:
                 _pw = vision_world.find(_search, threshold=threshold, debug_mode=dbg_mode, debug_log=debug_log,
                                         is_color=bool(match_color), color_tolerance=color_tol) if vision_world else []
                 _pw = _close_ui_shift_points(_pw if _pw else [])
+                if debug_save:
+                    try:
+                        import datetime
+                        _ts = datetime.datetime.now().strftime("%H%M%S_%f")[:-3]
+                        _dbg_dir = "debug_close_ui"
+                        os.makedirs(_dbg_dir, exist_ok=True)
+                        _dbg_img = _search.copy()
+                        # Draw ROI bounds info as text
+                        _label = "try={} hq={} world={} color={}".format(_try, len(_phq), len(_pw), match_color)
+                        cv.putText(_dbg_img, _label, (5, 20), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                        # Draw match rectangles if found
+                        for _pt in _phq:
+                            _mx, _my = (_pt[0] - _roi_offset[0], _pt[1] - _roi_offset[1])
+                            if vision:
+                                cv.rectangle(_dbg_img, (_mx - vision.needle_w//2, _my - vision.needle_h//2),
+                                             (_mx + vision.needle_w//2, _my + vision.needle_h//2), (0, 255, 0), 2)
+                        for _pt in _pw:
+                            _mx, _my = (_pt[0] - _roi_offset[0], _pt[1] - _roi_offset[1])
+                            if vision_world:
+                                cv.rectangle(_dbg_img, (_mx - vision_world.needle_w//2, _my - vision_world.needle_h//2),
+                                             (_mx + vision_world.needle_w//2, _my + vision_world.needle_h//2), (0, 0, 255), 2)
+                        _fname = os.path.join(_dbg_dir, "close_ui_try{}_{}.png".format(_try, _ts))
+                        cv.imwrite(_fname, _dbg_img)
+                        log.info("[Runner] close_ui debug_save → {}".format(os.path.abspath(_fname)))
+                    except Exception as _de:
+                        log.warning("[Runner] close_ui debug_save failed: {}".format(_de))
                 if _phq or _pw:
                     if debug_log:
                         log.info("[Runner] close_ui → true (thay HQ/World sau {} lan click)".format(_try))
@@ -1425,10 +1502,23 @@ class FunctionRunner:
                     if hasattr(wincap, "focus_window"):
                         wincap.focus_window(force=True)
                         time.sleep(0.05)
-                    _px = int(wincap.w * click_x)
-                    _py = int(wincap.h * click_y)
-                    _sx, _sy = wincap.get_screen_position((_px, _py))
-                    pyautogui.click(_sx, _sy)
+                    # Priority: click BackButton if visible; fallback to default (click_x, click_y)
+                    _clicked_back = False
+                    if vision_back:
+                        _pb = vision_back.find(scr, threshold=back_button_threshold,
+                                               debug_mode=dbg_mode, debug_log=debug_log)
+                        if _pb:
+                            _bx, _by = _pb[0][0], _pb[0][1]
+                            _bsx, _bsy = wincap.get_screen_position((_bx, _by))
+                            pyautogui.click(_bsx, _bsy)
+                            if debug_log:
+                                log.info("[Runner] close_ui → clicked BackButton ({},{})".format(_bx, _by))
+                            _clicked_back = True
+                    if not _clicked_back:
+                        _px = int(wincap.w * click_x)
+                        _py = int(wincap.h * click_y)
+                        _sx, _sy = wincap.get_screen_position((_px, _py))
+                        pyautogui.click(_sx, _sy)
                     time.sleep(1)
                     _fresh = wincap.get_screenshot() if hasattr(wincap, "get_screenshot") else None
                     if _fresh is not None:
@@ -1915,6 +2005,279 @@ class FunctionRunner:
                     self._advance_step(False)
                 else:
                     self._advance_step(True)
+            return "running"
+
+        if step_type == "find_truck":
+            # Self-contained truck-finding loop.
+            #
+            # Flow per tick:
+            #   1. Find top-N trucks by match score (find_multi_with_scores).
+            #   2. Filter already-tried positions (within this refresh cycle).
+            #   3. Click the best untried truck.
+            #   4. Synchronously: check OrangeHeroFragment count, then run OCR assertions.
+            #   5. All pass → advance (TruckLootButton or next step).
+            #      Any fail  → mark truck as tried, return "running" to try next on next tick.
+            #   6. When all top-N are tried → click refresh, reset tried list, retry.
+            #
+            # Support single `template` or a list via `templates`
+            _tpl_paths            = list(_iter_templates(step, "template", "templates"))
+            threshold             = float(step.get("threshold", 0.6))
+            max_truck             = int(step.get("max_truck", 5))
+            match_color           = step.get("match_color", True)
+            color_match_tolerance = step.get("color_match_tolerance")
+            sleep_after_click     = float(step.get("sleep_after_click", 0.8))
+            refresh_template      = step.get("refresh_template")
+            refresh_sleep_sec     = float(step.get("refresh_sleep_sec", 1.5))
+            max_refreshes         = int(step.get("max_refreshes", 20))
+            timeout_sec           = float(step.get("timeout_sec", 120))
+            # dedup_tolerance: ratio of screen size; two positions closer than this are the same truck.
+            # dedup_tolerance_x / dedup_tolerance_y override each axis independently.
+            # Set dedup_tolerance_y: 1.0 to match only on x-axis (ignore vertical distance).
+            _dedup_base    = float(step.get("dedup_tolerance", 0.04))
+            dedup_tol_x    = float(step.get("dedup_tolerance_x", _dedup_base))
+            dedup_tol_y    = float(step.get("dedup_tolerance_y", _dedup_base))
+            debug_log             = step.get("debug_log", False)
+            debug_save            = step.get("debug_save", False)
+
+            fragment_template     = step.get("fragment_template")
+            fragment_count        = int(step.get("fragment_count", 2))
+            fragment_threshold    = float(step.get("fragment_threshold", 0.90))
+
+            ocr_anchor_template   = step.get("ocr_anchor_template")
+            ocr_threshold         = float(step.get("ocr_threshold", 0.70))
+            ocr_timeout_sec       = float(step.get("ocr_timeout_sec", 3))
+            ocr_regions           = step.get("ocr_regions") or []
+            # When True: run OCR even when fragment check fails (for debugging)
+            ocr_on_fragment_fail  = bool(step.get("ocr_on_fragment_fail", False))
+
+            # Per-step state keys (scoped by step index so they reset between function runs)
+            _state_start_key = "_ft_start_{}".format(self.step_index)
+            _tried_key       = "_ft_tried_{}".format(self.step_index)
+            _refresh_key     = "_ft_refresh_{}".format(self.step_index)
+            _batch_key       = "_ft_batch_{}".format(self.step_index)
+
+            # Reset state on fresh entry (step_start_time changes each time we enter the step)
+            if getattr(self, _state_start_key, None) != self.step_start_time:
+                setattr(self, _state_start_key, self.step_start_time)
+                setattr(self, _tried_key, [])
+                setattr(self, _refresh_key, 0)
+                setattr(self, _batch_key, None)
+
+            tried_positions = getattr(self, _tried_key, [])
+            refresh_count   = getattr(self, _refresh_key, 0)
+            batch           = getattr(self, _batch_key, None)  # fixed for current cycle
+
+            # Global timeout / max-refresh guard
+            if now - self.step_start_time >= timeout_sec:
+                log.info("[Runner] find_truck → timeout {}s after {} refreshes → abort".format(
+                    timeout_sec, refresh_count))
+                self._advance_step(False)
+                return "running"
+            if refresh_count > max_refreshes:
+                log.info("[Runner] find_truck → max_refreshes {} reached → abort".format(max_refreshes))
+                self._advance_step(False)
+                return "running"
+
+            # Load all vision objects; abort only if none are available
+            _visions = [self.vision_cache[p] for p in _tpl_paths if p in self.vision_cache]
+            if not _visions:
+                log.info("[Runner] find_truck → no templates loaded ({}), abort".format(_tpl_paths))
+                self._advance_step(False)
+                return "running"
+
+            # Convert dedup tolerance ratios → pixels based on current screenshot size
+            _scr_h, _scr_w = screenshot.shape[:2]
+            _tol_x = int(_scr_w * dedup_tol_x)
+            _tol_y = int(_scr_h * dedup_tol_y)
+
+            # Establish a fixed batch at the start of each refresh cycle.
+            # The batch is locked on the first scan and reused for all ticks within the same
+            # cycle, so exactly max_truck trucks are evaluated per cycle regardless of how
+            # the screen changes between ticks.
+            if batch is None:
+                # Merge matches from all templates, deduplicate nearby positions, sort by score
+                _all_matches: list = []
+                for _v in _visions:
+                    _all_matches.extend(_v.find_multi_with_scores(
+                        screenshot,
+                        threshold=threshold,
+                        is_color=match_color,
+                        color_tolerance=color_match_tolerance,
+                    ))
+                # Deduplicate: keep only the best score per unique position (ratio-based tolerance)
+                _deduped: list = []
+                for (cx, cy, mw, mh, sc) in sorted(_all_matches, key=lambda t: t[4], reverse=True):
+                    if not any(abs(cx - ex[0]) < _tol_x and abs(cy - ex[1]) < _tol_y
+                               for ex in _deduped):
+                        _deduped.append((cx, cy, mw, mh, sc))
+                batch = _deduped[:max_truck]
+                setattr(self, _batch_key, batch)
+                log.info("[Runner] find_truck → new batch of {} truck(s) | refresh={}/{} (dedup x={}px y={}px)".format(
+                    len(batch), refresh_count, max_refreshes, _tol_x, _tol_y))
+                if debug_log and batch:
+                    parts = ["({},{}) {:.3f}".format(cx, cy, sc) for (cx, cy, _, _, sc) in batch]
+                    log.info("[Runner] find_truck batch: {}".format(" | ".join(parts)))
+
+            untried = [
+                (cx, cy, mw, mh, sc) for (cx, cy, mw, mh, sc) in batch
+                if not any(abs(cx - tp[0]) < _tol_x and abs(cy - tp[1]) < _tol_y for tp in tried_positions)
+            ]
+
+            log.info("[Runner] find_truck → batch={} tried={} untried={} | refresh={}/{}".format(
+                len(batch), len(tried_positions), len(untried), refresh_count, max_refreshes))
+
+            if not untried:
+                # All trucks in this cycle's batch tried → click refresh and start a new cycle
+                refresh_vision = self.vision_cache.get(refresh_template) if refresh_template else None
+                if refresh_vision:
+                    ref_scr = wincap.get_screenshot()
+                    ref_pts = refresh_vision.find(ref_scr, threshold=0.6)
+                    if ref_pts:
+                        rsx, rsy = wincap.get_screen_position(tuple(ref_pts[0][:2]))
+                        pyautogui.click(rsx, rsy)
+                        log.info("[Runner] find_truck → refreshed #{} (all {} in batch tried)".format(
+                            refresh_count + 1, len(batch)))
+                        time.sleep(refresh_sleep_sec)
+                        setattr(self, _tried_key, [])
+                        setattr(self, _refresh_key, refresh_count + 1)
+                        setattr(self, _batch_key, None)  # force fresh scan on next cycle
+                        return "running"
+                    log.info("[Runner] find_truck → refresh button not found → abort")
+                else:
+                    log.info("[Runner] find_truck → all tried, no refresh_template → abort")
+                self._advance_step(False)
+                return "running"
+
+            # Click the best untried truck from the fixed batch
+            cx, cy, mw, mh, score = untried[0]
+            tried_positions.append((cx, cy))
+            setattr(self, _tried_key, tried_positions)
+
+            sx, sy = wincap.get_screen_position((cx, cy))
+            pyautogui.click(sx, sy)
+            log.info("[Runner] find_truck → clicked truck ({},{}) score={:.3f}".format(cx, cy, score))
+            time.sleep(sleep_after_click)
+
+            # Fresh screenshot after click for fragment + OCR checks
+            scr2 = wincap.get_screenshot()
+
+            # ── Fragment check ────────────────────────────────────────────────
+            _fragment_failed = False
+            if fragment_template:
+                v_frag = self.vision_cache.get(fragment_template)
+                if v_frag:
+                    frag_pts = v_frag.find(scr2, threshold=fragment_threshold, multi=True)
+                    found_frags = len(frag_pts) if frag_pts else 0
+                    if found_frags < fragment_count:
+                        log.info("[Runner] find_truck → OrangeHeroFragment {}/{} → skip truck".format(
+                            found_frags, fragment_count))
+                        if not ocr_on_fragment_fail:
+                            return "running"
+                        _fragment_failed = True   # continue to OCR for debug logging
+                    else:
+                        log.info("[Runner] find_truck → OrangeHeroFragment {}/{} OK".format(
+                            found_frags, fragment_count))
+                else:
+                    log.info("[Runner] find_truck → fragment_template not loaded → skip fragment check")
+
+            # ── OCR assertion check ───────────────────────────────────────────
+            if ocr_regions and ocr_anchor_template:
+                v_anchor = self.vision_cache.get(ocr_anchor_template)
+                if not v_anchor:
+                    log.info("[Runner] find_truck → ocr_anchor_template not loaded → skip OCR")
+                else:
+                    # Poll for banner to appear
+                    _anchor_pts = None
+                    _scr_ocr = scr2
+                    _ocr_wait_start = time.time()
+                    while time.time() - _ocr_wait_start < ocr_timeout_sec:
+                        _anchor_pts = v_anchor.find(_scr_ocr, threshold=ocr_threshold)
+                        if _anchor_pts:
+                            break
+                        time.sleep(0.2)
+                        _scr_ocr = wincap.get_screenshot()
+
+                    if not _anchor_pts:
+                        log.info("[Runner] find_truck → OCR anchor not found in {}s → skip truck".format(
+                            ocr_timeout_sec))
+                        return "running"
+
+                    _pt = _anchor_pts[0]
+                    _acx = _pt[0]
+                    _acy = _pt[1]
+                    _amw = _pt[2] if len(_pt) >= 3 else v_anchor.needle_w
+                    _amh = _pt[3] if len(_pt) >= 4 else v_anchor.needle_h
+                    _tpl_name = os.path.splitext(os.path.basename(ocr_anchor_template))[0]
+
+                    _ocr_fail_reason = None
+                    for region in ocr_regions:
+                        rname   = region.get("name", "ocr")
+                        dbg_lbl = "{}_{}".format(_tpl_name, rname) if debug_save else None
+                        text = read_region_relative(
+                            _scr_ocr, _acx, _acy, _amw, _amh,
+                            x           = region.get("x", 0.0),
+                            y           = region.get("y", 0.0),
+                            w           = region.get("w", 1.0),
+                            h           = region.get("h", 1.0),
+                            digits_only = region.get("digits_only", False),
+                            pattern     = region.get("pattern"),
+                            debug_label = dbg_lbl,
+                        )
+                        log.info("[Runner] find_truck OCR [{}]: {}".format(rname, text or "(no text)"))
+
+                        # Assertion params (with fn_settings overrides for server/power)
+                        assert_in  = region.get("assert_in")
+                        assert_max = region.get("assert_max")
+                        assert_min = region.get("assert_min")
+                        assert_eq  = region.get("assert_equals")
+                        if rname == "server":
+                            _srv_ov = self._fn_setting("servers")
+                            log.info("[Runner] find_truck OCR server: fn_settings[servers]={!r}".format(_srv_ov))
+                            if _srv_ov is not None and str(_srv_ov).strip():
+                                _srv_str = str(_srv_ov).strip()
+                                assert_in = None if _srv_str == "*" else \
+                                    [s.strip() for s in _srv_str.split(",") if s.strip()]
+                                log.info("[Runner] find_truck OCR server: assert_in overridden → {}".format(assert_in))
+                        if rname == "power":
+                            _mp_ov = self._fn_setting("max_power")
+                            if _mp_ov is not None:
+                                try:
+                                    assert_max = int(_mp_ov)
+                                except (ValueError, TypeError):
+                                    pass
+
+                        _fail = None
+                        if assert_in is not None:
+                            allowed = [str(v) for v in (assert_in if isinstance(assert_in, list) else [assert_in])]
+                            if text not in allowed:
+                                _fail = "assert_in FAIL ({!r} not in {})".format(text, allowed)
+                        elif assert_eq is not None and text != str(assert_eq):
+                            _fail = "assert_equals FAIL ({!r} != {!r})".format(text, str(assert_eq))
+                        if _fail is None and (assert_max is not None or assert_min is not None):
+                            try:
+                                num = int(text.replace(",", "").replace(".", ""))
+                                if assert_max is not None and num >= int(assert_max):
+                                    _fail = "assert_max FAIL ({} >= {})".format(num, assert_max)
+                                elif assert_min is not None and num < int(assert_min):
+                                    _fail = "assert_min FAIL ({} < {})".format(num, assert_min)
+                            except (ValueError, AttributeError):
+                                _fail = "assert numeric FAIL (cannot parse {!r})".format(text)
+
+                        if _fail:
+                            _ocr_fail_reason = _fail
+                            log.info("[Runner] find_truck OCR [{}]: {} → skip truck".format(rname, _fail))
+                            break
+
+                    if _ocr_fail_reason:
+                        return "running"
+
+            # Fragment check failed (but OCR ran for debug) → skip truck now
+            if _fragment_failed:
+                return "running"
+
+            # All checks passed → proceed to next step (e.g. TruckLootButton)
+            log.info("[Runner] find_truck → truck ({},{}) passed all checks → proceed".format(cx, cy))
+            self._advance_step(True)
             return "running"
 
         # unknown type -> skip (true so next step still runs)

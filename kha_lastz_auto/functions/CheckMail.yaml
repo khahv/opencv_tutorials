@@ -6,11 +6,7 @@ steps:
   - event_type: close_ui
     template: buttons_template/HeadquartersButton.png
     world_button: buttons_template/WorldButton.png
-    roi_center_x: 0.93
-    roi_center_y: 0.96
-    roi_padding: 2
-    threshold: 0.6
-    debug_log: true
+    back_button: buttons_template/BackButton.png
 
   - event_type: match_click
     template: buttons_template/Mail.png
@@ -79,8 +75,4 @@ steps:
   - event_type: close_ui
     template: buttons_template/HeadquartersButton.png
     world_button: buttons_template/WorldButton.png
-    roi_center_x: 0.93
-    roi_center_y: 0.96
-    roi_padding: 2
-    threshold: 0.6
-    debug_log: true
+    back_button: buttons_template/BackButton.png

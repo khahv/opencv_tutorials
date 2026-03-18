@@ -47,4 +47,4 @@ steps:
   - event_type: close_ui
     template: buttons_template/HeadquartersButton.png
     world_button: buttons_template/WorldButton.png
-    threshold: 0.75
+    back_button: buttons_template/BackButton.png
