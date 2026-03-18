@@ -23,6 +23,7 @@ steps:
     threshold: 0.6
     one_shot: true
     timeout_sec: 2
+    on_success_goto: ReceiveAward
 
   # Drag all to the left
   - event_type: drag
@@ -42,6 +43,7 @@ steps:
     threshold: 0.6
     one_shot: true
     timeout_sec: 2
+    on_success_goto: ReceiveAward
 
   # Drag to the right at FuryLordIcon
   - event_type: drag
@@ -51,7 +53,7 @@ steps:
     run_always: true
     start_x: 0.25
     start_y: 0.96
-    drag_distance_ratio: 0.8
+    drag_distance_ratio: 0.5
 
   - event_type: sleep
     duration_sec: 1
@@ -62,19 +64,52 @@ steps:
     one_shot: true
     timeout_sec: 2
 
+  - event_type: sleep
+    duration_sec: 1
+
+ 
+  
+  - event_type: click_position
+    name: ReceiveAward
+    x: 0.50
+    y: 0.72
+    on_success_goto: FurylordGoButtonSleep
+
+  - event_type: sleep
+    name: FurylordGoButtonSleep
+    duration_sec: 1
 
   - event_type: match_click
+    name: FurylordGoButton
     template: buttons_template/FurylordGoButton.png
     threshold: 0.6
     one_shot: true
-    timeout_sec: 2
+    timeout_sec: 5
     
+  - event_type: sleep
+    duration_sec: 1
 
   - event_type: match_click
+    name: FurylordAttackIcon
     template: buttons_template/FurylordAttackIcon.png
     threshold: 0.6
     one_shot: true
-    timeout_sec: 2
+    timeout_sec: 5
+    on_fail_goto: ClickMiddleScreen
+    on_success_goto: MarchButton
+
+  - event_type: click_position
+    name: ClickMiddleScreen
+    x: 0.50
+    y: 0.50
+    on_success_goto: FurylordAttackIcon
+
+  - event_type: match_click
+    name: MarchButton
+    template: buttons_template/March.png
+    threshold: 0.6
+    one_shot: true
+    timeout_sec: 5
 
   - event_type: close_ui
     template: buttons_template/HeadquartersButton.png
@@ -85,5 +120,5 @@ steps:
     roi_center_y: 0.96
     roi_padding: 2
     threshold: 0.6
-    debug_log: true
+    run_always: true
 

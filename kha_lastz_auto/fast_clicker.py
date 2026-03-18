@@ -32,6 +32,7 @@ class FastClicker:
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self.click_count = 0
+        self.offset_changed = False  # True when thread exited because offset_change_time was reached
 
     def start(self, sx: int, sy: int, rate: int = 0,
               offset_x: int = 0, offset_y: int = 0,
@@ -53,6 +54,7 @@ class FastClicker:
         self.stop()
         self._stop_event.clear()
         self.click_count = 0
+        self.offset_changed = False
         self._thread = threading.Thread(
             target=self._loop,
             args=(sx, sy, offset_x, offset_y, corner_pos, corner_every,
@@ -85,11 +87,13 @@ class FastClicker:
         while not self._stop_event.is_set():
             now_mono = time.monotonic()
 
-            # Re-randomize offset after offset_change_time seconds
+            # Offset_change_time reached → signal bot_engine to restart the thread.
+            # Exit the loop cleanly; bot_engine detects offset_changed=True and
+            # calls start() again after a 1-second pause.
             if now_mono - _offset_last_changed >= offset_change_time:
-                _cur_x = sx + (random.randint(-offset_x, offset_x) if offset_x > 0 else 0)
-                _cur_y = sy + (random.randint(-offset_y, offset_y) if offset_y > 0 else 0)
-                _offset_last_changed = now_mono
+                log.debug("[FastClicker] offset_change_time reached — exiting thread for restart")
+                self.offset_changed = True
+                break
 
             # Every corner_every clicks: send one click to the corner position
             if corner_pos and self.click_count > 0 and self.click_count % corner_every == 0:

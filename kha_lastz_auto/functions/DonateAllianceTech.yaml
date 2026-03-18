@@ -35,9 +35,9 @@ steps:
     threshold: 0.8
     match_color: true
     one_shot: false
-    max_clicks: 20
+    max_clicks: 30
     click_interval_sec: 0.03
-    timeout_sec: 15
+    timeout_sec: 20
     debug_log: true
 
   # --- Dong panel: luon chay du step truoc false ---

@@ -37,16 +37,23 @@ steps:
     template: buttons_template/Treasure3.png
     threshold: 0.6
     run_always: true
-    timeout_sec: 5
-    storm_sec: 300
+    timeout_sec: 100      # wait up to 60s for template to appear
+    storm_sec: 300       # click for up to 300s once found
     max_clicks: 3000
-    offset_x: 30
-    offset_y: 30
-    offset_change_time: 2
+    offset_change_time: 5
+    offset_x: 0.03       # ±3% of window width (~32px on 1080px window)
+    offset_y: 0.03       # ±3% of window height (~58px on 1920px window)
     guard_outside: true  # block user clicks outside game window
     close_ui_check: true           # mặc định true, tắt thì set false
     close_ui_click_x: 0.03        # vị trí click để dismiss UI (default)
     close_ui_click_y: 0.08
     close_ui_back_button: buttons_template/BackButton.png  # optional
+
+
+    #position_refresh_sec: 1
+    corner:              # every N clicks, send 1 click here to keep window focused
+      offset_x: 0.05
+      offset_y: 0.05
+      every: 20
 
 

@@ -8,7 +8,7 @@ steps:
     timeout_sec: 60      # wait up to 60s for template to appear
     storm_sec: 300       # click for up to 300s once found
     max_clicks: 3000
-    offset_change_time: 2
+    offset_change_time: 5
     offset_x: 0.03       # ±3% of window width (~32px on 1080px window)
     offset_y: 0.03       # ±3% of window height (~58px on 1920px window)
     guard_outside: true  # block user clicks outside game window

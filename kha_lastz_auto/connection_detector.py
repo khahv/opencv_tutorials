@@ -21,6 +21,45 @@ from vision import get_global_scale
 from zoom_helpers import do_world_zoomout, do_base_zoomout
 
 
+# ── Timing ────────────────────────────────────────────────────────────────────
+WAIT_BEFORE_START_SEC: float = 10.0       # wait before starting LastZ after process dies
+WAIT_AFTER_START_SEC: float = 10.0        # wait after starting LastZ for window to appear
+RECENTLY_STARTED_GUARD_SEC: float = 60.0  # skip re-start if process was started within this many seconds
+KILL_WAIT_SEC: float = 2.0                # wait after killing process before starting
+FOCUS_SLEEP_SEC: float = 0.2             # sleep after focusing window before check
+AFTER_ZOOMOUT_SLEEP_SEC: float = 2.0     # sleep after world_zoomout before clicking middle
+AFTER_CLICK_SLEEP_SEC: float = 2.0       # sleep after clicking middle before screenshot
+
+# ── BuffIcon check ────────────────────────────────────────────────────────────
+BUFF_MISS_RECHECK_SEC: float = 30.0      # re-check delay (seconds) after first BuffIcon miss
+BUFF_MISSES_BEFORE_RESTART: int = 2      # consecutive misses required before killing and restarting
+
+# ── Vision thresholds ─────────────────────────────────────────────────────────
+THRESHOLD_DEFAULT: float = 0.75          # default template-match threshold
+
+# ── close_ui ──────────────────────────────────────────────────────────────────
+CLOSE_UI_CLICK_X: float = 0.03          # relative X position of the dismiss-tap (fraction of window width)
+CLOSE_UI_CLICK_Y: float = 0.08          # relative Y position of the dismiss-tap
+CLOSE_UI_MAX_TRIES: int = 10            # max dismiss attempts before giving up
+CLOSE_UI_CLICK_SLEEP_SEC: float = 1.0   # sleep after each dismiss tap
+CLOSE_UI_FOCUS_SLEEP_SEC: float = 0.05  # sleep after refocusing window inside close_ui loop
+CLOSE_UI_POST_CLICK_SLEEP_SEC: float = 0.3  # sleep after refreshing screenshot inside close_ui loop
+
+# ── world_zoomout ─────────────────────────────────────────────────────────────
+WORLD_ZOOMOUT_SCROLL_TIMES: int = 0
+WORLD_ZOOMOUT_SCROLL_INTERVAL_SEC: float = 0.1
+WORLD_ZOOMOUT_ROI_CENTER_X: float = 0.93
+WORLD_ZOOMOUT_ROI_CENTER_Y: float = 0.96
+WORLD_ZOOMOUT_ROI_PADDING: int = 2
+
+# ── base_zoomout (run after connection OK) ────────────────────────────────────
+BASE_ZOOMOUT_SCROLL_TIMES: int = 5
+BASE_ZOOMOUT_SCROLL_INTERVAL_SEC: float = 0.1
+
+# ── taskkill ──────────────────────────────────────────────────────────────────
+TASKKILL_TIMEOUT_SEC: int = 10           # timeout (seconds) for the taskkill command
+
+
 # Windows: check if process exists by opening handle
 def _is_process_running(pid):
     if pid is None or pid <= 0:
@@ -44,7 +83,7 @@ def _kill_process(pid, log):
         subprocess.run(
             ["taskkill", "/F", "/PID", str(pid)],
             capture_output=True,
-            timeout=10,
+            timeout=TASKKILL_TIMEOUT_SEC,
         )
         log.info("[ConnectionDetector] Killed LastZ process PID=%s", pid)
     except Exception as e:
@@ -86,7 +125,8 @@ def _find_window_and_pid(window_name):
 
 
 def _do_close_ui(wincap, vision_cache, template_path, world_button_path, log,
-                 threshold=0.75, click_x=0.03, click_y=0.08, max_tries=10):
+                 threshold=THRESHOLD_DEFAULT, click_x=CLOSE_UI_CLICK_X,
+                 click_y=CLOSE_UI_CLICK_Y, max_tries=CLOSE_UI_MAX_TRIES):
     """
     Close overlays until HQ or World is visible (same logic as close_ui step).
     Loop: if template or world_button found in screenshot, return True; else click at (click_x, click_y), sleep, refresh, retry.
@@ -108,16 +148,16 @@ def _do_close_ui(wincap, vision_cache, template_path, world_button_path, log,
         if _try < max_tries - 1:
             if hasattr(wincap, "focus_window"):
                 wincap.focus_window(force=True)
-                time.sleep(0.05)
+                time.sleep(CLOSE_UI_FOCUS_SLEEP_SEC)
             px = int(wincap.w * click_x)
             py = int(wincap.h * click_y)
             sx, sy = wincap.get_screen_position((px, py))
             pyautogui.click(sx, sy)
-            time.sleep(1)
+            time.sleep(CLOSE_UI_CLICK_SLEEP_SEC)
             fresh = wincap.get_screenshot()
             if fresh is not None:
                 scr = fresh
-            time.sleep(0.3)
+            time.sleep(CLOSE_UI_POST_CLICK_SLEEP_SEC)
     log.warning("[ConnectionDetector] close_ui → false (max_tries=%d)", max_tries)
     return False
 
@@ -150,6 +190,8 @@ class ConnectionDetector:
         self._interval_sec = interval_sec
         self._buff_threshold = buff_icon_threshold
         self._last_run_time = time.time()  # first check after interval_sec from startup
+        self._last_start_time: float = 0.0  # timestamp of last _start_lastz call
+        self._buff_miss_count: int = 0  # consecutive BuffIcon-not-found count; restart only at 2
 
     def reset(self):
         """On resume: next full check in interval_sec (e.g. 5 min), not immediately."""
@@ -176,10 +218,27 @@ class ConnectionDetector:
 
         # 1) Every tick: if process not running → wait 10s then start and refresh hwnd/pid (so closing window triggers restart soon)
         if not _is_process_running(pid):
-            log.info("[ConnectionDetector] LastZ process not running (PID=%s), waiting 10s then starting...", pid)
-            time.sleep(10)
+            # Guard: if we started the process recently, just try to reattach the window
+            # instead of starting again (prevents double-start when window hasn't appeared yet)
+            elapsed_since_start = now - self._last_start_time
+            if self._last_start_time > 0 and elapsed_since_start < RECENTLY_STARTED_GUARD_SEC:
+                log.debug(
+                    "[ConnectionDetector] Process recently started (%.0fs ago), waiting for window...",
+                    elapsed_since_start,
+                )
+                hwnd, new_pid = _find_window_and_pid(self._window_name)
+                if hwnd is not None:
+                    wincap.hwnd = hwnd
+                    wincap.refresh_geometry()
+                    self._lastz_pid_ref["pid"] = new_pid
+                    log.info("[ConnectionDetector] Window reattached, PID=%s", new_pid)
+                return
+
+            log.info("[ConnectionDetector] LastZ process not running (PID=%s), waiting %.0fs then starting...", pid, WAIT_BEFORE_START_SEC)
+            time.sleep(WAIT_BEFORE_START_SEC)
+            self._last_start_time = now
             if _start_lastz(self._lastz_exe, log):
-                time.sleep(10)
+                time.sleep(WAIT_AFTER_START_SEC)
             hwnd, new_pid = _find_window_and_pid(self._window_name)
             if hwnd is not None:
                 wincap.hwnd = hwnd
@@ -215,7 +274,7 @@ class ConnectionDetector:
         if current_screenshot is not None:
             try:
                 _pv = vision_cache.get("buttons_template/PasswordSlot.png")
-                if _pv and _pv.exists(current_screenshot, threshold=0.75):
+                if _pv and _pv.exists(current_screenshot, threshold=THRESHOLD_DEFAULT):
                     log.info("[ConnectionDetector] On login screen, skipping check")
                     self._last_run_time = now
                     return
@@ -226,27 +285,30 @@ class ConnectionDetector:
         # 3) Process is running: run connection check (close_ui → world_zoomout → click → BuffIcon)
         if hasattr(wincap, "focus_window"):
             wincap.focus_window(force=True)
-            time.sleep(0.2)
+            time.sleep(FOCUS_SLEEP_SEC)
         _do_close_ui(
             wincap, vision_cache,
             self._world_template, self._world_button, log,
-            threshold=0.75, click_x=0.03, click_y=0.08, max_tries=10,
         )
         if not do_world_zoomout(
             wincap, vision_cache, log,
             self._world_template, self._world_button,
             screenshot=None,
-            threshold=0.75, scroll_times=0, scroll_interval_sec=0.1,
-            roi_center_x=0.93, roi_center_y=0.96, roi_padding=2,
+            threshold=THRESHOLD_DEFAULT,
+            scroll_times=WORLD_ZOOMOUT_SCROLL_TIMES,
+            scroll_interval_sec=WORLD_ZOOMOUT_SCROLL_INTERVAL_SEC,
+            roi_center_x=WORLD_ZOOMOUT_ROI_CENTER_X,
+            roi_center_y=WORLD_ZOOMOUT_ROI_CENTER_Y,
+            roi_padding=WORLD_ZOOMOUT_ROI_PADDING,
             log_prefix="[ConnectionDetector] ",
         ):
             log.warning("[ConnectionDetector] world_zoomout failed (not on world?), continuing check")
-        time.sleep(2)
+        time.sleep(AFTER_ZOOMOUT_SLEEP_SEC)
         # Click middle of screen
         cx = wincap.offset_x + wincap.w // 2
         cy = wincap.offset_y + wincap.h // 2
         pyautogui.click(cx, cy)
-        time.sleep(2)
+        time.sleep(AFTER_CLICK_SLEEP_SEC)
         screenshot = wincap.get_screenshot()
         if screenshot is None:
             log.warning("[ConnectionDetector] Screenshot failed after click")
@@ -257,21 +319,37 @@ class ConnectionDetector:
             return
         if buff_vision.exists(screenshot, threshold=self._buff_threshold):
             log.info("[ConnectionDetector] BuffIcon found → connection OK")
+            self._buff_miss_count = 0
             # Run base_zoomout after connection OK (zoom out to world view)
             do_base_zoomout(
                 wincap, vision_cache, log,
                 self._world_template, self._world_button,
                 screenshot=None,
-                threshold=0.75, scroll_times=5, scroll_interval_sec=0.1,
+                threshold=THRESHOLD_DEFAULT,
+                scroll_times=BASE_ZOOMOUT_SCROLL_TIMES,
+                scroll_interval_sec=BASE_ZOOMOUT_SCROLL_INTERVAL_SEC,
                 log_prefix="[ConnectionDetector] ",
             )
             return
-        # BuffIcon not found → assume disconnected
-        log.warning("[ConnectionDetector] BuffIcon not found → disconnection, killing and restarting LastZ")
+
+        # BuffIcon not found — require BUFF_MISSES_BEFORE_RESTART consecutive misses before restarting
+        self._buff_miss_count += 1
+        if self._buff_miss_count < BUFF_MISSES_BEFORE_RESTART:
+            log.warning(
+                "[ConnectionDetector] BuffIcon not found (miss #%d/%d), re-checking in %.0fs...",
+                self._buff_miss_count, BUFF_MISSES_BEFORE_RESTART, BUFF_MISS_RECHECK_SEC,
+            )
+            self._last_run_time = now - self._interval_sec + BUFF_MISS_RECHECK_SEC  # schedule re-check
+            return
+
+        # Two consecutive misses → assume disconnected, kill and restart
+        self._buff_miss_count = 0
+        log.warning("[ConnectionDetector] BuffIcon not found 2 times in a row → disconnection, killing and restarting LastZ")
         _kill_process(pid, log)
-        time.sleep(2)
+        time.sleep(KILL_WAIT_SEC)
+        self._last_start_time = time.time()
         if _start_lastz(self._lastz_exe, log):
-            time.sleep(10)
+            time.sleep(WAIT_AFTER_START_SEC)
         hwnd, new_pid = _find_window_and_pid(self._window_name)
         if hwnd is not None:
             wincap.hwnd = hwnd

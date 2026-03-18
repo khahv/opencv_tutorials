@@ -28,6 +28,7 @@ steps:
     run_always: true
 
   - event_type: match_click
+    name: FindRadarItem
     template_array:
       - template: buttons_template/Radar5-1.png
         match_center_x: 0.0
@@ -38,17 +39,23 @@ steps:
         match_center_x: 0.0
         match_center_y: -0.05
         exclude_area_x: 1.7
-        exclude_area_y: 2.0
+        exclude_area_y: 2.3
+      - template: buttons_template/Radar5-3.png
+        match_center_x: 0.0
+        match_center_y: -0.05
+        exclude_area_x: 1.7
+        exclude_area_y: 2.3
     exclude_template: buttons_template/RadarRedDot.png
     exclude_threshold: 0.85
 
-    threshold: 0.8
+    threshold: 0.88
     one_shot: true
     timeout_sec: 2
     debug_log: true
+    log_all_scores: true
 
     max_tries: 30
-    on_max_tries_reach_goto: 11
+    on_max_tries_reach_goto: CloseUI
     dedup_enable: true
     debug_save: true
 
@@ -58,7 +65,7 @@ steps:
     threshold: 0.85
     one_shot: true
     timeout_sec: 2
-    on_success_goto: 5
+    on_success_goto: FindRadarItem
 
   
   # - event_type: match_click
@@ -69,17 +76,30 @@ steps:
   #   timeout_sec: 2
   #   on_fail_goto: 0
 
-  # click go button  
+  # check if Radar3 or RadarTownIcon is visible (match only, no click)
+
   - event_type: match_click
     template_array:
       - buttons_template/Radar3.png
-      - buttons_template/RadarTownIcon.png
     threshold: 0.8
     one_shot: true
     timeout_sec: 2
     debug_log: true
     run_always: true
-    on_fail_goto: 5
+    on_success_goto: RadarAttackHelpButton
+
+  - event_type: match_click
+    template_array:
+      - buttons_template/RadarTownIcon.png
+    threshold: 0.8
+    one_shot: true
+    no_click: true
+    timeout_sec: 2
+    debug_log: true
+    run_always: true
+    on_fail_goto: FindRadarItem
+
+ 
 
   - event_type: sleep
     duration_sec: 1
@@ -87,6 +107,7 @@ steps:
   
 
   - event_type: match_click
+    name: RadarAttackHelpButton
     template_array:
       - buttons_template/RadarAttack.png
       - buttons_template/RadarHelp.png
@@ -103,6 +124,8 @@ steps:
     timeout_sec: 2
 
   - event_type: close_ui
+    name: CloseUI
     template: buttons_template/HeadquartersButton.png
     world_button: buttons_template/WorldButton.png
     back_button: buttons_template/BackButton.png
+    run_always: true

@@ -2,6 +2,17 @@ import time
 from vision import Vision, get_global_scale
 
 
+# ── Detection thresholds ──────────────────────────────────────────────────────
+DEFAULT_THRESHOLD: float = 0.5           # template-match score threshold to consider treasure visible
+
+# ── Timing ────────────────────────────────────────────────────────────────────
+DEFAULT_CLEAR_SEC: float = 10.0          # seconds icon must be absent before emitting "ended"
+DEFAULT_RE_TRIGGER_INTERVAL_SEC: float = 60.0  # seconds between repeated "started" while treasure stays visible
+
+# ── ROI ───────────────────────────────────────────────────────────────────────
+DEFAULT_ROI_PADDING: float = 2.0         # padding multiplier around needle size for the search region
+
+
 class TreasureDetector:
     """Detect treasure (Treasure Helicopter) by matching a treasure icon.
 
@@ -13,16 +24,18 @@ class TreasureDetector:
     """
 
     def __init__(self, treasure_template_path: str,
-                 threshold: float = 0.5, clear_sec: float = 10.0,
-                 re_trigger_interval_sec: float = 60.0,
-                 roi_center_x: float = None, roi_center_y: float = None, roi_padding: float = None):
+                 threshold: float = DEFAULT_THRESHOLD,
+                 clear_sec: float = DEFAULT_CLEAR_SEC,
+                 re_trigger_interval_sec: float = DEFAULT_RE_TRIGGER_INTERVAL_SEC,
+                 roi_center_x: float = None, roi_center_y: float = None,
+                 roi_padding: float = None):
         self._vision = Vision(treasure_template_path)
         self._threshold = threshold
         self._clear_sec = clear_sec
         self._re_trigger_interval_sec = re_trigger_interval_sec
         self._roi_center_x = roi_center_x
         self._roi_center_y = roi_center_y
-        self._roi_padding = roi_padding if roi_padding is not None else 2.0
+        self._roi_padding = roi_padding if roi_padding is not None else DEFAULT_ROI_PADDING
         self._treasure_visible = False
         self._clear_since = None
         self._last_started_at = None  # when we last emitted "started" (for re-trigger while visible)

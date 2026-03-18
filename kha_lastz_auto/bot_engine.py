@@ -132,9 +132,16 @@ def load_functions(functions_dir="functions"):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
+            steps = data.get("steps", [])
+            name_to_index = {
+                s["name"]: i
+                for i, s in enumerate(steps)
+                if isinstance(s, dict) and s.get("name")
+            }
             result[name] = {
                 "description": data.get("description", ""),
-                "steps": data.get("steps", []),
+                "steps": steps,
+                "name_to_index": name_to_index,
             }
             # log.debug("[bot_engine] Loaded function: {}".format(name))
         except Exception as e:
@@ -262,12 +269,15 @@ class FunctionRunner:
         self._step_visit_start_times = {}  # {step_index: step_start_time} to detect new visits
         self._step_dedup_positions = {}    # {step_index: [(x, y)]} positions already clicked (cross-visit dedup)
         self._tried_positions = []    # [(x, y)] positions already clicked in current cycle
+        self._step_name_map = {}      # {name: step_index} built from steps with a "name" field
         self._rtr_cache = {}          # require_text_in_region cache: frozenset(points) → filtered points
         self._rtr_page_logged = False # True after printing truck list for current refresh cycle
         self._fast_clicker = FastClicker()
         self._window_click_guard = WindowClickGuard()
         self._storm_clicker_active = False   # True while match_storm_click is running
         self._storm_start_t: float = 0.0
+        self._storm_clicker_kwargs: dict = {}        # last start() args, used to restart after offset change
+        self._storm_offset_restart_t: float | None = None  # time when offset_changed was first detected
         self._step_pos_cache = None
         self._debug_click_saved = False
         self._step_last_click_t = None
@@ -303,6 +313,7 @@ class FunctionRunner:
             return False
         self.function_name = function_name
         self.steps = self.functions[function_name]["steps"]
+        self._step_name_map = self.functions[function_name].get("name_to_index", {})
         self.step_index = 0
         self.step_start_time = time.time()
         self.step_click_count = 0
@@ -316,6 +327,13 @@ class FunctionRunner:
         self._step_visit_start_times = {}
         self._step_dedup_positions = {}
         self._tried_positions = []
+        # Reset storm state so a re-run of the same (or a new) function starts clean.
+        self._fast_clicker.stop()
+        self._window_click_guard.stop()
+        self._storm_clicker_active = False
+        self._storm_start_t = 0.0
+        self._storm_clicker_kwargs = {}
+        self._storm_offset_restart_t = None
         self._last_zero_refresh_t = 0
         self._last_truck_crop_path = None
         self._ocr_prev_vals = {}  # {step_index: last_read_value} for wait_for_change_region
@@ -415,7 +433,7 @@ class FunctionRunner:
                         self._step_label(step), _max_tries_v, _visits, _on_max_goto))
                     self._step_visit_counts[_sidx] = 0   # reset so it can be re-used later
                     self._step_dedup_positions.pop(_sidx, None)  # clear dedup list on cycle reset
-                    self._goto_step(int(_on_max_goto))
+                    self._goto_step(self._resolve_goto(_on_max_goto))
                     return "running"
 
         if step_type == "match_click":
@@ -425,6 +443,7 @@ class FunctionRunner:
             ratio_test = step.get("ratio_test")
             min_inliers = step.get("min_inliers")
             one_shot = step.get("one_shot", True)
+            no_click = bool(step.get("no_click", False))
             timeout_sec = step.get("timeout_sec") or 999
             # ── template_array: try each template in order, each gets its own timeout ───
             # Each item may be a plain path string OR a dict {template, match_center_x/y, exclude_area_x/y, ...}
@@ -591,11 +610,6 @@ class FunctionRunner:
                     points = _shifted
                 if points:
                     self._step_pos_cache = points[0]
-                    # If this step is using template_array, stop after first successful template.
-                    if _tpls:
-                        self._tpl_array_idx = 0
-                        self._tpl_array_start_t = None
-                        self._tpl_array_last_tpl = None
                 elif debug_log:
                     elapsed = now - self.step_start_time
                     log.info("[Runner] {} → not found (elapsed={:.1f}s)".format(self._step_label(step), elapsed))
@@ -1056,6 +1070,13 @@ class FunctionRunner:
                             self._advance_step(True, step=step)
                     return "running"
 
+                # no_click: match only, skip move and click entirely
+                if no_click:
+                    log.info("[Runner] {} → match found ({},{}) (no_click, not clicking)".format(
+                        self._step_label(step), points[0][0], points[0][1]))
+                    self._advance_step(True, step=step)
+                    return "running"
+
                 # Non-storm path: move cursor with pynput then click
                 try:
                     if not self._safe_move(sx, sy, wincap, "match_click"):
@@ -1124,7 +1145,7 @@ class FunctionRunner:
                     on_success_goto = step.get("on_success_goto")
                     if on_success_goto is not None:
                         log.info("[Runner] {} → success, goto step {}".format(self._step_label(step), on_success_goto))
-                        self._goto_step(int(on_success_goto))
+                        self._goto_step(self._resolve_goto(on_success_goto))
                     else:
                         self._advance_step(True, step=step)
                     return "running"
@@ -1134,7 +1155,7 @@ class FunctionRunner:
                     on_success_goto = step.get("on_success_goto")
                     if on_success_goto is not None:
                         log.info("[Runner] {} → success, goto step {}".format(self._step_label(step), on_success_goto))
-                        self._goto_step(int(on_success_goto))
+                        self._goto_step(self._resolve_goto(on_success_goto))
                     else:
                         self._advance_step(True, step=step)
                     return "running"
@@ -1332,7 +1353,12 @@ class FunctionRunner:
                     round(ox, 2), round(oy, 2)))
             else:
                 log.info("[Runner] {} → true".format(self._step_label(step)))
-            self._advance_step(True)
+            on_success_goto = step.get("on_success_goto")
+            if on_success_goto is not None:
+                log.info("[Runner] {} → success, goto step {}".format(self._step_label(step), on_success_goto))
+                self._goto_step(self._resolve_goto(on_success_goto))
+            else:
+                self._advance_step(True, step=step)
             return "running"
 
         if step_type == "wait_until_match":
@@ -1588,7 +1614,7 @@ class FunctionRunner:
                         # No limit — retry indefinitely
                         log.info("[Runner] {} → retry (goto step {})".format(
                             self._step_label(step), on_fail_goto))
-                        self._goto_step(int(on_fail_goto))
+                        self._goto_step(self._resolve_goto(on_fail_goto))
                         return "running"
                     else:
                         max_retries = int(max_retries)
@@ -1598,7 +1624,7 @@ class FunctionRunner:
                             self._step_retry_counts[cur_step_idx] = retry_count
                             log.info("[Runner] {} → retry {}/{} (goto step {})".format(
                                 self._step_label(step), retry_count, max_retries, on_fail_goto))
-                            self._goto_step(int(on_fail_goto))
+                            self._goto_step(self._resolve_goto(on_fail_goto))
                             return "running"
                         log.info("[Runner] {} → max_retries ({}) reached → abort".format(
                             self._step_label(step), max_retries))
@@ -2040,7 +2066,7 @@ class FunctionRunner:
                                 self._step_retry_counts[cur_step_idx] = retry_count
                                 log.info("[Runner] {} [require_new_click]: retry {}/{} (goto step {})".format(
                                     self._step_label(step), retry_count, max_retries, on_fail_goto))
-                                self._goto_step(int(on_fail_goto))
+                                self._goto_step(self._resolve_goto(on_fail_goto))
                                 return "running"
                             log.info("[Runner] {} [require_new_click]: max_retries ({}) reached → abort".format(
                                 self._step_label(step), max_retries))
@@ -2131,7 +2157,7 @@ class FunctionRunner:
                                     # No limit — retry indefinitely
                                     log.info("[Runner] {} [{}]: {} → retry (goto step {})".format(
                                         self._step_label(step), rname, _assert_fail_reason, on_fail_goto))
-                                    self._goto_step(int(on_fail_goto))
+                                    self._goto_step(self._resolve_goto(on_fail_goto))
                                     return "running"
                                 else:
                                     max_retries = int(max_retries)
@@ -2141,7 +2167,7 @@ class FunctionRunner:
                                         log.info("[Runner] {} [{}]: {} → retry {}/{} (goto step {})".format(
                                             self._step_label(step), rname, _assert_fail_reason,
                                             retry_count, max_retries, on_fail_goto))
-                                        self._goto_step(int(on_fail_goto))
+                                        self._goto_step(self._resolve_goto(on_fail_goto))
                                         return "running"
                                     log.info("[Runner] {} [{}]: {} → max_retries ({}) reached → abort".format(
                                         self._step_label(step), rname, _assert_fail_reason, max_retries))
@@ -2201,7 +2227,7 @@ class FunctionRunner:
                             self._step_retry_counts[cur_step_idx] = retry_count
                             log.info("[Runner] {} → anchor not found → retry {}/{} (goto step {})".format(
                                 self._step_label(step), retry_count, max_retries, on_fail_goto))
-                            self._goto_step(int(on_fail_goto))
+                            self._goto_step(self._resolve_goto(on_fail_goto))
                             return "running"
                         else:
                             log.info("[Runner] {} → anchor not found → max_retries ({}) reached → abort".format(
@@ -2540,6 +2566,22 @@ class FunctionRunner:
 
             # ── Storm already running: check completion / position refresh ─────
             if self._storm_clicker_active:
+                # Overall timeout_sec cap: exit the step regardless of storm progress.
+                if elapsed >= timeout_sec:
+                    _n = self._fast_clicker.click_count
+                    _elapsed = max(0.001, now - self._storm_start_t)
+                    self._fast_clicker.stop()
+                    self._window_click_guard.stop()
+                    self._storm_clicker_active = False
+                    log.info(
+                        "[Runner] {} → timeout ({:.0f}s), storm stopped "
+                        "({} clicks in {:.1f}s)".format(
+                            self._step_label(step), timeout_sec, _n, _elapsed,
+                        )
+                    )
+                    self._advance_step(False, step=step)
+                    return "running"
+
                 _n       = self._fast_clicker.click_count
                 _elapsed = max(0.001, now - self._storm_start_t)
                 _done    = (max_clicks > 0 and _n >= max_clicks) or (_elapsed >= storm_sec)
@@ -2554,6 +2596,26 @@ class FunctionRunner:
                         )
                     )
                     self._advance_step(True, step=step)
+                    return "running"
+
+                # FastClicker exited because offset_change_time was reached.
+                # Wait 1 s (tracked via timestamp so we don't block the tick), then restart.
+                if not self._fast_clicker.is_running and self._fast_clicker.offset_changed:
+                    if self._storm_offset_restart_t is None:
+                        self._storm_offset_restart_t = now
+                        log.debug(
+                            "[Runner] {} → offset change detected, waiting 1 s before restart".format(
+                                self._step_label(step)
+                            )
+                        )
+                    elif now - self._storm_offset_restart_t >= 0.2:
+                        self._storm_offset_restart_t = None
+                        self._fast_clicker.start(**self._storm_clicker_kwargs)
+                        log.info(
+                            "[Runner] {} → FastClicker restarted after offset change".format(
+                                self._step_label(step)
+                            )
+                        )
                     return "running"
 
                 # Re-detect template position and restart FastClicker at new coords.
@@ -2578,16 +2640,15 @@ class FunctionRunner:
                                 )
                             else:
                                 self._fast_clicker.stop()
-                                self._fast_clicker.start(
-                                    _sx, _sy,
-                                    rate=0,
-                                    offset_x=offset_x,
-                                    offset_y=offset_y,
-                                    corner_pos=_corner_pos,
-                                    corner_every=_corner_every,
+                                self._storm_offset_restart_t = None
+                                self._storm_clicker_kwargs = dict(
+                                    sx=_sx, sy=_sy, rate=0,
+                                    offset_x=offset_x, offset_y=offset_y,
+                                    corner_pos=_corner_pos, corner_every=_corner_every,
                                     win_bounds=(_rl, _rt, _rr, _rb),
                                     offset_change_time=offset_change_time,
                                 )
+                                self._fast_clicker.start(**self._storm_clicker_kwargs)
                                 log.info(
                                     "[Runner] {} → position refresh at ({},{})".format(
                                         self._step_label(step), _sx, _sy,
@@ -2690,17 +2751,16 @@ class FunctionRunner:
             self._storm_start_t = now
             self._storm_pos_refresh_t = now
             self._storm_cui_check_t = now
+            self._storm_offset_restart_t = None
             self._storm_clicker_active = True
-            self._fast_clicker.start(
-                sx, sy,
-                rate=0,
-                offset_x=offset_x,
-                offset_y=offset_y,
-                corner_pos=_corner_pos,
-                corner_every=_corner_every,
+            self._storm_clicker_kwargs = dict(
+                sx=sx, sy=sy, rate=0,
+                offset_x=offset_x, offset_y=offset_y,
+                corner_pos=_corner_pos, corner_every=_corner_every,
                 win_bounds=(_win_left, _win_top, _win_right, _win_bottom),
                 offset_change_time=offset_change_time,
             )
+            self._fast_clicker.start(**self._storm_clicker_kwargs)
             log.info(
                 "[Runner] {} → storm started at ({},{}) storm_sec={} max_clicks={} guard={}".format(
                     self._step_label(step), sx, sy, storm_sec,
@@ -2753,35 +2813,46 @@ class FunctionRunner:
         return True
 
     def _step_label(self, step):
-        """Tra ve chuoi mo ta ngan gon cho step, dung trong log."""
+        """Return a short description of a step for use in log messages.
+
+        If the step has a ``name`` field, it is prepended as ``[name]`` so named
+        steps are immediately identifiable in the log.
+        """
         stype = step.get("event_type", "?")
+        step_name = step.get("name")
         tpl = step.get("template") or step.get("click_template") or ""
         tpl_name = os.path.splitext(os.path.basename(tpl))[0] if tpl else ""
         if stype == "sleep":
-            return "sleep {}s".format(step.get("duration_sec", 0))
-        if stype == "click_position":
+            base = "sleep {}s".format(step.get("duration_sec", 0))
+        elif stype == "click_position":
             if step.get("position_setting_key"):
-                return "click_position ({} from setting)".format(step.get("position_setting_key"))
-            x = step.get("x", step.get("offset_x", 0))
-            y = step.get("y", step.get("offset_y", 0))
-            return "click_position (x={}, y={})".format(x, y)
-        if stype == "type_text":
-            return "type_text"
-        if stype == "key_press":
-            return "key_press {}".format(step.get("key", ""))
-        if stype == "set_level":
-            return "set_level Lv.{}".format(step.get("target_level", "?"))
-        if stype == "drag":
+                base = "click_position ({} from setting)".format(step.get("position_setting_key"))
+            else:
+                x = step.get("x", step.get("offset_x", 0))
+                y = step.get("y", step.get("offset_y", 0))
+                base = "click_position (x={}, y={})".format(x, y)
+        elif stype == "type_text":
+            base = "type_text"
+        elif stype == "key_press":
+            base = "key_press {}".format(step.get("key", ""))
+        elif stype == "set_level":
+            base = "set_level Lv.{}".format(step.get("target_level", "?"))
+        elif stype == "drag":
             dx = step.get("direction_x", step.get("x", 0))
             dy = step.get("direction_y", step.get("y", 0))
             c = step.get("count", 3)
             start = step.get("start_x"), step.get("start_y")
             if start[0] is not None or start[1] is not None:
-                return "drag dir=({},{}) start=({},{}) x{}".format(dx, dy, start[0] or 0.5, start[1] or 0.5, c)
-            return "drag dir=({},{}) x{}".format(dx, dy, c)
-        if tpl_name:
-            return "{} {}".format(stype, tpl_name)
-        return stype
+                base = "drag dir=({},{}) start=({},{}) x{}".format(dx, dy, start[0] or 0.5, start[1] or 0.5, c)
+            else:
+                base = "drag dir=({},{}) x{}".format(dx, dy, c)
+        elif tpl_name:
+            base = "{} {}".format(stype, tpl_name)
+        else:
+            base = stype
+        if step_name:
+            return "[{}] {}".format(step_name, base)
+        return base
 
     def _advance_step(self, result=True, step=None):
         self.step_index += 1
@@ -2791,6 +2862,9 @@ class FunctionRunner:
         self._step_last_click_t = None
         self._debug_click_saved = False
         self._step_pos_cache = None
+        self._tpl_array_idx = 0
+        self._tpl_array_start_t = None
+        self._tpl_array_last_tpl = None
         if step is not None:
             if step.get("exit_always"):
                 self.step_index = len(self.steps)
@@ -2798,6 +2872,24 @@ class FunctionRunner:
             elif step.get("exit_on_true") and result:
                 self.step_index = len(self.steps)
                 log.info("[Runner] {} → exit_on_true (match) → end function".format(self._step_label(step)))
+
+    def _resolve_goto(self, value) -> int:
+        """Resolve a goto value to a step index.
+
+        Accepts either an integer index or a string step name defined via the ``name``
+        field on any event.  Returns the resolved integer index, or the current
+        step_index as a no-op fallback when the name is not found.
+        """
+        if isinstance(value, int):
+            return value
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            idx = self._step_name_map.get(str(value))
+            if idx is None:
+                log.warning("[Runner] goto name '{}' not found in current function, staying on current step".format(value))
+                return self.step_index
+            return idx
 
     def _goto_step(self, index):
         """Jump to a specific step index (used for retry loops)."""
@@ -2808,6 +2900,10 @@ class FunctionRunner:
         self._step_last_click_t = None
         self._debug_click_saved = False
         self._step_pos_cache = None
+        # Reset template_array state so the target step starts from template 0.
+        self._tpl_array_idx = 0
+        self._tpl_array_start_t = None
+        self._tpl_array_last_tpl = None
 
     def _fail_step(self, step, reason: str = "") -> None:
         """Handle a step failure: jump to on_fail_goto (with optional max_retries), or advance normally.
@@ -2822,7 +2918,7 @@ class FunctionRunner:
 
         max_retries = step.get("max_retries")  # None = unlimited
         label = self._step_label(step)
-        target = int(on_fail_goto)
+        target = self._resolve_goto(on_fail_goto)
 
         if max_retries is None:
             log.info("[Runner] {} {} → goto step {} (unlimited retries)".format(
