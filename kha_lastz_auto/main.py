@@ -156,14 +156,14 @@ if _imports_error:
 
 _dotenv_keys = _load_dotenv(".env")
 
-# EasyOCR preload in background so main thread does not freeze (Ctrl+C stays responsive)
-def _do_easyocr_preload():
+# OpenOCR preload in background so main thread does not freeze (Ctrl+C stays responsive)
+def _do_openocr_preload():
     try:
-        from ocr_easyocr import preload as _preload_easyocr
-        _preload_easyocr()
-    except Exception as e:
-        log.warning("[EasyOCR] Preload failed: {}".format(e))
-threading.Thread(target=_do_easyocr_preload, daemon=True).start()
+        from ocr_openocr import preload as _preload_openocr
+        _preload_openocr()
+    except Exception as exc:
+        log.warning("[OpenOCR] Preload failed: {}".format(exc))
+threading.Thread(target=_do_openocr_preload, daemon=True).start()
 
 if _dotenv_keys:
     log.info("[Env] Loaded from .env: {}".format(", ".join(_dotenv_keys)))

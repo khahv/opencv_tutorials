@@ -13,7 +13,7 @@ import yaml
 import pyautogui
 import cv2 as cv
 from vision import Vision, get_global_scale
-from zoom_helpers import do_world_zoomout, do_base_zoomout, _roi_crop
+
 from pynput.mouse import Button, Controller
 from fast_clicker import FastClicker
 from window_click_guard import WindowClickGuard
@@ -556,16 +556,9 @@ class FunctionRunner:
                 pw = max(1, min(int(rw * w_img), w_img - px))
                 ph = max(1, min(int(rh * h_img), h_img - py))
                 roi = screenshot[py:py + ph, px:px + pw]
-                # 540x960: ROI nhỏ, EasyOCR dễ mất số. Upscale ROI theo reference (như 1080p) trước khi OCR.
-                scale = get_global_scale()
-                if scale and 0 < scale < 1.0:
-                    up = 1.0 / scale
-                    nw = max(1, int(roi.shape[1] * up))
-                    nh = max(1, int(roi.shape[0] * up))
-                    roi = cv.resize(roi, (nw, nh), interpolation=cv.INTER_CUBIC)
                 dbg_lbl = "debug_set_level_roi" if debug_save else None
-                from ocr_easyocr import read_region_easy as _ocr_easy
-                raw_text = _ocr_easy(roi, digits_only=False, debug_label=dbg_lbl)
+                from ocr_openocr import read_region_openocr as _ocr_openocr
+                raw_text = _ocr_openocr(roi, digits_only=False, debug_label=dbg_lbl)
                 if debug_save:
                     log.info("[Runner] set_level: ROI crop saved to debug_ocr/debug_set_level_roi_raw.png")
                 if raw_text:

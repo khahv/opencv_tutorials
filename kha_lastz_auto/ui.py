@@ -7,7 +7,7 @@ from datetime import datetime
 from croniter import croniter
 from fn_settings_schema import SCHEMA as _FN_SETTINGS_SCHEMA
 
-import ocr_easyocr
+import ocr_openocr
 _log = logging.getLogger("kha_lastz")
 
 BG     = "#1e1e2e"
@@ -155,8 +155,8 @@ class BotUI:
 
         init_text = "◼  Idle"
         init_fg   = FG
-        if not ocr_easyocr.EASYOCR_OK:
-            init_text = "⚙  Initializing EasyOCR engines..."
+        if not ocr_openocr.OPENOCR_OK:
+            init_text = "⚙  Initializing OCR engine..."
             init_fg   = ACCENT
 
         self._status_lbl = tk.Label(sf, text=init_text,
@@ -1044,29 +1044,24 @@ class BotUI:
             self._root.after(500, self._tick)
             return
 
-        # ── EasyOCR dynamic state check ───────────────────────────────────────
+        # ── OpenOCR dynamic state check ───────────────────────────────────────
         if not self._ocr_ready:
-            if ocr_easyocr.EASYOCR_OK:
+            if ocr_openocr.OPENOCR_OK:
                 # Success: first time ready
                 self._ocr_ready = True
                 self._running_cb.config(state="normal", cursor="hand2", fg=GREEN, activeforeground=GREEN)
                 self._running_var.set(True)
                 self._on_running_toggle()  # resumes bot
-                _log.info("[UI] EasyOCR loaded. Bot resumed.")
-            elif ocr_easyocr._loading:
-                # Still actively loading
-                self._status_lbl.config(text="⚙  Initializing EasyOCR engines...", fg=ACCENT)
+                _log.info("[UI] OpenOCR loaded. Bot resumed.")
+            elif ocr_openocr._loading or not ocr_openocr._tried:
+                # Still loading or preload thread hasn't started yet
+                self._status_lbl.config(text="⚙  Initializing OCR engine...", fg=ACCENT)
                 self._root.after(500, self._tick)
-                return
-            elif ocr_easyocr._tried:
-                # Finished trying and failed
-                self._status_lbl.config(text="⚠  EasyOCR failed to load. Bot cannot run OCR functions.", fg=RED)
-                self._root.after(2000, self._tick)
                 return
             else:
-                # Hasn't started loading yet (wait for main thread)
-                self._status_lbl.config(text="⚙  Initializing EasyOCR engines...", fg=ACCENT)
-                self._root.after(500, self._tick)
+                # _tried=True, OPENOCR_OK=False → load failed
+                self._status_lbl.config(text="⚠  OpenOCR failed to load. Bot cannot run OCR functions.", fg=RED)
+                self._root.after(2000, self._tick)
                 return
 
         if self._bot_paused["paused"]:

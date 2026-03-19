@@ -1,19 +1,24 @@
 """
 ocr_utils.py
 ------------
-OCR helpers used by bot_engine.py. All OCR is done via EasyOCR (ocr_easyocr.py).
-Tesseract is no longer used.
+OCR helpers used by bot_engine.py and event handlers.
+All OCR is performed via OpenOCR (ocr_openocr.py).
 
-Public API (imported by bot_engine):
-    read_level_from_roi(screenshot, roi_ratios, wincap,
-                        anchor_center=None, anchor_offset=None,
-                        debug_save_path=None, level_range=(1,99))  -> int|None
-    read_raw_text_from_roi(screenshot, anchor_center, anchor_offset,
-                           char_whitelist=None, debug_save_path=None)  -> str|None
-    read_region_relative(screenshot, cx, cy, needle_w, needle_h,
-                         x, y, w, h,
-                         digits_only=False, pattern=None,
-                         debug_label=None)  -> str
+Public API
+----------
+read_level_from_roi(screenshot, roi_ratios, wincap,
+                    anchor_center=None, anchor_offset=None,
+                    debug_save_path=None, level_range=(1,99))  -> int | None
+
+read_raw_text_from_roi(screenshot, anchor_center, anchor_offset,
+                       char_whitelist=None, debug_save_path=None)  -> str | None
+
+read_region_relative(screenshot, cx, cy, needle_w, needle_h,
+                     x, y, w, h,
+                     digits_only=False, pattern=None,
+                     debug_label=None)  -> str
+
+_parse_level(text, level_range)  -> int | None   (also used by bot_engine)
 """
 
 import os
@@ -22,7 +27,7 @@ import logging
 
 import cv2 as cv
 
-from ocr_easyocr import read_region_easy
+from ocr_openocr import read_region_openocr
 
 _log = logging.getLogger("kha_lastz")
 
@@ -35,7 +40,7 @@ def _parse_level(text, level_range):
     if not text_s:
         return None
 
-    # Normalize common low-res OCR misreads (e.g. 540x960): "Lu" -> "Lv", trailing "_" from progress bar
+    # Normalize common low-res OCR misreads: "Lu" -> "Lv", trailing "_"
     text_s = re.sub(r"Lu(?=[\d.\s]|$)", "Lv", text_s, flags=re.IGNORECASE)
     text_s = re.sub(r"_+$", "", text_s).strip()
 
@@ -44,23 +49,22 @@ def _parse_level(text, level_range):
 
     m = re.search(r"[Ll][Vv]\.?\s*(\d{1,2})", text_s)
     if not m:
-        cleaned = text_s.replace('U', '0').replace('O', '0').replace('o', '0')
+        cleaned = text_s.replace("U", "0").replace("O", "0").replace("o", "0")
         m = re.search(r"[Ll][Vv]\.?\s*(\d{1,2})", cleaned)
-    # Focus on number after "L": Lv.7, LK1, LV.10, Lu1_... — bỏ qua 2 chữ đầu, chỉ lấy số
     if not m:
         m = re.search(r"[Ll][^0-9]{0,2}(\d{1,2})", text_s)
     if not m:
         m = re.search(r"[.,]\s*(\d{1,2})\b", text_s)
     if not m:
-        cleaned = text_s.replace('U', '0').replace('O', '0').replace('o', '0')
+        cleaned = text_s.replace("U", "0").replace("O", "0").replace("o", "0")
         m = re.search(r"\b(\d{1,2})\b", cleaned)
-        
+
     if m:
         try:
             num = int(m.group(1))
             if level_range[0] <= num <= level_range[1]:
                 return num
-        except:
+        except Exception:
             pass
     return None
 
@@ -71,9 +75,11 @@ def read_level_from_roi(screenshot, roi_ratios, wincap,
                         anchor_center=None, anchor_offset=None,
                         debug_save_path=None, level_range=(1, 99)):
     """
-    Crop screenshot and OCR a level number using EasyOCR.
+    Crop screenshot and OCR a level number using OpenOCR.
+
     Mode A: anchor_center + anchor_offset  (px)
     Mode B: roi_ratios [x, y, w, h] as fractions of screen size
+
     Returns int level or None.
     """
     h_img, w_img = screenshot.shape[:2]
@@ -100,28 +106,29 @@ def read_level_from_roi(screenshot, roi_ratios, wincap,
         return None
 
     debug_label = os.path.splitext(os.path.basename(debug_save_path))[0] if debug_save_path else None
-    text = read_region_easy(roi, digits_only=False, debug_label=debug_label)
+    text = read_region_openocr(roi, digits_only=False, debug_label=debug_label)
     if not text:
         return None
 
     level = _parse_level(text, level_range)
     if level is not None:
-        _log.info("[OCR] EasyOCR → Lv.{} from {!r}".format(level, text))
+        _log.info("[OCR] OpenOCR -> Lv.{} from {!r}".format(level, text))
     else:
-        _log.info("[OCR] EasyOCR → no level match from {!r}".format(text))
+        _log.info("[OCR] OpenOCR -> no level match from {!r}".format(text))
     return level
 
 
 def read_raw_text_from_roi(screenshot, anchor_center, anchor_offset,
                             char_whitelist=None, debug_save_path=None):
     """
-    Crop a ROI relative to anchor_center and return OCR'd raw text using EasyOCR.
+    Crop a ROI relative to anchor_center and return OCR'd raw text using OpenOCR.
 
     anchor_offset: [ox, oy, w, h] in pixels
         ox, oy = offset from anchor_center to the TOP-LEFT of the ROI
         w, h   = size of the ROI in pixels
-    char_whitelist: optional string — keeps only these characters from EasyOCR output
+    char_whitelist: optional string — keeps only these characters from OCR output
                     (e.g. "0123456789:" for timer text).
+
     Returns stripped text or None.
     """
     h_img, w_img = screenshot.shape[:2]
@@ -138,7 +145,7 @@ def read_raw_text_from_roi(screenshot, anchor_center, anchor_offset,
         return None
 
     debug_label = os.path.splitext(os.path.basename(debug_save_path))[0] if debug_save_path else None
-    text = read_region_easy(roi, digits_only=False, debug_label=debug_label)
+    text = read_region_openocr(roi, digits_only=False, debug_label=debug_label)
     if text is None:
         return None
     if char_whitelist and text:
@@ -151,15 +158,15 @@ def read_region_relative(screenshot, cx, cy, needle_w, needle_h,
                           digits_only=False, pattern=None,
                           debug_label=None):
     """
-    Crop a sub-region relative to a template match center, then OCR with EasyOCR.
+    Crop a sub-region relative to a template match center, then OCR with OpenOCR.
 
     Parameters x, y, w, h are ratios of the template size (0.0–1.0):
-        x=0, y=0  → top-left of matched template
-        x=1, y=1  → bottom-right
+        x=0, y=0  -> top-left of matched template
+        x=1, y=1  -> bottom-right
 
-    digits_only: keep only digits, commas, periods from result
-    pattern:     regex to extract a specific group, e.g. r"(\\d{3,4})"
-    debug_label: if set, saves raw crop to debug_ocr/<label>_raw.png
+    digits_only : keep only digits, commas, periods from result
+    pattern     : regex to extract a specific group, e.g. r"(\\d{3,4})"
+    debug_label : if set, saves raw crop to debug_ocr/<label>_raw.png
 
     Returns extracted string or "".
     """
@@ -181,6 +188,6 @@ def read_region_relative(screenshot, cx, cy, needle_w, needle_h,
     if crop.size == 0:
         return ""
 
-    result = read_region_easy(crop, digits_only=digits_only,
-                               pattern=pattern, debug_label=debug_label)
+    result = read_region_openocr(crop, digits_only=digits_only,
+                                  pattern=pattern, debug_label=debug_label)
     return result if result is not None else ""

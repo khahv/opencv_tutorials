@@ -1,27 +1,25 @@
 # Function: TurnOnShield
 # Triggered automatically when an attack is detected (trigger: attacked in config.yaml).
-description: "Activate shield when under attack: send Zalo alert, then HQ -> World -> CityWall -> PeaceShield"
+description: "Activate shield when under attack: send Zalo alert, then HQ -> World-  --> CityWall -> PeaceShield"
 
 steps:
 
-  - event_type: sleep
-    duration_sec: 10
-
-  - event_type: match_click
+  - event_type: close_ui
     template: buttons_template/HeadquartersButton.png
-    threshold: 0.75
-    one_shot: true
-    timeout_sec: 3
+    world_button: buttons_template/WorldButton.png
+    back_button: buttons_template/BackButton.png
 
-  - event_type: sleep
-    duration_sec: 1
-
-  - event_type: match_click
-    template: buttons_template/WorldButton.png
+  - event_type: world_zoomout
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    back_button: buttons_template/BackButton.png
+    back_button_threshold: 0.8
     threshold: 0.75
-    one_shot: true
-    timeout_sec: 10
-    run_always: true
+    scroll_times: 0
+    scroll_interval_sec: 0.1
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
 
   - event_type: sleep
     duration_sec: 1
@@ -29,6 +27,7 @@ steps:
   - event_type: click_position
     offset_x: 0.5
     offset_y: 0.5
+    name: ClickMiddleScreen
 
   - event_type: sleep
     duration_sec: 1
@@ -37,7 +36,8 @@ steps:
     template: buttons_template/BuffIcon.png
     threshold: 0.75
     one_shot: true
-    timeout_sec: 10
+    timeout_sec: 5
+    on_fail_goto: ClickMiddleScreen
 
   - event_type: sleep
     duration_sec: 3
@@ -83,7 +83,7 @@ steps:
       "3d":  [0.75, 0.49]
 
   # Always close the City Walls panel — runs even if previous steps aborted
-  - event_type: click_position
-    x: 0.03
-    y: 0.08
-    run_always: true
+  - event_type: close_ui
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    back_button: buttons_template/BackButton.png
