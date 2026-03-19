@@ -43,7 +43,7 @@ steps:
       x: 0.20   # left edge of "Lv.XX" text
       y: 0.85   # top edge (above the slider bar)
       w: 0.57   # wide enough to capture "Lv.10"
-      h: 0.03   # height of one text line
+      h: 0.026   # height of one text line
     plus_template: buttons_template/PlusButton.png
     minus_template: buttons_template/MinusButton.png
     threshold: 0.75

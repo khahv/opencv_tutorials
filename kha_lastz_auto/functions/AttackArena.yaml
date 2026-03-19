@@ -8,16 +8,43 @@ steps:
     world_button: buttons_template/WorldButton.png
     back_button: buttons_template/BackButton.png
 
+  - event_type: base_zoomout
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    back_button: buttons_template/BackButton.png
+    back_button_threshold: 0.8
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
+    threshold: 0.6
+    scroll_times: 5
+    scroll_interval_sec: 0.1
+
+
   - event_type: match_click
     template: buttons_template/Arena.png
     threshold: 0.65
     one_shot: true
     timeout_sec: 2
-    on_fail_goto: ArenaChallenge   # already inside Arena → skip navigation, go straight to Challenge
+    on_fail_goto: ArenaIconClick   # already inside Arena → skip navigation, go straight to Challenge
+    on_success_goto: SleepBeforeStart
+
+  - event_type: match_click
+    template_array:
+      - buttons_template/ArenaIcon.png
+      - buttons_template/ArenaIcon2.png
+    threshold: 0.65
+    one_shot: true
+    timeout_sec: 2
+    name: ArenaIconClick
+
 
   - event_type: sleep
+    name: SleepBeforeStart
     duration_sec: 2
 
+
+  # Sometime the introduction window may appear:
   - event_type: match_click
     template: buttons_template/ArenaCloseButton.png
     threshold: 0.7
@@ -95,6 +122,10 @@ steps:
     combat_template: buttons_template/ArenaCombat.png
     combat_threshold: 0.8
     sleep_before_combat: 2.0
+
+
+  - event_type: sleep
+    duration_sec: 4
 
   - event_type: close_ui
     template: buttons_template/HeadquartersButton.png

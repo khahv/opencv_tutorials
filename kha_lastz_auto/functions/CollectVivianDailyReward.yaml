@@ -19,11 +19,10 @@ steps:
     scroll_times: 5
     scroll_interval_sec: 0.1
 
-
   # Now click MagnifierButton (visible after navigation)
   - event_type: match_click
-    template: buttons_template/DailyReward1.png
-    threshold: 0.6
+    template: buttons_template/ClaimVivianDailyReward.png
+    threshold: 0.7
     one_shot: true
     timeout_sec: 2
 
@@ -31,47 +30,16 @@ steps:
     duration_sec: 1
 
   - event_type: match_click
-    template: buttons_template/DailyReward9.png
+    template: buttons_template/VivianClaimAllDailyReward.png
     threshold: 0.6
     one_shot: true
     timeout_sec: 2
 
-  - event_type: match_click
-    template: buttons_template/DailyReward2.png
-    threshold: 0.6
-    one_shot: true
-    timeout_sec: 2
 
   - event_type: sleep
     duration_sec: 3
     run_always: true
 
-  - event_type: click_position
-    x: 0.49
-    y: 0.04
-    run_always: true
-
-  - event_type: drag
-    direction_x: -1
-    direction_y: 0
-    count: 1
-    run_always: true
-    start_x: 0.25
-    start_y: 0.96
-    drag_distance_ratio: 0.7
-    run_always: true
-
-  - event_type: match_click
-    template: buttons_template/DailyReward3.png
-    threshold: 0.6
-    one_shot: true
-    timeout_sec: 2
-
-  - event_type: match_click
-    template: buttons_template/DailyReward4.png
-    threshold: 0.6
-    one_shot: true
-    timeout_sec: 2
   
   - event_type: sleep
     duration_sec: 3

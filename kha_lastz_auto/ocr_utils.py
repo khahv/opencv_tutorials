@@ -40,9 +40,12 @@ def _parse_level(text, level_range):
     if not text_s:
         return None
 
-    # Normalize common low-res OCR misreads: "Lu" -> "Lv", trailing "_"
+    # Underscores come from slider-bar decorations read by OCR (e.g. "_5" → "5").
+    # Replace with space so word-boundary regex \b works correctly around digits.
+    text_s = text_s.replace("_", " ").strip()
+
+    # Normalize common low-res OCR misreads: "Lu" -> "Lv", trailing trailing junk
     text_s = re.sub(r"Lu(?=[\d.\s]|$)", "Lv", text_s, flags=re.IGNORECASE)
-    text_s = re.sub(r"_+$", "", text_s).strip()
 
     # Pre-clean: common misreads for '0' in a level context
     text_s = re.sub(r"(\d)[UoO]", r"\g<1>0", text_s)

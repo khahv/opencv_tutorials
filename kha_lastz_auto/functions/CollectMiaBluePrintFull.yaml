@@ -22,9 +22,7 @@ steps:
 
   - event_type: match_click
     template_array:
-      - buttons_template/EXPRewardNormal.png
-      - buttons_template/EXPRewardFull.png
-      - buttons_template/ZGoldNormal.png
+      - buttons_template/CollectMiaBlueprint.png
     threshold: 0.65
     one_shot: true
     timeout_sec: 1
@@ -49,9 +47,7 @@ steps:
 
   - event_type: match_click
     template_array:
-      - buttons_template/EXPRewardNormal.png
-      - buttons_template/ZGoldNormal.png
-      - buttons_template/EXPRewardFull.png
+      - buttons_template/CollectMiaBlueprint.png
     threshold: 0.75
     one_shot: true
     timeout_sec: 1
@@ -70,9 +66,7 @@ steps:
 
   - event_type: match_click
     template_array:
-      - buttons_template/EXPRewardNormal.png
-      - buttons_template/ZGoldNormal.png
-      - buttons_template/EXPRewardFull.png
+      - buttons_template/CollectMiaBlueprint.png
     threshold: 0.75
     one_shot: true
     timeout_sec: 2
@@ -91,9 +85,7 @@ steps:
 
   - event_type: match_click
     template_array:
-      - buttons_template/EXPRewardNormal.png
-      - buttons_template/ZGoldNormal.png
-      - buttons_template/EXPRewardFull.png
+      - buttons_template/CollectMiaBlueprint.png
     threshold: 0.75
     one_shot: true
     timeout_sec: 1
@@ -112,10 +104,19 @@ steps:
 
   - event_type: match_click
     template_array:
-      - buttons_template/EXPRewardNormal.png
-      - buttons_template/ZGoldNormal.png
-      - buttons_template/EXPRewardFull.png
+      - buttons_template/CollectMiaBlueprint.png
     threshold: 0.75
     one_shot: true
     timeout_sec: 1
     exit_on_true: true
+    
+  - event_type: close_ui
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    back_button: buttons_template/BackButton.png
+    back_button_threshold: 0.8
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
+    threshold: 0.6
+    run_always: true

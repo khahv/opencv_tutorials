@@ -30,11 +30,11 @@ steps:
     duration_sec: 1
 
   - event_type: match_click
-    template: buttons_template/FurylordIcon.png
+    template: buttons_template/FullPreparedness.png
     threshold: 0.6
     one_shot: true
     timeout_sec: 2
-    on_success_goto: ReceiveAward
+    on_success_goto: SleepBeforeReceiveAward
 
   # Drag all to the left
   - event_type: drag
@@ -50,85 +50,113 @@ steps:
     duration_sec: 1
   
   - event_type: match_click
-    template: buttons_template/FurylordIcon.png
+    template_array:
+      - buttons_template/FullPreparedness.png
+      - buttons_template/FullPreparedness2.png
     threshold: 0.6
     one_shot: true
     timeout_sec: 2
-    on_success_goto: ReceiveAward
-
-  # Drag to the right at FuryLordIcon
-  - event_type: drag
-    direction_x: -1
-    direction_y: 0
-    count: 1
-    run_always: true
-    start_x: 0.25
-    start_y: 0.96
-    drag_distance_ratio: 0.5
+    on_success_goto: SleepBeforeReceiveAward
 
   - event_type: sleep
     duration_sec: 1
-
-  - event_type: match_click
-    template: buttons_template/FurylordIcon.png
-    threshold: 0.6
-    one_shot: true
-    timeout_sec: 2
-
-  - event_type: sleep
-    duration_sec: 1
-
- 
+    name: SleepBeforeReceiveAward
   
+
+  # First reward
   - event_type: click_position
     name: ReceiveAward
-    x: 0.50
-    y: 0.72
+    x: 0.24
+    y: 0.5
 
   - event_type: sleep
     duration_sec: 2
 
   - event_type: click_position
-    name: CloseReceiveAward
-    x: 0.50
-    y: 0.72
-    on_success_goto: FurylordGoButtonSleep
+    name: ClickMiddleScreen1
+    x: 0.5
+    y: 0.01
 
-  - event_type: sleep
-    name: FurylordGoButtonSleep
-    duration_sec: 1
-
-  - event_type: match_click
-    name: FurylordGoButton
-    template: buttons_template/FurylordGoButton.png
-    threshold: 0.8
-    one_shot: true
-    timeout_sec: 5
-    
   - event_type: sleep
     duration_sec: 1
 
-  - event_type: match_click
-    name: FurylordAttackIcon
-    template: buttons_template/FurylordAttackIcon.png
-    threshold: 0.6
-    one_shot: true
-    timeout_sec: 5
-    on_fail_goto: ClickMiddleScreen
-    on_success_goto: MarchButton
+  # second reward
+  - event_type: click_position
+    name: ReceiveAward
+    x: 0.5
+    y: 0.5
+
+  - event_type: sleep
+    duration_sec: 2 
 
   - event_type: click_position
-    name: ClickMiddleScreen
-    x: 0.50
-    y: 0.50
-    on_success_goto: FurylordAttackIcon
+    name: ClickMiddleScreen2
+    x: 0.5
+    y: 0.01
 
-  - event_type: match_click
-    name: MarchButton
-    template: buttons_template/March.png
-    threshold: 0.6
-    one_shot: true
-    timeout_sec: 5
+  - event_type: sleep
+    duration_sec: 1
+
+
+  # third reward
+  - event_type: click_position
+    name: ReceiveAward
+    x: 0.76
+    y: 0.5
+  
+  - event_type: sleep
+    duration_sec: 3
+
+  - event_type: click_position
+    name: ClickMiddleScreen3
+    x: 0.5
+    y: 0.01
+
+  - event_type: sleep
+    duration_sec: 2
+
+  # fourth reward
+  - event_type: click_position
+    name: ReceiveAward
+    x: 0.50
+    y: 0.31
+  
+  - event_type: sleep
+    duration_sec: 2
+  
+  - event_type: click_position
+    name: ClickMiddleScreen4
+    x: 0.5
+    y: 0.01
+
+
+   # fifth reward
+  - event_type: click_position
+    name: ReceiveAward
+    x: 0.68
+    y: 0.31
+  
+  - event_type: sleep
+    duration_sec: 2
+  
+  - event_type: click_position
+    name: ClickMiddleScreen4
+    x: 0.5
+    y: 0.01
+
+   # sixth reward
+  - event_type: click_position
+    name: ReceiveAward
+    x: 0.84
+    y: 0.31
+  
+  - event_type: sleep
+    duration_sec: 2
+  
+  - event_type: click_position
+    name: ClickMiddleScreen4
+    x: 0.5
+    y: 0.01
 
   - event_type: close_ui
     template: buttons_template/HeadquartersButton.png

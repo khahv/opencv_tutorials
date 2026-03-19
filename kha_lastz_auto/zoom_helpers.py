@@ -81,9 +81,14 @@ def do_world_zoomout(
 ):
     """
     Ensure we are on world view then scroll (one attempt).
-    - If we already see HQ: click HQ → sleep 2 → fresh screenshot → click World → sleep 2 → zoomout (scroll).
-    - If we see World (not HQ): click HQ first if visible → sleep 2 → fresh screenshot → click World → sleep 2 → fresh screenshot → if HQ visible then zoomout.
-    Every match step uses a fresh screenshot.
+
+    - HQ visible (world view): click HQ → sleep 2 → click World → sleep 2 →
+      confirm HQ visible → scroll.
+    - World button visible (base view): click World → sleep 2 →
+      confirm HQ visible → scroll.
+    - Neither visible: return False.
+
+    Scroll only happens after confirming HQ is visible (world view confirmed).
     Returns True if scroll was done; False otherwise.
     """
     if screenshot is None and hasattr(wincap, "get_screenshot"):
@@ -131,7 +136,8 @@ def do_world_zoomout(
         time.sleep(0.05)
 
     if points_hq:
-        # Already see HQ: click HQ → sleep 2 → fresh screenshot → click World → sleep 2 → zoomout
+        # Already see HQ (on world view): click HQ → sleep 2 → fresh screenshot → click World → sleep 2 →
+        # confirm HQ visible (back on world view) → scroll.
         sx, sy = wincap.get_screen_position((points_hq[0][0], points_hq[0][1]))
         pyautogui.click(sx, sy)
         time.sleep(2)
@@ -145,32 +151,23 @@ def do_world_zoomout(
         sx, sy = wincap.get_screen_position((points_w2[0][0], points_w2[0][1]))
         pyautogui.click(sx, sy)
         time.sleep(2)
-        _scroll()
-        return True
+        # Confirm we are back on world view (HQ visible) before scrolling
+        search_img3, roi_off3 = _fresh_search_img(wincap, vision, roi_center_x, roi_center_y, roi_padding)
+        if search_img3 is None:
+            return False
+        points_hq3 = vision.find(search_img3, threshold=threshold, **find_kw)
+        points_hq3 = _shift_points(points_hq3 if points_hq3 else [], roi_off3)
+        if points_hq3:
+            _scroll()
+            return True
+        return False
 
     if points_w:
-        # We see World (e.g. base view). If HQ also visible: click HQ → sleep 2 → fresh screenshot.
-        points_hq_same = vision.find(search_img, threshold=threshold, **find_kw)
-        points_hq_same = _shift_points(points_hq_same if points_hq_same else [], roi_offset)
-        if points_hq_same:
-            sx, sy = wincap.get_screen_position((points_hq_same[0][0], points_hq_same[0][1]))
-            pyautogui.click(sx, sy)
-            time.sleep(2)
-            search_img2, roi_off2 = _fresh_search_img(wincap, vision, roi_center_x, roi_center_y, roi_padding)
-            if search_img2 is None:
-                return False
-            points_w2 = vision_world.find(search_img2, threshold=threshold, **find_kw) if vision_world else []
-            points_w2 = _shift_points(points_w2 if points_w2 else [], roi_off2)
-            if not points_w2:
-                return False
-            sx, sy = wincap.get_screen_position((points_w2[0][0], points_w2[0][1]))
-            pyautogui.click(sx, sy)
-            time.sleep(2)
-        else:
-            sx, sy = wincap.get_screen_position((points_w[0][0], points_w[0][1]))
-            pyautogui.click(sx, sy)
-            time.sleep(2)
-        # Fresh screenshot: confirm we are on world (HQ visible) then zoomout
+        # World button visible (on base view): click World → sleep 2 →
+        # confirm HQ visible (now on world view) → scroll.
+        sx, sy = wincap.get_screen_position((points_w[0][0], points_w[0][1]))
+        pyautogui.click(sx, sy)
+        time.sleep(2)
         search_img3, roi_off3 = _fresh_search_img(wincap, vision, roi_center_x, roi_center_y, roi_padding)
         if search_img3 is None:
             return False

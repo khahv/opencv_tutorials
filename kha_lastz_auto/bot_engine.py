@@ -460,11 +460,8 @@ class FunctionRunner:
             return "running"
 
         if step_type == "sleep":
-            duration = step.get("duration_sec", 0)
-            if now - self.step_start_time >= duration:
-                log.info("[Runner] {} → true".format(self._step_label(step)))
-                self._advance_step(True)
-            return "running"
+            from events import event_sleep as _ev_sleep
+            return _ev_sleep.run(step, screenshot, wincap, self)
 
         if step_type == "send_zalo":
             from events import event_send_zalo as _ev_send_zalo
@@ -493,128 +490,8 @@ class FunctionRunner:
             return "running"
 
         if step_type == "set_level":
-            # OCR-based: read "Lv.X" from screen, click Plus/Minus to reach target_level.
-            target_level = step.get("target_level", 10)
-            # fn_settings override: UI-configurable target level per function
-            _fn_override = self.fn_settings.get(self.function_name or "", {})
-            if "target_level" in _fn_override:
-                try:
-                    target_level = int(_fn_override["target_level"])
-                except (ValueError, TypeError):
-                    pass
-            level_roi = step.get("level_roi")
-            level_anchor_template = step.get("level_anchor_template")
-            level_anchor_offset = step.get("level_anchor_offset")
-            level_ocr_region  = step.get("level_ocr_region")   # {x, y, w, h} ratios of anchor template
-            plus_template = step.get("plus_template")
-            minus_template = step.get("minus_template")
-            threshold = step.get("threshold", 0.75)
-            timeout_sec = step.get("timeout_sec") or 30
-            click_interval = step.get("click_interval_sec", 0.3)
-            min_level      = step.get("min_level", 1)
-            max_level      = step.get("max_level", 99)
-            if not plus_template or not minus_template:
-                self._advance_step(True)
-                return "running"
-            if now - self.step_start_time >= timeout_sec:
-                log.info("[Runner] set_level: timeout before reaching Lv.{}".format(target_level))
-                self._advance_step(False)
-                return "running"
-            vision_plus = self.vision_cache.get(plus_template)
-            vision_minus = self.vision_cache.get(minus_template)
-            if not vision_plus or not vision_minus:
-                self._advance_step(True)
-                return "running"
-            # Resolve anchor center from template
-            anchor_center = None
-            anchor_needle_w = None
-            anchor_needle_h = None
-            if level_anchor_template:
-                v_anchor = self._get_vision(level_anchor_template)
-                if v_anchor:
-                    pts = v_anchor.find(screenshot, threshold=threshold, debug_mode=None)
-                    if pts:
-                        pt = pts[0]
-                        anchor_center   = (int(pt[0]), int(pt[1]))
-                        anchor_needle_w = pt[2] if len(pt) >= 4 else v_anchor.needle_w
-                        anchor_needle_h = pt[3] if len(pt) >= 4 else v_anchor.needle_h
-            # OCR: read current level
-            # Mode A (new): level_ocr_region — absolute screen-ratio coords
-            #   x, y = top-left corner of OCR region (0.0~1.0 of game window)
-            #   w, h = size of OCR region (0.0~1.0 of game window)
-            #   No anchor template needed — just pure screen coords
-            debug_save = step.get("debug_save_roi", False)
-            current = None
-            if level_ocr_region:
-                h_img, w_img = screenshot.shape[:2]
-                rx = level_ocr_region.get("x", 0.0)
-                ry = level_ocr_region.get("y", 0.0)
-                rw = level_ocr_region.get("w", 0.1)
-                rh = level_ocr_region.get("h", 0.05)
-                px = max(0, int(rx * w_img))
-                py = max(0, int(ry * h_img))
-                pw = max(1, min(int(rw * w_img), w_img - px))
-                ph = max(1, min(int(rh * h_img), h_img - py))
-                roi = screenshot[py:py + ph, px:px + pw]
-                dbg_lbl = "debug_set_level_roi" if debug_save else None
-                from ocr_openocr import read_region_openocr as _ocr_openocr
-                raw_text = _ocr_openocr(roi, digits_only=False, debug_label=dbg_lbl)
-                if debug_save:
-                    log.info("[Runner] set_level: ROI crop saved to debug_ocr/debug_set_level_roi_raw.png")
-                if raw_text:
-                    current = _parse_level(raw_text, (min_level, max_level))
-                    if current is not None:
-                        log.info("[Runner] set_level: Lv.{} from {!r}".format(current, raw_text))
-                    else:
-                        log.info("[Runner] set_level: no level match from {!r}".format(raw_text))
-            else:
-                # Mode B (legacy): anchor template + pixel offset or level_roi
-                current = _read_level_from_roi(
-                    screenshot, level_roi or [0, 0, 0.3, 0.1], wincap,
-                    anchor_center, level_anchor_offset,
-                    debug_save_path="debug_set_level_roi.png" if debug_save else None,
-                    level_range=(min_level, max_level),
-                )
-                if debug_save:
-                    self._set_level_debug_saved = True
-                    log.info("[Runner] set_level: ROI saved to debug_set_level_roi.png")
-            if current is None:
-                if not getattr(self, "_set_level_warned", False):
-                    self._set_level_warned = True
-                    log.info("[Runner] set_level: OCR cannot read level — check level_ocr_region / level_anchor_offset in YAML")
-                return "running"
-            self._set_level_warned = False
-
-            if current == target_level:
-                log.info("[Runner] set_level: already at Lv.{}, done".format(target_level))
-                self._advance_step(True)
-                return "running"
-            if current < target_level:
-                pts = vision_plus.find(screenshot, threshold=threshold, debug_mode=None)
-                if pts:
-                    sx, sy = wincap.get_screen_position((pts[0][0], pts[0][1]))
-                    if not self._safe_move(sx, sy, wincap, "set_level plus"):
-                        return "running"
-                    _mouse_ctrl.press(Button.left)
-                    time.sleep(0.05)
-                    _mouse_ctrl.release(Button.left)
-                    log.info("[Runner] set_level: Lv.{} -> click Plus (target Lv.{})".format(current, target_level))
-                    time.sleep(click_interval)
-                else:
-                    log.info("[Runner] set_level: Plus greyed at Lv.{} (max reached), proceeding".format(current))
-                    self._advance_step(True)
-                return "running"
-            if current > target_level:
-                pts = vision_minus.find(screenshot, threshold=threshold, debug_mode=None)
-                if pts:
-                    sx, sy = wincap.get_screen_position((pts[0][0], pts[0][1]))
-                    self._safe_click(sx, sy, wincap, "set_level minus")
-                    log.info("[Runner] set_level: Lv.{} -> click Minus (target Lv.{})".format(current, target_level))
-                    time.sleep(click_interval)
-                else:
-                    log.info("[Runner] set_level: Minus greyed at Lv.{} (min reached), proceeding".format(current))
-                    self._advance_step(True)
-                return "running"
+            from events import event_set_level as _ev_set_level
+            return _ev_set_level.run(step, screenshot, wincap, self)
 
         if step_type == "click_unless_visible":
             # If visible_template is found on screen -> skip (already on right screen).

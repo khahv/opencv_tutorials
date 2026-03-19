@@ -61,13 +61,24 @@ functions:
 
   - name: CollectDailyShopReward
     enabled: true
-  
+
+  - name: CollectFullPreparednessReward
+    enabled: true
+    
   - name: CollectDailyReward
     enabled: true
+
 
   - name: CollectZGoldFull
     enabled: true
     key: z
+
+  - name: CollectMiaBluePrintFull
+    enabled: true
+
+  - name: CollectVivianDailyReward
+    enabled: true
+
   - name: CollectKatrinaGasFull
     enabled: true
 

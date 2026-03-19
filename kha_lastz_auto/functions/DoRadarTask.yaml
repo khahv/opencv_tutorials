@@ -7,6 +7,17 @@ steps:
     world_button: buttons_template/WorldButton.png
     back_button: buttons_template/BackButton.png
 
+  - event_type: base_zoomout
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    back_button: buttons_template/BackButton.png
+    back_button_threshold: 0.8
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
+    threshold: 0.6
+    scroll_times: 5
+    scroll_interval_sec: 0.1
 
   - event_type: match_click
     template: buttons_template/Radar2.png
@@ -51,10 +62,10 @@ steps:
     threshold: 0.88
     one_shot: true
     timeout_sec: 2
-    debug_log: true
-    log_all_scores: true
+    # debug_log: true
+    # log_all_scores: true
 
-    max_tries: 30
+    max_tries: 10
     on_max_tries_reach_goto: CloseUI
     dedup_enable: true
     debug_save: true
@@ -87,6 +98,7 @@ steps:
     debug_log: true
     run_always: true
     on_success_goto: RadarAttackHelpButton
+    on_fail_goto: ClickMiddleScreen
 
   - event_type: match_click
     template_array:
@@ -97,9 +109,13 @@ steps:
     timeout_sec: 2
     debug_log: true
     run_always: true
-    on_fail_goto: FindRadarItem
-
- 
+    on_fail_goto: ClickMiddleScreen
+  
+  - event_type: click_position
+    name: ClickMiddleScreen
+    x: 0.5
+    y: 0.5
+    on_success_goto: FindRadarItem
 
   - event_type: sleep
     duration_sec: 1
