@@ -37,9 +37,9 @@ steps:
     template: buttons_template/Treasure3.png
     threshold: 0.6
     run_always: true
-    timeout_sec: 100      # wait up to 60s for template to appear
-    storm_sec: 300       # click for up to 300s once found
-    max_clicks: 3000
+    timeout_sec: 500  # wait up to 60s for template to appear
+    storm_sec: 500     # click for up to 300s once found
+    max_clicks: 10000
     offset_change_time: 5
     offset_x: 0.03       # ±3% of window width (~32px on 1080px window)
     offset_y: 0.03       # ±3% of window height (~58px on 1920px window)

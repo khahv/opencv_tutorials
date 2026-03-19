@@ -69,15 +69,17 @@ steps:
     template_array:
       - buttons_template/EXPRewardNormal.png
       - buttons_template/ZGoldNormal.png
+      - buttons_template/AlloyNormal.png
     threshold: 0.75
     one_shot: true
-    timeout_sec: 1
+    timeout_sec: 2
     exit_on_true: true
 
   - event_type: drag
     direction_x: 0
     direction_y: 1
-    count: 7
+    drag_distance_ratio: 0.5
+    count: 1
     run_always: true
 
   - event_type: sleep
@@ -96,7 +98,8 @@ steps:
   - event_type: drag
     direction_x: -1
     direction_y: 0
-    count: 10
+    drag_distance_ratio: 0.5
+    count: 1
     run_always: true
 
   - event_type: sleep

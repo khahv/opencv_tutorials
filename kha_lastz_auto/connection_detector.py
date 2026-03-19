@@ -31,8 +31,8 @@ AFTER_ZOOMOUT_SLEEP_SEC: float = 2.0     # sleep after world_zoomout before clic
 AFTER_CLICK_SLEEP_SEC: float = 2.0       # sleep after clicking middle before screenshot
 
 # ── BuffIcon check ────────────────────────────────────────────────────────────
-BUFF_MISS_RECHECK_SEC: float = 30.0      # re-check delay (seconds) after first BuffIcon miss
-BUFF_MISSES_BEFORE_RESTART: int = 2      # consecutive misses required before killing and restarting
+BUFF_MISS_RECHECK_SEC: float = 300    # re-check delay (seconds) after first BuffIcon miss
+BUFF_MISSES_BEFORE_RESTART: int = 5      # consecutive misses required before killing and restarting
 
 # ── Vision thresholds ─────────────────────────────────────────────────────────
 THRESHOLD_DEFAULT: float = 0.75          # default template-match threshold
@@ -211,9 +211,16 @@ class ConnectionDetector:
 
         Args:
             is_busy: optional callable returning True while a bot function is actively running.
-                     Full check is deferred (interval reset) to avoid interfering with running functions.
+                     All checks are deferred while a function is running to avoid interfering with it.
         """
         now = time.time()
+
+        # Guard: skip ALL checks while any bot function is actively running
+        if is_busy and is_busy():
+            log.debug("[ConnectionDetector] Skipped — bot function is running")
+            self._last_run_time = now  # reset interval so check runs after interval_sec of idle time
+            return
+
         pid = self._lastz_pid_ref.get("pid")
 
         # 1) Every tick: if process not running → wait 10s then start and refresh hwnd/pid (so closing window triggers restart soon)
@@ -264,11 +271,6 @@ class ConnectionDetector:
 
         # 2) Full connection check only every interval_sec (e.g. 5 min)
         if not self.should_run(now):
-            return
-        # Defer full check while a bot function is running — avoid interfering with active game actions
-        if is_busy and is_busy():
-            log.debug("[ConnectionDetector] Full check deferred — bot function is running")
-            self._last_run_time = now  # reset interval, check again after interval_sec
             return
         # Skip connection check when on login screen (PasswordSlot visible)
         if current_screenshot is not None:

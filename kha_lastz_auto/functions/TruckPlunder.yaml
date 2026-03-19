@@ -54,7 +54,7 @@ steps:
 
     # Filter 1 – OrangeHeroFragment must appear exactly fragment_count times
     fragment_template: buttons_template/OrangeHeroFragment.png
-    fragment_count: 2
+    fragment_count: 1
     fragment_threshold: 0.90
     ocr_on_fragment_fail: true    # always run OCR even if fragment fails (for debug logging)
 

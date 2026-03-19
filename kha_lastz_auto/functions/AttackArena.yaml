@@ -1,0 +1,108 @@
+# Function: AttackArena
+description: "Navigate to Arena -> Challenge screen -> Filter opponents by power -> Attack weakest -> Combat"
+
+steps:
+
+  - event_type: close_ui
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    back_button: buttons_template/BackButton.png
+
+  - event_type: match_click
+    template: buttons_template/Arena.png
+    threshold: 0.65
+    one_shot: true
+    timeout_sec: 2
+    on_fail_goto: ArenaChallenge   # already inside Arena → skip navigation, go straight to Challenge
+
+  - event_type: sleep
+    duration_sec: 2
+
+  - event_type: match_click
+    template: buttons_template/ArenaCloseButton.png
+    threshold: 0.7
+    one_shot: true
+    timeout_sec: 2
+    on_success_goto: ArenaChallenge
+    on_fail_goto: ArenaChallenge
+
+  - event_type: match_click
+    name: ArenaChallenge
+    template: buttons_template/ArenaChallenge.png
+    threshold: 0.8
+    one_shot: true
+    timeout_sec: 2
+
+  # arena_filter: read my_power + 5 opponent powers from absolute screen ratio regions.
+  # Compare each opponent against my_power; click attack for the weakest one that is
+  # strictly less than my own power, then sleep and click the Combat confirm button.
+  #
+  # Power format: e.g. "109.55M", "22.33M", "9.5M"  (captured by power_pattern)
+  - event_type: arena_filter
+    
+
+    # Wait for the challenge screen to render before OCR (seconds)
+    sleep_before_ocr: 1.5
+
+    # Save each OCR crop to debug_ocr/ for tuning x/y/w/h
+    debug_save: true
+
+    # My own power label position (absolute screen ratios)
+    my_power_region:
+      x: 0.4
+      y: 0.75
+      w: 0.15
+      h: 0.02
+
+    # Five opponent rows; each has an OCR region + the position of its Attack button
+    opponents:
+      - x: 0.4
+        y: 0.31
+        w: 0.15
+        h: 0.02
+        attack_x: 0.75
+        attack_y: 0.31
+
+      - x: 0.4
+        y: 0.39
+        w: 0.15
+        h: 0.02
+        attack_x: 0.75
+        attack_y: 0.39
+
+      - x: 0.4
+        y: 0.48
+        w: 0.15
+        h: 0.02
+        attack_x: 0.75
+        attack_y: 0.48
+
+      - x: 0.4
+        y: 0.56
+        w: 0.15
+        h: 0.02
+        attack_x: 0.75
+        attack_y: 0.56
+
+      - x: 0.4
+        y: 0.645
+        w: 0.15
+        h: 0.02
+        attack_x: 0.75
+        attack_y: 0.64
+
+    # Combat confirm button clicked after sleep_before_combat seconds
+    combat_template: buttons_template/ArenaCombat.png
+    combat_threshold: 0.8
+    sleep_before_combat: 2.0
+
+  - event_type: close_ui
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    back_button: buttons_template/BackButton.png
+    back_button_threshold: 0.8
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
+    threshold: 0.6
+    run_always: true

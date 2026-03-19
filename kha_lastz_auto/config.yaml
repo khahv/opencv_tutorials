@@ -43,6 +43,9 @@ functions:
   - name: AttackFuryLord
     enabled: true
 
+  - name: AttackArena
+    enabled: true
+
   - name: ClickTreasure
     trigger: treasure_detected
     key: y

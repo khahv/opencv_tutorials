@@ -73,6 +73,14 @@ steps:
     name: ReceiveAward
     x: 0.50
     y: 0.72
+
+  - event_type: sleep
+    duration_sec: 2
+
+  - event_type: click_position
+    name: CloseReceiveAward
+    x: 0.50
+    y: 0.72
     on_success_goto: FurylordGoButtonSleep
 
   - event_type: sleep
@@ -82,7 +90,7 @@ steps:
   - event_type: match_click
     name: FurylordGoButton
     template: buttons_template/FurylordGoButton.png
-    threshold: 0.6
+    threshold: 0.8
     one_shot: true
     timeout_sec: 5
     
