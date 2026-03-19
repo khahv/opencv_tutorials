@@ -1,0 +1,94 @@
+# Function: AttackArena
+description: "Navigate to Arena -> Challenge screen -> Filter opponents by power -> Attack weakest -> Combat"
+
+steps:
+
+  - event_type: close_ui
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    back_button: buttons_template/BackButton.png
+
+  - event_type: base_zoomout
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    back_button: buttons_template/BackButton.png
+    back_button_threshold: 0.8
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
+    threshold: 0.6
+    scroll_times: 5
+    scroll_interval_sec: 0.1
+
+
+  - event_type: match_click
+    template: buttons_template/BountyMissionIcon.png
+    threshold: 0.65
+    one_shot: true
+    timeout_sec: 2
+
+  - event_type: sleep
+    duration_sec: 2
+    name: Sleep1
+  
+  - event_type: click_position
+    name: ClickUpMiddleScreen
+    x: 0.5
+    y: 0.01
+
+  - event_type: match_click
+    template: buttons_template/BountyMissionClaimButton.png
+    threshold: 0.85
+    one_shot: true
+    timeout_sec: 2
+    roi_center_x: 0.24
+    roi_center_y: 0.58
+    on_success_goto: Sleep1
+    on_fail_goto: GoButtonClick
+
+
+  - event_type: match_click
+    name: GoButtonClick
+    template: buttons_template/BountyMissionGoButton.png
+    threshold: 0.85
+    one_shot: true
+    timeout_sec: 2
+    roi_center_x: 0.24
+    roi_center_y: 0.58
+
+  - event_type: sleep
+    duration_sec: 1
+  
+  - event_type: match_click
+    name: QuickDeployButtonClick
+    template: buttons_template/BountyMissionQuickDeploy.png
+    threshold: 0.85
+    one_shot: true
+    timeout_sec: 2
+
+ 
+  
+  - event_type: sleep
+    duration_sec: 1
+
+  - event_type: match_click
+    name: QuickDeployButtonClick
+    template: buttons_template/BountyMissionDispatchButton.png
+    threshold: 0.85
+    one_shot: true
+    timeout_sec: 2
+
+    
+  - event_type: sleep
+    duration_sec: 1
+
+  - event_type: close_ui
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    back_button: buttons_template/BackButton.png
+    back_button_threshold: 0.8
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
+    threshold: 0.6
+    run_always: true

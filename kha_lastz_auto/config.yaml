@@ -59,6 +59,9 @@ functions:
   - name: DoRadarTask
     enabled: true
 
+  - name: DoBountyMission
+    enabled: true
+
   - name: CollectDailyShopReward
     enabled: true
 

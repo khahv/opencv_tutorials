@@ -12,9 +12,24 @@ Field definition keys:
     min/max     num   – for int/float: bounds
     default     any   – default value if not stored
 
-To add settings for a new function, add an entry here.
+COMMON_FIELDS: fields that appear in the settings dialog for ALL functions.
+SCHEMA: per-function additional fields (merged after COMMON_FIELDS in the dialog).
+
+To add settings for a new function, add an entry to SCHEMA.
 bot_engine.py reads overrides from fn_settings at runtime.
 """
+
+COMMON_FIELDS: list = [
+    {
+        "key":         "run_count",
+        "label":       "repeat count",
+        "description": "Number of run for this functio (1 = run one time)",
+        "type":        "int",
+        "min":         1,
+        "max":         20,
+        "default":     1,
+    },
+]
 
 SCHEMA: dict = {
     "PinLoggin": [
@@ -141,6 +156,7 @@ SCHEMA: dict = {
             "default":     "8h",
         },
     ],
+
 
     "ClickTreasure": [
         {

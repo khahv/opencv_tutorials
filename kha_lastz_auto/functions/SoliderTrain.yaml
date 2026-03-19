@@ -1,5 +1,6 @@
 # Function: SoliderTrain
 description: "Train soldiers: Headquarters -> collect Shooter -> train all Soldiers -> collect Assault -> train all Soldiers"
+run_count: 1
 
 steps:
   # Dong UI popup truoc khi zoom out
@@ -21,24 +22,33 @@ steps:
   # All subsequent steps run regardless — each UI element may or may not be present
   - event_type: match_click
     template: buttons_template/ShooterCollect.png
-    threshold: 0.75
+    threshold: 0.65
     one_shot: true
-    timeout_sec: 3
+    timeout_sec: 2
     run_always: true
+
+  - event_type: sleep
+    duration_sec: 1
 
   - event_type: match_click
     template: buttons_template/AssaultCollect.png
-    threshold: 0.75
+    threshold: 0.65
     one_shot: true
-    timeout_sec: 5
+    timeout_sec: 2
     run_always: true
+  
+  - event_type: sleep
+    duration_sec: 1
 
   - event_type: match_click
     template: buttons_template/RiderCollect.png
-    threshold: 0.75
+    threshold: 0.65
     one_shot: true
-    timeout_sec: 5
+    timeout_sec: 2
     run_always: true
+
+  - event_type: sleep
+    duration_sec: 1
 
   - event_type: match_click
     template: buttons_template/SoliderTrain.png
@@ -46,74 +56,47 @@ steps:
     timeout_sec: 3
     click_interval_sec: 0.15
     run_always: true
+    debug_log: true
+
+  - event_type: sleep
+    duration_sec: 3
 
   - event_type: match_click
     template: buttons_template/SoliderTrainButton.png
-    threshold: 0.75
+    name: SoliderTrainButtonClick
+    threshold: 0.85
     timeout_sec: 3
+    on_success_goto: SleepBeforeCloseUI
     click_interval_sec: 0.15
 
   - event_type: match_click
     template: buttons_template/ReplenishAll.png
-    threshold: 0.75
+    threshold: 0.85
     timeout_sec: 3
     click_interval_sec: 0.15
+    on_success_goto: ConfirmYellowClick
 
   - event_type: match_click
+    name: ConfirmYellowClick
     template: buttons_template/ConfirmYellow.png
-    threshold: 0.75
+    on_success_goto: SoliderTrainButtonClick
+    threshold: 0.85
     timeout_sec: 3
     click_interval_sec: 0.15
+  
+  - event_type: sleep
+    duration_sec: 2
+    name: SleepBeforeCloseUI
 
-  - event_type: match_click
-    template: buttons_template/SoliderTrainBackButton.png
-    threshold: 0.75
-    timeout_sec: 3
-    click_interval_sec: 0.15
-    run_always: true
-
-
-
-  - event_type: match_click
-    template: buttons_template/SoliderTrain.png
+  - event_type: close_ui
+    name: CloseUI
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    back_button: buttons_template/BackButton.png
+    back_button_threshold: 0.8
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
     threshold: 0.6
-    timeout_sec: 10
-    click_interval_sec: 0.15
-    run_always: true
 
-  - event_type: match_click
-    template: buttons_template/SoliderTrainButton.png
-    threshold: 0.75
-    timeout_sec: 3
-    click_interval_sec: 0.15
-    run_always: true
-
-  - event_type: match_click
-    template: buttons_template/SoliderTrainBackButton.png
-    threshold: 0.75
-    timeout_sec: 3
-    click_interval_sec: 0.15
-    run_always: true
-
-
-
-  - event_type: match_click
-    template: buttons_template/SoliderTrain.png
-    threshold: 0.6
-    timeout_sec: 10
-    click_interval_sec: 0.15
-    run_always: true
-
-  - event_type: match_click
-    template: buttons_template/SoliderTrainButton.png
-    threshold: 0.75
-    timeout_sec: 3
-    click_interval_sec: 0.15
-    run_always: true
-
-  - event_type: match_click
-    template: buttons_template/SoliderTrainBackButton.png
-    threshold: 0.75
-    timeout_sec: 3
-    click_interval_sec: 0.15
-    run_always: true
+  

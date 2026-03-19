@@ -142,6 +142,7 @@ def load_functions(functions_dir="functions"):
                 "description": data.get("description", ""),
                 "steps": steps,
                 "name_to_index": name_to_index,
+                "run_count": data.get("run_count", 1),
             }
             # log.debug("[bot_engine] Loaded function: {}".format(name))
         except Exception as e:
@@ -281,6 +282,7 @@ class FunctionRunner:
         self._step_pos_cache = None
         self._debug_click_saved = False
         self._step_last_click_t = None
+        self._run_count_remaining = 0
 
     def _fn_setting(self, key, fallback=None):
         """Return fn_settings[current_function][key], or fallback if not set."""
@@ -344,7 +346,15 @@ class FunctionRunner:
             if hasattr(self, attr):
                 delattr(self, attr)
         self._world_zoomout_start = None
-        log.info("[Runner] Started function: {}".format(function_name))
+        # Determine total run_count: fn_settings override > YAML default
+        yaml_run_count = self.functions[function_name].get("run_count", 1)
+        setting_run_count = self.fn_settings.get(function_name, {}).get("run_count")
+        try:
+            run_count = int(setting_run_count) if setting_run_count is not None else int(yaml_run_count)
+        except (ValueError, TypeError):
+            run_count = 1
+        self._run_count_remaining = max(1, run_count) - 1
+        log.info("[Runner] Started function: {} (run_count={})".format(function_name, max(1, run_count)))
         return True
 
     def _get_vision(self, template):
@@ -390,9 +400,35 @@ class FunctionRunner:
                     ctypes.windll.user32.BlockInput(False)
                 except Exception:
                     pass
-                self.state = "idle"
                 suffix = "" if self.last_step_result else " (aborted)"
                 log.info("[Runner] Finished function: {}{}".format(self.function_name, suffix))
+                if self._run_count_remaining > 0:
+                    self._run_count_remaining -= 1
+                    log.info("[Runner] Repeating function: {} ({} run(s) remaining)".format(
+                        self.function_name, self._run_count_remaining))
+                    self.step_index = 0
+                    self.step_start_time = time.time()
+                    self.step_click_count = 0
+                    self.last_step_result = True
+                    self._step_retry_counts = {}
+                    self._step_visit_counts = {}
+                    self._step_visit_start_times = {}
+                    self._step_dedup_positions = {}
+                    self._tried_positions = []
+                    self._rtr_cache = {}
+                    self._rtr_page_logged = False
+                    self._step_pos_cache = None
+                    self._debug_click_saved = False
+                    self._step_last_click_t = None
+                    self._tpl_array_idx = 0
+                    self._tpl_array_start_t = None
+                    self._tpl_array_last_tpl = None
+                    self._ocr_prev_vals = {}
+                    self._last_click_pos = None
+                    self._last_ocr_click_pos = None
+                    self._world_zoomout_start = None
+                    return "running"
+                self.state = "idle"
                 return "done"
             return "idle" if self.state == "idle" else "running"
 

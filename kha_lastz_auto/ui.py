@@ -5,7 +5,7 @@ import tkinter as tk
 from datetime import datetime
 
 from croniter import croniter
-from fn_settings_schema import SCHEMA as _FN_SETTINGS_SCHEMA
+from fn_settings_schema import SCHEMA as _FN_SETTINGS_SCHEMA, COMMON_FIELDS as _FN_COMMON_FIELDS
 
 import ocr_openocr
 _log = logging.getLogger("kha_lastz")
@@ -365,7 +365,7 @@ class BotUI:
                        lambda e, n=name, lbl=sched_lbl: self._show_schedule(n, lbl))
 
         # Gear "⚙" button — only for functions that have settings schema
-        has_settings = bool(_FN_SETTINGS_SCHEMA.get(name))
+        has_settings = bool(_FN_COMMON_FIELDS or _FN_SETTINGS_SCHEMA.get(name))
         if has_settings:
             gear_lbl = tk.Label(row, text=" ⚙ ",
                                 font=("Segoe UI", 10),
@@ -606,7 +606,7 @@ class BotUI:
         if not self._bot_paused["paused"]:
             self._show_toast("Bot is running — pause it first (uncheck Is Running) to edit settings.")
             return
-        schema = _FN_SETTINGS_SCHEMA.get(name)
+        schema = _FN_COMMON_FIELDS + (_FN_SETTINGS_SCHEMA.get(name) or [])
         if not schema:
             return
 
