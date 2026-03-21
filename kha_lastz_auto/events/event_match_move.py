@@ -60,6 +60,12 @@ def run(step: dict, screenshot, wincap, runner) -> str:
             _save_debug_image(screenshot, raw_center, tuple(center),
                               mw, mh, "match_move", template)
 
+        import adb_input as _adb_mod
+        if _adb_mod.get_adb_input() is not None:
+            log.debug("[match_move] ADB mode: skipping desktop mouse move (no hover)")
+            runner._advance_step(True)
+            return "running"
+
         pyautogui.moveTo(sx, sy)
 
         if debug_log:

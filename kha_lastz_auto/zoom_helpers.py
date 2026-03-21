@@ -7,6 +7,18 @@ import pyautogui
 from vision import get_global_scale
 
 
+def _tap_game_pixel(wincap, px: int, py: int) -> None:
+    """Tap at game pixel (device / client); use ADB when available, else Win32 mouse."""
+    import adb_input as _adb_mod
+
+    adb = _adb_mod.get_adb_input()
+    if adb is not None:
+        adb.tap(int(px), int(py))
+        return
+    sx, sy = wincap.get_screen_position((int(px), int(py)))
+    pyautogui.click(sx, sy)
+
+
 def _roi_crop(screenshot, vision, roi_center_x, roi_center_y, roi_padding):
     """Return (search_img, roi_offset). If ROI not set, return (screenshot, (0,0))."""
     if screenshot is None or vision is None or roi_center_x is None or roi_center_y is None:
@@ -115,11 +127,17 @@ def do_world_zoomout(
             time.sleep(0.05)
         cx = wincap.offset_x + wincap.w // 2
         cy = wincap.offset_y + wincap.h // 2
-        pyautogui.moveTo(cx, cy)
-        time.sleep(0.05)
-        for _ in range(scroll_times):
-            pyautogui.scroll(-3)
-            time.sleep(scroll_interval_sec)
+        import adb_input as _adb_mod
+
+        adb = _adb_mod.get_adb_input()
+        if adb is not None:
+            adb.wheel_zoom_out_approx(cx, cy, times=scroll_times, interval_sec=scroll_interval_sec)
+        else:
+            pyautogui.moveTo(cx, cy)
+            time.sleep(0.05)
+            for _ in range(scroll_times):
+                pyautogui.scroll(-3)
+                time.sleep(scroll_interval_sec)
         if log_prefix:
             log.info("%sworld_zoomout scrolled x%d at center", log_prefix, scroll_times)
 
@@ -138,8 +156,7 @@ def do_world_zoomout(
     if points_hq:
         # Already see HQ (on world view): click HQ → sleep 2 → fresh screenshot → click World → sleep 2 →
         # confirm HQ visible (back on world view) → scroll.
-        sx, sy = wincap.get_screen_position((points_hq[0][0], points_hq[0][1]))
-        pyautogui.click(sx, sy)
+        _tap_game_pixel(wincap, int(points_hq[0][0]), int(points_hq[0][1]))
         time.sleep(2)
         search_img2, roi_off2 = _fresh_search_img(wincap, vision, roi_center_x, roi_center_y, roi_padding)
         if search_img2 is None:
@@ -165,8 +182,7 @@ def do_world_zoomout(
     if points_w:
         # World button visible (on base view): click World → sleep 2 →
         # confirm HQ visible (now on world view) → scroll.
-        sx, sy = wincap.get_screen_position((points_w[0][0], points_w[0][1]))
-        pyautogui.click(sx, sy)
+        _tap_game_pixel(wincap, int(points_w[0][0]), int(points_w[0][1]))
         time.sleep(2)
         search_img3, roi_off3 = _fresh_search_img(wincap, vision, roi_center_x, roi_center_y, roi_padding)
         if search_img3 is None:
@@ -235,11 +251,17 @@ def do_base_zoomout(
             time.sleep(0.05)
         cx = wincap.offset_x + wincap.w // 2
         cy = wincap.offset_y + wincap.h // 2
-        pyautogui.moveTo(cx, cy)
-        time.sleep(0.05)
-        for _ in range(scroll_times):
-            pyautogui.scroll(-3)
-            time.sleep(scroll_interval_sec)
+        import adb_input as _adb_mod
+
+        adb = _adb_mod.get_adb_input()
+        if adb is not None:
+            adb.wheel_zoom_out_approx(cx, cy, times=scroll_times, interval_sec=scroll_interval_sec)
+        else:
+            pyautogui.moveTo(cx, cy)
+            time.sleep(0.05)
+            for _ in range(scroll_times):
+                pyautogui.scroll(-3)
+                time.sleep(scroll_interval_sec)
         if log_prefix:
             log.info("%sbase_zoomout scrolled x%d at center", log_prefix, scroll_times)
 
@@ -257,8 +279,7 @@ def do_base_zoomout(
         if hasattr(wincap, "focus_window"):
             wincap.focus_window(force=True)
             time.sleep(0.05)
-        sx_w, sy_w = wincap.get_screen_position((world_pts_init[0][0], world_pts_init[0][1]))
-        pyautogui.click(sx_w, sy_w)
+        _tap_game_pixel(wincap, int(world_pts_init[0][0]), int(world_pts_init[0][1]))
         time.sleep(2)
         scr = wincap.get_screenshot() if hasattr(wincap, "get_screenshot") else None
         if scr is None:
@@ -281,8 +302,7 @@ def do_base_zoomout(
             if hasattr(wincap, "focus_window"):
                 wincap.focus_window(force=True)
                 time.sleep(0.05)
-            sx, sy = wincap.get_screen_position((hq_pts[0][0], hq_pts[0][1]))
-            pyautogui.click(sx, sy)
+            _tap_game_pixel(wincap, int(hq_pts[0][0]), int(hq_pts[0][1]))
             time.sleep(2)
             scr = wincap.get_screenshot() if hasattr(wincap, "get_screenshot") else None
             if scr is None:

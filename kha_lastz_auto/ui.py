@@ -48,7 +48,8 @@ class BotUI:
                  quit_check=None,
                  general_settings: dict = None,
                  general_settings_callback=None,
-                 connection_status=None):
+                 connection_status=None,
+                 start_lastz_callback=None):
         self._fn_enabled    = fn_enabled
         self._fn_configs    = [fc for fc in fn_configs if fc.get("name")]
         self._runner        = runner_ref
@@ -69,6 +70,8 @@ class BotUI:
         self._exe_path_var = None    # StringVar for LastZ exe path entry
         self._auto_start_var = None  # BooleanVar for auto-start checkbox
         self._pc_section_toggle = None  # callable() to show/hide PC-only settings rows
+        self._start_lastz_callback = start_lastz_callback  # callable() to launch LastZ.exe
+        self._btn_start_lastz = None  # header button, visible in PC mode only
 
         self._vars       = {}   # fn_name → BooleanVar
         self._row_frames = {}   # fn_name → (row_frame, name_label, toggle_lbl)
@@ -345,6 +348,9 @@ class BotUI:
         if self._btn_app_settings is not None:
             self._btn_app_settings.config(text=self._t("btn_app_settings"))
             self._update_app_settings_button_state()
+        if self._btn_start_lastz is not None:
+            self._btn_start_lastz.config(text=self._t("btn_start_lastz"))
+            self._update_start_lastz_button_visibility()
         if self._lbl_functions is not None:
             self._lbl_functions.config(text=self._t("functions_header"))
         if self._lbl_rebind_hint is not None:
@@ -445,6 +451,14 @@ class BotUI:
             activebackground=GRAY2, activeforeground=ACCENT)
         self._btn_app_settings.pack(side="right", padx=(0, 16))
         self._update_app_settings_button_state()
+
+        self._btn_start_lastz = tk.Button(
+            hf, text=self._t("btn_start_lastz"),
+            command=self._on_start_lastz,
+            font=("Segoe UI", 10, "bold"), bg=GRAY2, fg=GREEN,
+            relief="flat", padx=12, pady=4, cursor="hand2",
+            activebackground=GRAY2, activeforeground=GREEN)
+        self._update_start_lastz_button_visibility()
 
         # Status bar
         sf = tk.Frame(r, bg=BG2, padx=16, pady=8)
@@ -561,6 +575,23 @@ class BotUI:
             self._status_lbl.config(text=self._t("status_ready"), fg=FG)
         self._update_badge_states()
         self._update_app_settings_button_state()
+
+    def _update_start_lastz_button_visibility(self) -> None:
+        """Show the Start LastZ button only in PC emulator mode."""
+        btn = self._btn_start_lastz
+        if btn is None:
+            return
+        if self._general_settings.get("emulator", "pc") == "pc" and self._start_lastz_callback:
+            btn.pack(side="right", padx=(0, 8))
+        else:
+            btn.pack_forget()
+
+    def _on_start_lastz(self) -> None:
+        if self._start_lastz_callback:
+            try:
+                self._start_lastz_callback()
+            except Exception as e:
+                _log.warning("[UI] Start LastZ failed: %s", e)
 
     def notify_disconnected(self):
         """Called (thread-safe) when the game window is lost or emulator changes.
@@ -1501,6 +1532,9 @@ class BotUI:
         if self._rebinding:
             self._root.after(500, self._tick)
             return
+
+        # Keep Start LastZ button visibility in sync with current emulator setting
+        self._update_start_lastz_button_visibility()
 
         # ── Window connection check ───────────────────────────────────────────
         if self._connection_status is not None:

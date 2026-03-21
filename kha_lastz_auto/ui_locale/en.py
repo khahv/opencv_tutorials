@@ -94,6 +94,7 @@ MESSAGES = {
     "tt_hotkey": "Hotkey: {hotkey}",
     "tt_eta_hm": "in {h}h {m}m",
     "tt_eta_m": "in {m}m",
+    "btn_start_lastz": "▶ LastZ",
     "emulator_platform": "Emulator",
     "lastz_exe_path": "LastZ exe path",
     "auto_start_lastz": "Auto start LastZ",

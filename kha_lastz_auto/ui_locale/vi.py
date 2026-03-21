@@ -94,6 +94,7 @@ MESSAGES = {
     "tt_hotkey": "Phím tắt: {hotkey}",
     "tt_eta_hm": "sau {h}h {m}p",
     "tt_eta_m": "sau {m}p",
+    "btn_start_lastz": "▶ LastZ",
     "emulator_platform": "Giả lập",
     "lastz_exe_path": "Đường dẫn LastZ exe",
     "auto_start_lastz": "Tự động khởi động LastZ",

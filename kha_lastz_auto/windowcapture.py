@@ -66,15 +66,14 @@ class WindowCapture:
         # --- Add Mouse Debugger Logic Start ---
         def on_click(x, y, button, pressed):
             if pressed:
-                # Calculate based on current offsets
+                if not self._is_desktop:
+                    self.refresh_geometry()
                 local_x = x - self.offset_x
                 local_y = y - self.offset_y
-                
-                # Calculate ratios
+                if self.w <= 0 or self.h <= 0:
+                    return
                 rel_x = local_x / self.w
                 rel_y = local_y / self.h
-                
-                # Check if click is inside the game window
                 if 0 <= rel_x <= 1 and 0 <= rel_y <= 1:
                     print(f"\n[MOUSE-LOG] Inside Game Window:")
                     print(f"  - Local Pixel: ({local_x}, {local_y})")

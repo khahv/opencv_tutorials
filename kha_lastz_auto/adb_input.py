@@ -35,8 +35,10 @@ Usage (main.py sets up the singleton; event handlers read it):
 """
 
 import logging
+import re
 import subprocess
-from typing import Optional, List
+import time
+from typing import List, Optional, Tuple
 
 log = logging.getLogger("kha_lastz")
 
@@ -129,6 +131,75 @@ def detect_ldplayer_device(adb_path: Optional[str] = None) -> Optional[str]:
     return None
 
 
+def parse_wm_size_output(stdout: str) -> Optional[Tuple[int, int]]:
+    """
+    Parse ``adb shell wm size`` text and return (width, height) in device pixels.
+
+    Prefer ``Override size`` when present (logical resolution used by input and
+    screencap); otherwise use ``Physical size``.
+    """
+    if not stdout:
+        return None
+    override_wh: Optional[Tuple[int, int]] = None
+    physical_wh: Optional[Tuple[int, int]] = None
+    for line in stdout.splitlines():
+        line_l = line.strip()
+        m = re.search(r"(\d+)\s*x\s*(\d+)", line_l)
+        if not m:
+            continue
+        w, h = int(m.group(1)), int(m.group(2))
+        if "override" in line_l.lower():
+            override_wh = (w, h)
+        elif "physical" in line_l.lower():
+            physical_wh = (w, h)
+    if override_wh:
+        return override_wh
+    if physical_wh:
+        return physical_wh
+    m = re.search(r"(\d+)\s*x\s*(\d+)", stdout)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    return None
+
+
+def map_ldplayer_client_to_device(
+    client_x: float,
+    client_y: float,
+    client_w: int,
+    client_h: int,
+    device_w: int,
+    device_h: int,
+) -> Optional[Tuple[int, int]]:
+    """
+    Map LDPlayer **Win32 client** coordinates to ADB device pixels.
+
+    The emulator draws the Android framebuffer with uniform scaling inside the
+    client; extra space from aspect mismatch is assumed at the **top** (toolbar /
+    letterbox), matching typical LDPlayer layout — viewport is bottom-aligned.
+
+    Returns
+    -------
+    (dx, dy) clamped to the device rectangle, or ``None`` if the point lies
+    outside the emulated viewport (e.g. title toolbar strip).
+    """
+    if client_w <= 0 or client_h <= 0 or device_w <= 0 or device_h <= 0:
+        return None
+    scale = min(client_w / device_w, client_h / device_h)
+    vw = device_w * scale
+    vh = device_h * scale
+    off_x = (client_w - vw) * 0.5
+    off_y = client_h - vh
+    if not (off_x <= client_x < off_x + vw and off_y <= client_y < off_y + vh):
+        return None
+    nx = client_x - off_x
+    ny = client_y - off_y
+    dx = int(round(nx / scale))
+    dy = int(round(ny / scale))
+    dx = max(0, min(device_w - 1, dx))
+    dy = max(0, min(device_h - 1, dy))
+    return dx, dy
+
+
 # ── AdbInput class ─────────────────────────────────────────────────────────────
 
 class AdbInput:
@@ -146,6 +217,37 @@ class AdbInput:
     ) -> None:
         self._adb_path = adb_path or _DEFAULT_ADB_PATH
         self._device_serial = device_serial
+        self._wm_size_cache: Optional[Tuple[int, int, float]] = None
+        self._wm_size_cache_ttl_sec = 10.0
+
+    def _shell_text(self, *shell_args: str) -> Optional[str]:
+        """Run ``adb shell ...`` and return stdout text, or None on failure."""
+        args: List[str] = []
+        if self._device_serial:
+            args += ["-s", self._device_serial]
+        args += ["shell"] + list(shell_args)
+        return _run_adb_text(self._adb_path, args)
+
+    def get_device_screen_size(self, refresh: bool = False) -> Optional[Tuple[int, int]]:
+        """
+        Return ``(width, height)`` from ``wm size`` (same space as screencap / input tap).
+
+        Results are cached briefly to avoid spawning adb on every mouse click.
+        """
+        now = time.monotonic()
+        if (
+            not refresh
+            and self._wm_size_cache is not None
+            and now - self._wm_size_cache[2] < self._wm_size_cache_ttl_sec
+        ):
+            return self._wm_size_cache[0], self._wm_size_cache[1]
+        out = self._shell_text("wm", "size")
+        parsed = parse_wm_size_output(out or "")
+        if parsed:
+            w, h = parsed
+            self._wm_size_cache = (w, h, now)
+            return w, h
+        return None
 
     # ── Device detection ───────────────────────────────────────────────────────
 
@@ -232,6 +334,27 @@ class AdbInput:
             str(int(x2)), str(int(y2)),
             str(int(duration_ms)),
         ])
+
+    def wheel_zoom_out_approx(
+        self,
+        center_x: int,
+        center_y: int,
+        times: int = 5,
+        interval_sec: float = 0.1,
+        arm_px: int = 200,
+        duration_ms: int = 150,
+    ) -> None:
+        """
+        Approximate a mouse-wheel \"zoom out\" using short upward swipes from the center.
+
+        Used when the game is driven only via ADB (no Win32 mouse wheel).
+        """
+        cx, cy = int(center_x), int(center_y)
+        for _ in range(max(1, int(times))):
+            y1 = cy + arm_px
+            y2 = cy - arm_px
+            self.swipe(cx, y1, cx, y2, duration_ms)
+            time.sleep(max(0.0, float(interval_sec)))
 
 
 # ── Module-level singleton ─────────────────────────────────────────────────────

@@ -15,8 +15,6 @@ import time
 import subprocess
 import ctypes
 
-import pyautogui
-
 from vision import get_global_scale
 from zoom_helpers import do_world_zoomout, do_base_zoomout
 
@@ -151,8 +149,9 @@ def _do_close_ui(wincap, vision_cache, template_path, world_button_path, log,
                 time.sleep(CLOSE_UI_FOCUS_SLEEP_SEC)
             px = int(wincap.w * click_x)
             py = int(wincap.h * click_y)
-            sx, sy = wincap.get_screen_position((px, py))
-            pyautogui.click(sx, sy)
+            from zoom_helpers import _tap_game_pixel
+
+            _tap_game_pixel(wincap, px, py)
             time.sleep(CLOSE_UI_CLICK_SLEEP_SEC)
             fresh = wincap.get_screenshot()
             if fresh is not None:
@@ -214,6 +213,10 @@ class ConnectionDetector:
                      Only the full connection check is deferred when busy; process check and
                      window reattach always run so LastZ is recovered even during a bot function.
         """
+        if getattr(wincap, "is_using_adb", False):
+            # LDPlayer pure-ADB mode: no Win32 window / LastZ.exe lifecycle here.
+            return
+
         now = time.time()
         busy = is_busy and is_busy()
 
@@ -308,10 +311,12 @@ class ConnectionDetector:
         ):
             log.warning("[ConnectionDetector] world_zoomout failed (not on world?), continuing check")
         time.sleep(AFTER_ZOOMOUT_SLEEP_SEC)
-        # Click middle of screen
-        cx = wincap.offset_x + wincap.w // 2
-        cy = wincap.offset_y + wincap.h // 2
-        pyautogui.click(cx, cy)
+        # Click middle of the game surface (client / device pixels)
+        cx = wincap.w // 2
+        cy = wincap.h // 2
+        from zoom_helpers import _tap_game_pixel
+
+        _tap_game_pixel(wincap, cx, cy)
         time.sleep(AFTER_CLICK_SLEEP_SEC)
         screenshot = wincap.get_screenshot()
         if screenshot is None:

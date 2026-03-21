@@ -251,86 +251,14 @@ functions    = load_functions("functions")
 templates    = collect_templates(functions)
 vision_cache = build_vision_cache(templates)
 
-# Create WindowCapture in thread with timeout so FindWindow cannot freeze main (Ctrl+C works)
-_wincap_result = []
-_wincap_done = threading.Event()
-def _create_wincap():
-    try:
-        _wincap_result.append(WindowCapture(_GAME_WINDOW_NAME))
-    except Exception as e:
-        log.error("WindowCapture failed: {}".format(e))
-        # Window not found: for PC mode, try to start LastZ and wait for it to appear
-        if _emulator == "pc" and os.path.isfile(LASTZ_EXE_PATH):
-            log.info("Starting LastZ: %s", LASTZ_EXE_PATH)
-            try:
-                subprocess.Popen(
-                    [LASTZ_EXE_PATH],
-                    cwd=os.path.dirname(LASTZ_EXE_PATH),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            except Exception as start_err:
-                log.error("Failed to start LastZ: %s", start_err)
-            else:
-                _wait_sec = 60
-                _interval_sec = 2
-                for _ in range(_wait_sec // _interval_sec):
-                    time.sleep(_interval_sec)
-                    try:
-                        _wincap_result.append(WindowCapture(_GAME_WINDOW_NAME))
-                        log.info("%s window found after auto-start.", _GAME_WINDOW_NAME)
-                        break
-                    except Exception:
-                        pass
-                else:
-                    log.error("%s window did not appear within %ds.", _GAME_WINDOW_NAME, _wait_sec)
-        elif _emulator == "pc":
-            log.error("LastZ exe not found: %s", LASTZ_EXE_PATH)
-        else:
-            log.error("%s window not found. Make sure LDPlayer is running.", _GAME_WINDOW_NAME)
-    finally:
-        _wincap_done.set()
-log.info("Connecting to game window '%s'...", _GAME_WINDOW_NAME)
-sys.stdout.flush()
-threading.Thread(target=_create_wincap, daemon=True).start()
-try:
-    if not _wincap_done.wait(timeout=90):
-        log.warning(
-            "Window '%s' not found or timeout (90s) — UI will start in disconnected mode.",
-            _GAME_WINDOW_NAME,
-        )
-except KeyboardInterrupt:
-    log.info("Interrupted by user.")
-    sys.exit(130)
-if _wincap_result:
-    wincap = _wincap_result[0]
-else:
-    log.warning(
-        "Window '%s' not found — starting UI in disconnected mode. "
-        "Launch the game (or change emulator in Settings) and the bot will auto-connect.",
-        _GAME_WINDOW_NAME,
-    )
-    wincap = None
+wincap = None
+screenshot_provider = None
 
-# Create screenshot provider based on emulator mode
-if wincap is not None:
-    screenshot_provider = create_screenshot_provider(
-        _emulator,
-        wincap=wincap,
-        adb_path=_LDPLAYER_ADB_PATH,
-    )
-    log.info(
-        "[Screenshot] Provider: %s (emulator=%s)",
-        type(screenshot_provider).__name__,
-        _emulator,
-    )
-else:
-    screenshot_provider = None
-    log.info("[Screenshot] Provider deferred — window not connected yet.")
-
-# Set up ADB input for LDPlayer mode (click / swipe via ADB)
 if _emulator == "ldplayer":
+    log.info("LDPlayer mode: game surface via ADB only (no Win32 window capture).")
+    from adb_emulator_context import AdbEmulatorContext
     from adb_input import AdbInput as _AdbInput
+
     _LDPLAYER_DEVICE_SERIAL = config.get("ldplayer_device_serial") or None
     _adb_inst = _AdbInput(adb_path=_LDPLAYER_ADB_PATH, device_serial=_LDPLAYER_DEVICE_SERIAL)
     if _LDPLAYER_DEVICE_SERIAL:
@@ -344,10 +272,85 @@ if _emulator == "ldplayer":
         _adb_inst._device_serial or "none (commands will target default device)",
         _LDPLAYER_ADB_PATH or "default",
     )
+    screenshot_provider = create_screenshot_provider(
+        "ldplayer",
+        wincap=None,
+        adb_path=_LDPLAYER_ADB_PATH,
+        device_serial=_adb_inst._device_serial,
+    )
+    wincap = AdbEmulatorContext(screenshot_provider)
+    wincap.refresh_geometry()
+    try:
+        _probe_img = screenshot_provider.get_screenshot()
+    except Exception as _adb_cap_e:
+        log.warning("[ADB] Initial screencap failed: %s", _adb_cap_e)
+        _probe_img = None
+    if _probe_img is not None:
+        log.info(
+            "[ADB] Emulator context %dx%d (screencap OK).",
+            wincap.w,
+            wincap.h,
+        )
+    else:
+        log.warning(
+            "[ADB] Initial screencap failed — UI may show disconnected until ADB responds.",
+        )
+    log.info(
+        "[Screenshot] Provider: %s (emulator=ldplayer)",
+        type(screenshot_provider).__name__,
+    )
+else:
+    adb_input.set_adb_input(None)
+    # Create WindowCapture in thread with timeout so FindWindow cannot freeze main (Ctrl+C works)
+    _wincap_result = []
+    _wincap_done = threading.Event()
 
-# Track LastZ process PID for connection_detector (kill/restart on disconnect)
+    def _create_wincap():
+        try:
+            _wincap_result.append(WindowCapture(_GAME_WINDOW_NAME))
+        except Exception:
+            pass
+        finally:
+            _wincap_done.set()
+
+    log.info("Connecting to game window '%s'...", _GAME_WINDOW_NAME)
+    sys.stdout.flush()
+    threading.Thread(target=_create_wincap, daemon=True).start()
+    try:
+        if not _wincap_done.wait(timeout=90):
+            log.warning(
+                "Window '%s' not found or timeout (90s) — UI will start in disconnected mode.",
+                _GAME_WINDOW_NAME,
+            )
+    except KeyboardInterrupt:
+        log.info("Interrupted by user.")
+        sys.exit(130)
+    if _wincap_result:
+        wincap = _wincap_result[0]
+    else:
+        log.warning(
+            "Window '%s' not found — starting UI in disconnected mode. "
+            "Launch the game (or change emulator in Settings) and the bot will auto-connect.",
+            _GAME_WINDOW_NAME,
+        )
+        wincap = None
+
+    if wincap is not None:
+        screenshot_provider = create_screenshot_provider(
+            "pc",
+            wincap=wincap,
+            adb_path=_LDPLAYER_ADB_PATH,
+        )
+        log.info(
+            "[Screenshot] Provider: %s (emulator=pc)",
+            type(screenshot_provider).__name__,
+        )
+    else:
+        log.info("[Screenshot] Provider deferred — window not connected yet.")
+
+# Track LastZ process PID for connection_detector (kill/restart on disconnect); N/A for pure ADB mode
 lastz_pid = {"pid": None}
-if wincap is not None:
+if wincap is not None and getattr(wincap, "hwnd", None):
     try:
         import win32process
         _, _pid = win32process.GetWindowThreadProcessId(wincap.hwnd)
@@ -699,7 +702,7 @@ def _on_general_setting_change(key, value):
             adb_input.set_adb_input(None)
             log.info("[Settings] Emulator → pc — ADB input cleared, waiting for LastZ window.")
         else:
-            log.info("[Settings] Emulator → ldplayer — waiting for LDPlayer window.")
+            log.info("[Settings] Emulator → ldplayer — waiting for ADB / screencap.")
         _general_settings["emulator"] = _emulator
         config_manager.save(fn_configs, fn_enabled, general_settings=_general_settings)
         _ui.notify_disconnected()
@@ -722,6 +725,21 @@ def _on_general_setting_change(key, value):
     config_manager.save(fn_configs, fn_enabled, general_settings=_general_settings)
 
 # UI will run on main thread via .run_main() after game loop thread is started (reduces startup hang)
+def _launch_lastz():
+    if not LASTZ_EXE_PATH:
+        log.warning("[UI] Start LastZ: exe path not configured.")
+        return
+    if not os.path.isfile(LASTZ_EXE_PATH):
+        log.warning("[UI] Start LastZ: file not found: %s", LASTZ_EXE_PATH)
+        return
+    log.info("[UI] Starting LastZ: %s", LASTZ_EXE_PATH)
+    subprocess.Popen(
+        [LASTZ_EXE_PATH],
+        cwd=os.path.dirname(LASTZ_EXE_PATH),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
 _ui = BotUI(fn_enabled, fn_configs, runner, next_run_at,
             key_bindings=key_bindings,
             save_callback=lambda: config_manager.save(fn_configs, fn_enabled, general_settings=_general_settings),
@@ -734,7 +752,8 @@ _ui = BotUI(fn_enabled, fn_configs, runner, next_run_at,
             quit_check=lambda: exit_requested,
             general_settings=_general_settings,
             general_settings_callback=_on_general_setting_change,
-            connection_status=lambda: wincap is not None and _is_game_window_valid())
+            connection_status=lambda: wincap is not None and _is_game_window_valid(),
+            start_lastz_callback=_launch_lastz)
 
 # ── Focus thread ──────────────────────────────────────────────────────────────
 running = True
@@ -758,6 +777,9 @@ def focus_loop():
         if wincap is None:
             time.sleep(0.2)
             continue
+        if getattr(wincap, "is_using_adb", False):
+            time.sleep(0.2)
+            continue
         if not bot_paused["paused"]:
             wincap.focus_window()
             if _win_w and _win_h and (wincap.w != _win_w or wincap.h != _win_h):
@@ -769,8 +791,8 @@ focus_thread = threading.Thread(target=focus_loop, daemon=True)
 focus_thread.start()
 
 # ── Window auto-connect thread ─────────────────────────────────────────────────
-# When wincap is None (game window not found at startup), this thread retries every 3s.
-# As soon as the window appears, it initialises screenshot_provider, resizes, and updates scale.
+# PC: retries FindWindow until the game window exists.
+# LDPlayer: retries ADB screencap when the emulator context was cleared (e.g. after settings change).
 def _window_connect_loop():
     global wincap, screenshot_provider
     _last_autostart_attempt = 0.0
@@ -779,21 +801,48 @@ def _window_connect_loop():
         if not running or exit_requested:
             break
 
-        # If wincap exists, verify the handle is still valid; clear if stale
+        if _emulator == "ldplayer":
+            if wincap is not None and _is_game_window_valid():
+                continue
+            try:
+                from adb_emulator_context import AdbEmulatorContext as _AdbcCtx
+                from adb_input import AdbInput as _AdbcInput
+
+                _ser = config.get("ldplayer_device_serial") or None
+                _adb_w = _AdbcInput(adb_path=_LDPLAYER_ADB_PATH, device_serial=_ser)
+                if not _ser:
+                    _adb_w.detect_and_connect()
+                adb_input.set_adb_input(_adb_w)
+                new_sp = create_screenshot_provider(
+                    "ldplayer",
+                    wincap=None,
+                    adb_path=_LDPLAYER_ADB_PATH,
+                    device_serial=_adb_w._device_serial,
+                )
+                if new_sp.get_screenshot() is None:
+                    continue
+                new_wincap = _AdbcCtx(new_sp)
+                new_wincap.refresh_geometry()
+                wincap = new_wincap
+                screenshot_provider = new_sp
+                update_vision_scale()
+                log.info("[WindowWatcher] ADB emulator connected (%dx%d).", wincap.w, wincap.h)
+            except Exception:
+                pass
+            continue
+
+        # ── PC mode ────────────────────────────────────────────────────────────
         if wincap is not None:
             if not _is_game_window_valid():
                 log.warning("[WindowWatcher] Window handle became invalid — disconnecting.")
                 wincap = None
                 screenshot_provider = None
-                if _emulator == "ldplayer":
-                    adb_input.set_adb_input(None)
             else:
                 continue
 
-        # Auto-start LastZ if enabled and not running (PC mode only)
-        if _emulator == "pc" and _auto_start_lastz and LASTZ_EXE_PATH:
+        if _auto_start_lastz and LASTZ_EXE_PATH and not bot_paused["paused"]:
             _now = time.time()
-            if _now - _last_autostart_attempt >= 15.0:  # try at most every 15s
+            if _now - _last_autostart_attempt >= 15.0:
                 _last_autostart_attempt = _now
                 try:
                     import win32gui as _wg
@@ -808,19 +857,7 @@ def _window_connect_loop():
             new_wincap.auto_focus = auto_focus
             if _win_w and _win_h:
                 new_wincap.resize_to_client(_win_w, _win_h)
-            new_sp = create_screenshot_provider(_emulator, wincap=new_wincap, adb_path=_LDPLAYER_ADB_PATH)
-            # Re-init ADB input for LDPlayer when previously cleared or not set up
-            if _emulator == "ldplayer" and adb_input.get_adb_input() is None:
-                try:
-                    from adb_input import AdbInput as _AdbInput
-                    _LDPLAYER_DEVICE_SERIAL = config.get("ldplayer_device_serial") or None
-                    _adb_inst = _AdbInput(adb_path=_LDPLAYER_ADB_PATH, device_serial=_LDPLAYER_DEVICE_SERIAL)
-                    _adb_inst.detect_and_connect()
-                    adb_input.set_adb_input(_adb_inst)
-                    log.info("[WindowWatcher] ADB input ready — device=%s",
-                             _adb_inst._device_serial or "default")
-                except Exception as _adb_e:
-                    log.warning("[WindowWatcher] ADB setup failed: %s", _adb_e)
+            new_sp = create_screenshot_provider("pc", wincap=new_wincap, adb_path=_LDPLAYER_ADB_PATH)
             try:
                 import win32process as _wp
                 _, _pid = _wp.GetWindowThreadProcessId(new_wincap.hwnd)
@@ -832,7 +869,7 @@ def _window_connect_loop():
             update_vision_scale()
             log.info("[WindowWatcher] Connected to '%s'.", _GAME_WINDOW_NAME)
         except Exception:
-            pass  # Window not available yet — retry silently
+            pass
 
 _window_watcher_thread = threading.Thread(target=_window_connect_loop, daemon=True)
 _window_watcher_thread.start()
@@ -851,7 +888,7 @@ def _focus_window_with_timeout(timeout_sec=2.0):
     t.start()
     if not done.wait(timeout=timeout_sec):
         log.warning("[Startup] focus_window did not finish in {}s, continuing anyway".format(timeout_sec))
-if wincap is not None:
+if wincap is not None and getattr(wincap, "hwnd", None):
     _focus_window_with_timeout(2.0)
     time.sleep(0.2)
 
@@ -888,8 +925,10 @@ def _is_game_window_valid():
     try:
         if wincap is None:
             return False
+        if getattr(wincap, "is_using_adb", False):
+            return wincap.w > 0 and wincap.h > 0
         import win32gui as _wg
-        return wincap.hwnd and _wg.IsWindow(wincap.hwnd)
+        return bool(wincap.hwnd and _wg.IsWindow(wincap.hwnd))
     except Exception:
         return False
 
@@ -1021,8 +1060,13 @@ def _detector_loop():
             # Check ExitGameBanner every N ticks — click corner to dismiss
             if exit_banner_detector.update(img, wincap, log):
                 sx, sy = exit_banner_detector.corner_screen_pos(wincap)
-                pyautogui.click(sx, sy)
-                log.info("[Detector] #{} → ExitGameBanner detected, clicked corner ({}, {})".format(_tick, sx, sy))
+                import adb_input as _adb_banner
+                _adb_b = _adb_banner.get_adb_input()
+                if _adb_b is not None:
+                    _adb_b.tap(int(sx), int(sy))
+                else:
+                    pyautogui.click(sx, sy)
+                log.info("[Detector] #{} → ExitGameBanner detected, tapped corner ({}, {})".format(_tick, sx, sy))
         except Exception as e:
             log.error("[Detector] #{} exit_banner_detector crashed: {}".format(_tick, e))
 
