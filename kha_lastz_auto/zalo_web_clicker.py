@@ -214,10 +214,16 @@ def _send_once(page, message: str, target: str, _log) -> bool:
         if not mention_ok:
             _log.info("[ZaloWeb] Mention @All popover not found, typing rest as text")
         if text_after:
-            page.keyboard.type(" " + text_after, delay=40)
+            page.evaluate(
+                "(text) => document.execCommand('insertText', false, text)",
+                " " + text_after,
+            )
         time.sleep(DEBUG_STEP_SLEEP)
     else:
-        page.keyboard.type(message, delay=40)
+        page.evaluate(
+            "(text) => document.execCommand('insertText', false, text)",
+            message,
+        )
         time.sleep(0.15)
 
     page.locator(SEND_BUTTON_SELECTOR).first.click(timeout=3000)

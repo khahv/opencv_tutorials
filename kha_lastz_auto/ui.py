@@ -323,7 +323,7 @@ class BotUI:
                                         bg=BG3, fg=ACCENT)
         self._lbl_app_header.pack(side="left")
 
-        # Is Running toggle — starts OFF, enabled only after EasyOCR preloads
+        # Is Running toggle — starts OFF, enabled once OpenOCR preloads (or if it fails)
         self._running_var = tk.BooleanVar(value=False)
         self._running_cb  = tk.Checkbutton(
             hf, text=self._t("is_running"),
@@ -1414,10 +1414,13 @@ class BotUI:
                 self._root.after(500, self._tick)
                 return
             else:
-                # _tried=True, OPENOCR_OK=False → load failed
-                self._status_lbl.config(text=self._t("status_ocr_failed"), fg=RED)
-                self._root.after(2000, self._tick)
-                return
+                # _tried=True, OPENOCR_OK=False → load failed, but app can run without OCR
+                self._ocr_ready = True
+                self._running_cb.config(state="normal", cursor="hand2", fg=GREEN, activeforeground=GREEN)
+                self._running_var.set(True)
+                self._on_running_toggle()
+                self._status_lbl.config(text=self._t("status_ocr_failed"), fg=ACCENT)
+                _log.warning("[UI] OpenOCR not available. Bot running without OCR support.")
 
         if self._bot_paused["paused"]:
             self._root.after(500, self._tick)

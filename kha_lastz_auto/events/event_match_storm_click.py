@@ -276,6 +276,6 @@ def run(step: dict, screenshot, wincap, runner) -> str:
         offset_change_time=offset_change_time,
     )
     runner._fast_clicker.start(**runner._storm_clicker_kwargs)
-    log.info("[match_storm_click] {} -> storm started at ({},{}) storm_sec={} guard={}".format(
-        runner._step_label(step), sx, sy, storm_sec, guard_outside))
+    log.info("[match_storm_click] {} -> storm started at ({},{}) timeout_sec={} guard={}".format(
+        runner._step_label(step), sx, sy, timeout_sec, guard_outside))
     return "running"

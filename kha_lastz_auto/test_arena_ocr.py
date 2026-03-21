@@ -391,10 +391,11 @@ def run_unit_tests():
 def main():
     run_unit_tests()
 
-    from ocr_easyocr import _ensure_reader
-    reader = _ensure_reader()
-    if reader is None:
-        print("EasyOCR not available — install it first.")
+    try:
+        import easyocr as _easyocr
+        reader = _easyocr.Reader(["en"], gpu=False, verbose=False)
+    except ImportError:
+        print("EasyOCR not available — this benchmark requires:  pip install easyocr")
         sys.exit(1)
 
     col_w = 26
