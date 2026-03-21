@@ -3,7 +3,10 @@ ADB-only game surface context for LDPlayer mode.
 
 Provides the same duck-typed fields used by bot steps (``w``, ``h``, ``offset_*``,
 ``get_screen_position``, ``get_screenshot``) in **device pixel** space — matching
-``adb exec-out screencap`` and ``adb shell input tap``. No Win32 window handle.
+``adb exec-out screencap`` and ``adb shell input tap``.
+
+Optional ``[MOUSE-LOG]`` for ROI tuning uses **only ADB** (``getevent`` touch
+coordinates on the device), not Win32 or pynput.
 """
 
 from __future__ import annotations
@@ -30,10 +33,19 @@ class AdbEmulatorContext:
     cropped_x = 0
     cropped_y = 0
 
-    def __init__(self, screenshot_provider: Any) -> None:
+    def __init__(self, screenshot_provider: Any, enable_mouse_log: bool = True) -> None:
         self._provider = screenshot_provider
         self.w = 0
         self.h = 0
+        if enable_mouse_log:
+            try:
+                import adb_input as adb_mod
+
+                adb = adb_mod.get_adb_input()
+                if adb is not None:
+                    adb.start_getevent_mouse_log()
+            except Exception as exc:
+                log.warning("[AdbEmulatorContext] MOUSE-LOG (getevent) not started: %s", exc)
 
     def refresh_geometry(self) -> None:
         """Refresh ``w`` / ``h`` from ``wm size`` or the last screencap shape."""

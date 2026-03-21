@@ -10,6 +10,9 @@ Commands issued:
     tap:   adb shell input tap   <x> <y>
     swipe: adb shell input swipe <x1> <y1> <x2> <y2> [duration_ms]
 
+Touch coordinates for ``[MOUSE-LOG]`` (LDPlayer ROI tuning) come from
+``adb shell getevent -lt`` only — no Win32 / pynput on the host.
+
 Auto-detect flow (called by main.py on startup):
     1. Run ``adb devices`` — use the first online device found.
     2. If none, try ``adb connect 127.0.0.1:{port}`` for LDPlayer's known
@@ -37,6 +40,7 @@ Usage (main.py sets up the singleton; event handlers read it):
 import logging
 import re
 import subprocess
+import threading
 import time
 from typing import List, Optional, Tuple
 
@@ -48,6 +52,12 @@ _ADB_TIMEOUT_SEC = 5
 # LDPlayer assigns one TCP port per emulator instance starting at 5555,
 # incrementing by 2 (5555, 5557, 5559 …).  We probe the first 8 slots.
 _LDPLAYER_ADB_PORTS: List[int] = [5555, 5557, 5559, 5561, 5563, 5565, 5567, 5569]
+
+# Parsed from ``adb shell getevent -lt`` (multitouch or single-touch ABS).
+_RE_GETEVENT_MT_X = re.compile(r"ABS_MT_POSITION_X\s+([0-9a-fA-F]+)")
+_RE_GETEVENT_MT_Y = re.compile(r"ABS_MT_POSITION_Y\s+([0-9a-fA-F]+)")
+_RE_GETEVENT_ABS_X = re.compile(r"\bABS_X\s+([0-9a-fA-F]+)")
+_RE_GETEVENT_ABS_Y = re.compile(r"\bABS_Y\s+([0-9a-fA-F]+)")
 
 
 # ── Low-level helpers ──────────────────────────────────────────────────────────
@@ -219,6 +229,10 @@ class AdbInput:
         self._device_serial = device_serial
         self._wm_size_cache: Optional[Tuple[int, int, float]] = None
         self._wm_size_cache_ttl_sec = 10.0
+        self._getevent_log_thread: Optional[threading.Thread] = None
+        self._getevent_proc: Optional[subprocess.Popen] = None
+        self._mouse_log_debounce_xy: Optional[Tuple[int, int]] = None
+        self._mouse_log_debounce_t: float = 0.0
 
     def _shell_text(self, *shell_args: str) -> Optional[str]:
         """Run ``adb shell ...`` and return stdout text, or None on failure."""
@@ -271,6 +285,114 @@ class AdbInput:
                 "Set ldplayer_device_serial in config.yaml to specify manually."
             )
         return serial
+
+    # ── Touch → MOUSE-LOG (getevent, no host Win32) ─────────────────────────────
+
+    def start_getevent_mouse_log(self) -> None:
+        """
+        Background thread: ``adb shell getevent -lt`` → print ``[MOUSE-LOG]`` on each
+        touch report using **device** coordinates (same space as screencap / ``input tap``).
+        """
+        if self._getevent_log_thread is not None and self._getevent_log_thread.is_alive():
+            return
+        self._getevent_log_thread = threading.Thread(
+            target=self._getevent_mouse_log_loop,
+            name="adb-getevent-mouselog",
+            daemon=True,
+        )
+        self._getevent_log_thread.start()
+        log.info("[ADB] MOUSE-LOG: listening via `getevent -lt` (device touch coordinates).")
+
+    def _emit_mouse_log_line(self, dx: int, dy: int) -> None:
+        """Debounce and print the same block as PC ``WindowCapture`` mouse debug."""
+        now = time.monotonic()
+        if self._mouse_log_debounce_xy == (dx, dy) and now - self._mouse_log_debounce_t < 0.08:
+            return
+        self._mouse_log_debounce_xy = (dx, dy)
+        self._mouse_log_debounce_t = now
+
+        dev = self.get_device_screen_size()
+        if not dev:
+            return
+        dw, dh = dev
+        if dw <= 0 or dh <= 0:
+            return
+        rel_x = dx / dw
+        rel_y = dy / dh
+        if not (0 <= rel_x <= 1 and 0 <= rel_y <= 1):
+            return
+
+        print(f"\n[MOUSE-LOG] Inside Game Window:")
+        print(f"  - Local Pixel: ({dx}, {dy})")
+        print(f"  - Ratio:       x={rel_x:.4f}, y={rel_y:.4f}")
+        print(f"  - YAML ROI (copy this):")
+        print(f"    roi_center_x: {rel_x:.2f}")
+        print(f"    roi_center_y: {rel_y:.2f}")
+
+    def _getevent_mouse_log_loop(self) -> None:
+        cmd = [self._adb_path]
+        if self._device_serial:
+            cmd += ["-s", self._device_serial]
+        cmd += ["shell", "getevent", "-lt"]
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                bufsize=1,
+            )
+        except Exception as exc:
+            log.warning("[ADB] MOUSE-LOG: could not spawn getevent: %s", exc)
+            return
+
+        self._getevent_proc = proc
+        mt_x: Optional[int] = None
+        mt_y: Optional[int] = None
+        abs_x: Optional[int] = None
+        abs_y: Optional[int] = None
+
+        try:
+            if proc.stdout is None:
+                return
+            for raw in proc.stdout:
+                line = raw.strip()
+                m = _RE_GETEVENT_MT_X.search(line)
+                if m:
+                    mt_x = int(m.group(1), 16)
+                m = _RE_GETEVENT_MT_Y.search(line)
+                if m:
+                    mt_y = int(m.group(1), 16)
+                m = _RE_GETEVENT_ABS_X.search(line)
+                if m:
+                    abs_x = int(m.group(1), 16)
+                m = _RE_GETEVENT_ABS_Y.search(line)
+                if m:
+                    abs_y = int(m.group(1), 16)
+
+                if "SYN_REPORT" not in line:
+                    continue
+
+                dx: Optional[int] = None
+                dy: Optional[int] = None
+                if mt_x is not None and mt_y is not None:
+                    dx, dy = mt_x, mt_y
+                elif abs_x is not None and abs_y is not None:
+                    dx, dy = abs_x, abs_y
+
+                mt_x = mt_y = None
+                abs_x = abs_y = None
+
+                if dx is not None and dy is not None:
+                    self._emit_mouse_log_line(dx, dy)
+        except Exception as exc:
+            log.debug("[ADB] getevent MOUSE-LOG loop exited: %s", exc)
+        finally:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            self._getevent_proc = None
 
     # ── Internal command runner ────────────────────────────────────────────────
 
@@ -371,4 +493,14 @@ def get_adb_input() -> Optional[AdbInput]:
 def set_adb_input(inst: Optional[AdbInput]) -> None:
     """Set (or clear) the global AdbInput instance. Called once by main.py."""
     global _instance
+    prev = _instance
+    if prev is not None and prev is not inst:
+        proc = getattr(prev, "_getevent_proc", None)
+        if proc is not None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            prev._getevent_proc = None
+        prev._getevent_log_thread = None
     _instance = inst

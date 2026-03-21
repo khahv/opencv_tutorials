@@ -251,130 +251,52 @@ functions    = load_functions("functions")
 templates    = collect_templates(functions)
 vision_cache = build_vision_cache(templates)
 
+from game_surface import (
+    LdplayerAdbSurface,
+    apply_post_connect_window_prefs,
+    initial_pc_connect_or_none,
+    is_game_surface_valid,
+    should_skip_focus_loop,
+    sync_lastz_pid_from_wincap,
+    PcWin32Surface,
+)
+
 wincap = None
 screenshot_provider = None
 
 if _emulator == "ldplayer":
-    log.info("LDPlayer mode: game surface via ADB only (no Win32 window capture).")
-    from adb_emulator_context import AdbEmulatorContext
-    from adb_input import AdbInput as _AdbInput
-
-    _LDPLAYER_DEVICE_SERIAL = config.get("ldplayer_device_serial") or None
-    _adb_inst = _AdbInput(adb_path=_LDPLAYER_ADB_PATH, device_serial=_LDPLAYER_DEVICE_SERIAL)
-    if _LDPLAYER_DEVICE_SERIAL:
-        log.info("[ADB Input] Using manual device serial: %s", _LDPLAYER_DEVICE_SERIAL)
-    else:
-        log.info("[ADB Input] Auto-detecting LDPlayer device...")
-        _adb_inst.detect_and_connect()
-    adb_input.set_adb_input(_adb_inst)
-    log.info(
-        "[ADB Input] Ready — device=%s  adb=%s",
-        _adb_inst._device_serial or "none (commands will target default device)",
-        _LDPLAYER_ADB_PATH or "default",
-    )
-    screenshot_provider = create_screenshot_provider(
-        "ldplayer",
-        wincap=None,
+    wincap, screenshot_provider = LdplayerAdbSurface.connect(
         adb_path=_LDPLAYER_ADB_PATH,
-        device_serial=_adb_inst._device_serial,
-    )
-    wincap = AdbEmulatorContext(screenshot_provider)
-    wincap.refresh_geometry()
-    try:
-        _probe_img = screenshot_provider.get_screenshot()
-    except Exception as _adb_cap_e:
-        log.warning("[ADB] Initial screencap failed: %s", _adb_cap_e)
-        _probe_img = None
-    if _probe_img is not None:
-        log.info(
-            "[ADB] Emulator context %dx%d (screencap OK).",
-            wincap.w,
-            wincap.h,
-        )
-    else:
-        log.warning(
-            "[ADB] Initial screencap failed — UI may show disconnected until ADB responds.",
-        )
-    log.info(
-        "[Screenshot] Provider: %s (emulator=ldplayer)",
-        type(screenshot_provider).__name__,
+        device_serial=config.get("ldplayer_device_serial") or None,
+        logger=log,
     )
 else:
-    adb_input.set_adb_input(None)
-    # Create WindowCapture in thread with timeout so FindWindow cannot freeze main (Ctrl+C works)
-    _wincap_result = []
-    _wincap_done = threading.Event()
-
-    def _create_wincap():
-        try:
-            _wincap_result.append(WindowCapture(_GAME_WINDOW_NAME))
-        except Exception:
-            pass
-        finally:
-            _wincap_done.set()
-
-    log.info("Connecting to game window '%s'...", _GAME_WINDOW_NAME)
-    sys.stdout.flush()
-    threading.Thread(target=_create_wincap, daemon=True).start()
     try:
-        if not _wincap_done.wait(timeout=90):
-            log.warning(
-                "Window '%s' not found or timeout (90s) — UI will start in disconnected mode.",
-                _GAME_WINDOW_NAME,
-            )
+        wincap, screenshot_provider = initial_pc_connect_or_none(
+            window_name=_GAME_WINDOW_NAME,
+            adb_path=_LDPLAYER_ADB_PATH,
+            logger=log,
+            timeout_sec=90.0,
+        )
     except KeyboardInterrupt:
         log.info("Interrupted by user.")
         sys.exit(130)
-    if _wincap_result:
-        wincap = _wincap_result[0]
-    else:
-        log.warning(
-            "Window '%s' not found — starting UI in disconnected mode. "
-            "Launch the game (or change emulator in Settings) and the bot will auto-connect.",
-            _GAME_WINDOW_NAME,
-        )
-        wincap = None
 
-    if wincap is not None:
-        screenshot_provider = create_screenshot_provider(
-            "pc",
-            wincap=wincap,
-            adb_path=_LDPLAYER_ADB_PATH,
-        )
-        log.info(
-            "[Screenshot] Provider: %s (emulator=pc)",
-            type(screenshot_provider).__name__,
-        )
-    else:
-        log.info("[Screenshot] Provider deferred — window not connected yet.")
-
-# Track LastZ process PID for connection_detector (kill/restart on disconnect); N/A for pure ADB mode
 lastz_pid = {"pid": None}
-if wincap is not None and getattr(wincap, "hwnd", None):
-    try:
-        import win32process
-        _, _pid = win32process.GetWindowThreadProcessId(wincap.hwnd)
-        lastz_pid["pid"] = _pid
-        log.info("LastZ process PID: %s", _pid)
-    except Exception as e:
-        log.warning("Could not get LastZ process PID: %s", e)
+sync_lastz_pid_from_wincap(wincap, lastz_pid, log)
 
 _ref_w = config.get("reference_width")   # template capture resolution → vision scale
 _ref_h = config.get("reference_height")
 _show_preview = config.get("show_preview", False)
 # _win_w, _win_h already set from general_settings_ov / config above
 
-if wincap is not None:
-    # Apply initial auto_focus to wincap
-    wincap.auto_focus = auto_focus
-
-    # Resize window to desired size on startup.
-    # focus_loop will keep enforcing this size throughout the session.
-    if _win_w and _win_h:
-        wincap.resize_to_client(_win_w, _win_h)
-        log.info("Window resized to {}x{} (target)".format(wincap.w, wincap.h))
-    else:
-        log.info("window_width/height not set — keeping current window size {}x{}".format(wincap.w, wincap.h))
+apply_post_connect_window_prefs(
+    wincap,
+    auto_focus=auto_focus,
+    win_w=_win_w,
+    win_h=_win_h,
+    logger=log,
+)
 
 def update_vision_scale():
     if wincap is None:
@@ -774,10 +696,7 @@ def _safe_waitkey(ms=1):
 
 def focus_loop():
     while running and not exit_requested:
-        if wincap is None:
-            time.sleep(0.2)
-            continue
-        if getattr(wincap, "is_using_adb", False):
+        if should_skip_focus_loop(wincap):
             time.sleep(0.2)
             continue
         if not bot_paused["paused"]:
@@ -790,86 +709,43 @@ def focus_loop():
 focus_thread = threading.Thread(target=focus_loop, daemon=True)
 focus_thread.start()
 
-# ── Window auto-connect thread ─────────────────────────────────────────────────
-# PC: retries FindWindow until the game window exists.
-# LDPlayer: retries ADB screencap when the emulator context was cleared (e.g. after settings change).
+# ── Window auto-connect thread (logic in ``game_surface``) ───────────────────
+_pc_autostart_watch_state = {"t": 0.0}
+
+
 def _window_connect_loop():
     global wincap, screenshot_provider
-    _last_autostart_attempt = 0.0
     while running and not exit_requested:
         time.sleep(3)
         if not running or exit_requested:
             break
 
         if _emulator == "ldplayer":
-            if wincap is not None and _is_game_window_valid():
-                continue
-            try:
-                from adb_emulator_context import AdbEmulatorContext as _AdbcCtx
-                from adb_input import AdbInput as _AdbcInput
-
-                _ser = config.get("ldplayer_device_serial") or None
-                _adb_w = _AdbcInput(adb_path=_LDPLAYER_ADB_PATH, device_serial=_ser)
-                if not _ser:
-                    _adb_w.detect_and_connect()
-                adb_input.set_adb_input(_adb_w)
-                new_sp = create_screenshot_provider(
-                    "ldplayer",
-                    wincap=None,
-                    adb_path=_LDPLAYER_ADB_PATH,
-                    device_serial=_adb_w._device_serial,
-                )
-                if new_sp.get_screenshot() is None:
-                    continue
-                new_wincap = _AdbcCtx(new_sp)
-                new_wincap.refresh_geometry()
-                wincap = new_wincap
-                screenshot_provider = new_sp
-                update_vision_scale()
-                log.info("[WindowWatcher] ADB emulator connected (%dx%d).", wincap.w, wincap.h)
-            except Exception:
-                pass
-            continue
-
-        # ── PC mode ────────────────────────────────────────────────────────────
-        if wincap is not None:
-            if not _is_game_window_valid():
-                log.warning("[WindowWatcher] Window handle became invalid — disconnecting.")
-                wincap = None
-                screenshot_provider = None
-            else:
-                continue
-
-        if _auto_start_lastz and LASTZ_EXE_PATH and not bot_paused["paused"]:
-            _now = time.time()
-            if _now - _last_autostart_attempt >= 15.0:
-                _last_autostart_attempt = _now
-                try:
-                    import win32gui as _wg
-                    if not _wg.FindWindow(None, _GAME_WINDOW_NAME) and os.path.isfile(LASTZ_EXE_PATH):
-                        log.info("[WindowWatcher] Auto-starting LastZ: %s", LASTZ_EXE_PATH)
-                        subprocess.Popen(LASTZ_EXE_PATH)
-                except Exception as _ae:
-                    log.warning("[WindowWatcher] Auto-start failed: %s", _ae)
-
-        try:
-            new_wincap = WindowCapture(_GAME_WINDOW_NAME)
-            new_wincap.auto_focus = auto_focus
-            if _win_w and _win_h:
-                new_wincap.resize_to_client(_win_w, _win_h)
-            new_sp = create_screenshot_provider("pc", wincap=new_wincap, adb_path=_LDPLAYER_ADB_PATH)
-            try:
-                import win32process as _wp
-                _, _pid = _wp.GetWindowThreadProcessId(new_wincap.hwnd)
-                lastz_pid["pid"] = _pid
-            except Exception:
-                pass
-            wincap = new_wincap
-            screenshot_provider = new_sp
-            update_vision_scale()
-            log.info("[WindowWatcher] Connected to '%s'.", _GAME_WINDOW_NAME)
-        except Exception:
-            pass
+            wincap, screenshot_provider = LdplayerAdbSurface.watcher_step(
+                wincap,
+                screenshot_provider,
+                adb_path=_LDPLAYER_ADB_PATH,
+                device_serial=config.get("ldplayer_device_serial") or None,
+                logger=log,
+                update_vision_scale=update_vision_scale,
+            )
+        else:
+            wincap, screenshot_provider = PcWin32Surface.watcher_step(
+                wincap,
+                screenshot_provider,
+                window_name=_GAME_WINDOW_NAME,
+                adb_path=_LDPLAYER_ADB_PATH,
+                auto_focus=auto_focus,
+                win_w=_win_w,
+                win_h=_win_h,
+                lastz_pid=lastz_pid,
+                lastz_exe_path=LASTZ_EXE_PATH,
+                auto_start_lastz=_auto_start_lastz,
+                bot_paused=bot_paused,
+                autostart_state=_pc_autostart_watch_state,
+                logger=log,
+                update_vision_scale=update_vision_scale,
+            )
 
 _window_watcher_thread = threading.Thread(target=_window_connect_loop, daemon=True)
 _window_watcher_thread.start()
@@ -922,15 +798,7 @@ treasure_detector = TreasureDetector(
 # Callbacks for trigger-based functions: send_zalo with repeat_interval_sec uses these to repeat while detector still active.
 # When game window is closed, detector can't run so _attacked/_treasure_visible never clear — we must return False so Zalo repeat stops.
 def _is_game_window_valid():
-    try:
-        if wincap is None:
-            return False
-        if getattr(wincap, "is_using_adb", False):
-            return wincap.w > 0 and wincap.h > 0
-        import win32gui as _wg
-        return bool(wincap.hwnd and _wg.IsWindow(wincap.hwnd))
-    except Exception:
-        return False
+    return is_game_surface_valid(wincap)
 
 trigger_active_callbacks = {
     "attacked": lambda: _is_game_window_valid() and attack_detector._attacked,
