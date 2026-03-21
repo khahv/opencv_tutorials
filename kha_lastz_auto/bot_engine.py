@@ -471,20 +471,24 @@ class FunctionRunner:
                 return "running"
             points = vision.find(screenshot, threshold=threshold, debug_mode=None)
             if points:
+                import adb_input as _adb_mod
+                _adb = _adb_mod.get_adb_input()
                 for pt in points:
-                    sx, sy = wincap.get_screen_position((pt[0], pt[1]))
-                    try:
-                        if not self._safe_move(sx, sy, wincap, "match_multi_click"):
-                            continue
-                        time.sleep(0.05)
-                    except: pass
-                    
-                    if hasattr(wincap, 'focus_window'):
-                        wincap.focus_window()
-                        
-                    _mouse_ctrl.press(Button.left)
-                    time.sleep(0.1)
-                    _mouse_ctrl.release(Button.left)
+                    if _adb is not None:
+                        _adb.tap(pt[0], pt[1])
+                    else:
+                        sx, sy = wincap.get_screen_position((pt[0], pt[1]))
+                        try:
+                            if not self._safe_move(sx, sy, wincap, "match_multi_click"):
+                                continue
+                            time.sleep(0.05)
+                        except Exception:
+                            pass
+                        if hasattr(wincap, "focus_window"):
+                            wincap.focus_window()
+                        _mouse_ctrl.press(Button.left)
+                        time.sleep(0.1)
+                        _mouse_ctrl.release(Button.left)
                     if click_interval_sec > 0:
                         time.sleep(click_interval_sec)
                 log.info("[Runner] {} → true (clicked {} match(es))".format(self._step_label(step), len(points)))
@@ -821,59 +825,74 @@ class FunctionRunner:
             log.info("[Runner] drag: win={}x{}, start screen=({},{}), end=({},{}), offset=({},{}), drag_px={:.0f}, steps={}, duration={}s".format(
                 wincap.w, wincap.h, sx, sy, ex, ey, offset_x, offset_y, drag_distance_px, num_steps, duration))
 
-            # Windows API (SetCursorPos + mouse_event). block_input=True uses BlockInput() to ignore user mouse/keyboard during drag.
-            import ctypes
-            _MOUSEEVENTF_LEFTDOWN = 0x0002
-            _MOUSEEVENTF_LEFTUP = 0x0004
-            block_input = step.get("block_input", True)
-
-            def _do_drag(sx_, sy_, off_x, off_y):
-                try:
-                    import ctypes
-                    u32 = ctypes.windll.user32
-                    ex_ = sx_ + off_x
-                    ey_ = sy_ + off_y
-                    step_duration = duration / num_steps
-                    log.info("[Runner] drag step 1: SetCursorPos start ({}, {})".format(sx_, sy_))
-                    u32.SetCursorPos(int(sx_), int(sy_))
-                    time.sleep(0.06)
-                    log.info("[Runner] drag step 2: mouse_event LEFTDOWN at ({}, {})".format(sx_, sy_))
-                    u32.mouse_event(_MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-                    time.sleep(0.05)
-                    for s in range(1, num_steps + 1):
-                        t = s / num_steps
-                        px = int(sx_ + off_x * t)
-                        py = int(sy_ + off_y * t)
-                        u32.SetCursorPos(px, py)
-                        time.sleep(step_duration)
-                        if s == 1 or s == num_steps or s == num_steps // 2:
-                            log.info("[Runner] drag step 3: move s={}/{} -> ({}, {})".format(s, num_steps, px, py))
-                    time.sleep(0.04)
-                    log.info("[Runner] drag step 4: mouse_event LEFTUP at ({}, {})".format(int(ex_), int(ey_)))
-                    u32.mouse_event(_MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
-                except Exception as e:
-                    log.warning("[Runner] drag exception: {}".format(e))
-
-            try:
-                if block_input:
-                    try:
-                        if ctypes.windll.user32.BlockInput(True):
-                            log.info("[Runner] drag: BlockInput(True) — blocking user input during drag")
-                        else:
-                            log.warning("[Runner] drag: BlockInput(True) returned False (e.g. UAC) — continuing without block")
-                    except Exception as e:
-                        log.warning("[Runner] drag: BlockInput(True) failed: {} — continuing without block".format(e))
+            import adb_input as _adb_mod
+            _adb = _adb_mod.get_adb_input()
+            if _adb is not None:
+                # ADB mode: swipe with client pixel coords (start + end computed in client space)
+                ex_client = px_start + int(dx * drag_distance_px)
+                ey_client = py_start + int(dy * drag_distance_px)
+                duration_ms = int(duration * 1000)
+                log.info("[Runner] drag (ADB): start=(%d,%d) end=(%d,%d) duration=%dms x%d",
+                         px_start, py_start, ex_client, ey_client, duration_ms, count)
                 for i in range(count):
-                    _do_drag(sx, sy, offset_x, offset_y)
+                    _adb.swipe(px_start, py_start, ex_client, ey_client, duration_ms)
                     if i < count - 1:
                         time.sleep(0.12)
-            finally:
-                if block_input:
+            else:
+                # Win32 mode: Windows API SetCursorPos + mouse_event
+                # block_input=True uses BlockInput() to ignore user input during drag
+                import ctypes
+                _MOUSEEVENTF_LEFTDOWN = 0x0002
+                _MOUSEEVENTF_LEFTUP = 0x0004
+                block_input = step.get("block_input", True)
+
+                def _do_drag(sx_, sy_, off_x, off_y):
                     try:
-                        ctypes.windll.user32.BlockInput(False)
-                        log.info("[Runner] drag: BlockInput(False) — user input restored")
+                        import ctypes
+                        u32 = ctypes.windll.user32
+                        ex_ = sx_ + off_x
+                        ey_ = sy_ + off_y
+                        step_duration = duration / num_steps
+                        log.info("[Runner] drag step 1: SetCursorPos start ({}, {})".format(sx_, sy_))
+                        u32.SetCursorPos(int(sx_), int(sy_))
+                        time.sleep(0.06)
+                        log.info("[Runner] drag step 2: mouse_event LEFTDOWN at ({}, {})".format(sx_, sy_))
+                        u32.mouse_event(_MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+                        time.sleep(0.05)
+                        for s in range(1, num_steps + 1):
+                            t = s / num_steps
+                            px = int(sx_ + off_x * t)
+                            py = int(sy_ + off_y * t)
+                            u32.SetCursorPos(px, py)
+                            time.sleep(step_duration)
+                            if s == 1 or s == num_steps or s == num_steps // 2:
+                                log.info("[Runner] drag step 3: move s={}/{} -> ({}, {})".format(s, num_steps, px, py))
+                        time.sleep(0.04)
+                        log.info("[Runner] drag step 4: mouse_event LEFTUP at ({}, {})".format(int(ex_), int(ey_)))
+                        u32.mouse_event(_MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
                     except Exception as e:
-                        log.warning("[Runner] drag: BlockInput(False) failed: {}".format(e))
+                        log.warning("[Runner] drag exception: {}".format(e))
+
+                try:
+                    if block_input:
+                        try:
+                            if ctypes.windll.user32.BlockInput(True):
+                                log.info("[Runner] drag: BlockInput(True) — blocking user input during drag")
+                            else:
+                                log.warning("[Runner] drag: BlockInput(True) returned False (e.g. UAC) — continuing without block")
+                        except Exception as e:
+                            log.warning("[Runner] drag: BlockInput(True) failed: {} — continuing without block".format(e))
+                    for i in range(count):
+                        _do_drag(sx, sy, offset_x, offset_y)
+                        if i < count - 1:
+                            time.sleep(0.12)
+                finally:
+                    if block_input:
+                        try:
+                            ctypes.windll.user32.BlockInput(False)
+                            log.info("[Runner] drag: BlockInput(False) — user input restored")
+                        except Exception as e:
+                            log.warning("[Runner] drag: BlockInput(False) failed: {}".format(e))
             log.info("[Runner] {} → true (drag dir=({},{}) x{})".format(
                 self._step_label(step), step.get("direction_x", step.get("x")), step.get("direction_y", step.get("y")), count))
             self._advance_step(True)
@@ -1235,10 +1254,24 @@ class FunctionRunner:
     def _safe_click(self, sx: int, sy: int, wincap, label: str = "") -> bool:
         """Click at screen coords (sx, sy) only if inside game window bounds.
 
+        In LDPlayer (ADB) mode, converts screen → client coords and uses ADB tap.
         Returns True when the click fires, False when skipped (out of bounds).
-        All regular click operations go through this to prevent accidental
-        clicks outside the game window.
         """
+        import adb_input as _adb_mod
+        _adb = _adb_mod.get_adb_input()
+        if _adb is not None:
+            # ADB mode: convert screen → client pixel coords and tap
+            client_x = sx - wincap.offset_x
+            client_y = sy - wincap.offset_y
+            if 0 <= client_x < wincap.w and 0 <= client_y < wincap.h:
+                return _adb.tap(int(client_x), int(client_y))
+            log.warning(
+                "[Runner] safe_click (ADB) skipped (%d,%d) → client (%d,%d) outside %dx%d%s",
+                sx, sy, int(client_x), int(client_y), wincap.w, wincap.h,
+                " [{}]".format(label) if label else "",
+            )
+            return False
+
         _l, _t = wincap.get_screen_position((0, 0))
         _r = _l + wincap.w
         _b = _t + wincap.h

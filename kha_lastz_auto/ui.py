@@ -175,6 +175,7 @@ class BotUI:
         self._focus_var.set(bool(self._general_settings.get("auto_focus", False)))
         en_lbl, vi_lbl = self._lang_menu_labels()
         self._lang_var.set(vi_lbl if self._current_lang() == "vi" else en_lbl)
+        self._emulator_var.set(self._general_settings.get("emulator", "pc"))
 
         def _setting_row(label_key: str):
             fr = tk.Frame(dlg, bg=BG)
@@ -196,6 +197,16 @@ class BotUI:
         om_lang.config(font=("Segoe UI", 10), bg=BG2, fg=FG, activebackground=GRAY2,
                        activeforeground=FG, highlightthickness=0, relief="flat")
         om_lang.pack(side="left", padx=(8, 0))
+
+        EMULATORS = ["pc", "ldplayer"]
+        rf_emu = _setting_row("emulator_platform")
+        om_emu = tk.OptionMenu(rf_emu, self._emulator_var, *EMULATORS,
+                               command=self._on_emulator_change)
+        om_emu.config(font=("Segoe UI", 10), bg=BG2, fg=FG, activebackground=GRAY2,
+                      activeforeground=FG, highlightthickness=0, relief="flat")
+        om_emu.pack(side="left", padx=(8, 0))
+        tk.Label(rf_emu, text=self._t("emulator_restart_note"),
+                 font=("Segoe UI", 8), bg=BG, fg=GRAY).pack(side="left", padx=(8, 0))
 
         rf_af = tk.Frame(dlg, bg=BG)
         rf_af.pack(fill="x", padx=16, pady=(0, 14))
@@ -345,6 +356,8 @@ class BotUI:
         self._resolution_var = tk.StringVar(value=_cur_res)
         _en0, _vi0 = self._lang_menu_labels()
         self._lang_var = tk.StringVar(value=_vi0 if self._current_lang() == "vi" else _en0)
+        _emulator0 = self._general_settings.get("emulator", "pc")
+        self._emulator_var = tk.StringVar(value=_emulator0)
 
         self._btn_app_settings = tk.Button(
             hf, text=self._t("btn_app_settings"),
@@ -498,6 +511,11 @@ class BotUI:
     def _on_resolution_change(self, value):
         if self._general_settings_callback and value:
             self._general_settings_callback("resolution", value)
+
+    def _on_emulator_change(self, value):
+        if self._general_settings_callback and value:
+            self._general_settings_callback("emulator", value)
+        self._show_toast(self._t("toast_emulator_restart"))
 
     def _update_badge_states(self):
         """Grey out / restore all key badges, schedule and gear buttons based on Is Running state."""

@@ -93,4 +93,7 @@ MESSAGES = {
     "tt_hotkey": "Hotkey: {hotkey}",
     "tt_eta_hm": "in {h}h {m}m",
     "tt_eta_m": "in {m}m",
+    "emulator_platform": "Emulator",
+    "emulator_restart_note": "(restart required)",
+    "toast_emulator_restart": "Emulator changed — restart the bot for it to take effect.",
 }

@@ -102,6 +102,8 @@ def _do_heavy_imports():
         from croniter import croniter as croniter_class
         from pynput import keyboard
         from windowcapture import WindowCapture
+        from screenshot_provider import create_screenshot_provider as _csp
+        import adb_input as _adb_input_mod
         from bot_engine import (
             load_functions,
             load_config,
@@ -124,6 +126,8 @@ def _do_heavy_imports():
             main_mod.keyboard = keyboard
             main_mod.croniter = croniter_class
             main_mod.WindowCapture = WindowCapture
+            main_mod.create_screenshot_provider = _csp
+            main_mod.adb_input = _adb_input_mod
             main_mod.load_functions = load_functions
             main_mod.load_config = load_config
             main_mod.collect_templates = collect_templates
@@ -189,6 +193,12 @@ _win_h = general_settings_ov.get("window_height") or config.get("window_height")
 # LastZ executable path (startup auto-launch and connection_detector restart)
 LASTZ_EXE_PATH = config.get("lastz_exe_path") or r"C:\Users\hongkhavo\AppData\Local\Last Z\Last Z.exe"
 
+# Emulator selection: "pc" (default, win32 window) or "ldplayer" (LDPlayer emulator, ADB screenshots)
+_emulator = (general_settings_ov.get("emulator") or config.get("emulator") or "pc").lower()
+_GAME_WINDOW_NAME = "LDPlayer" if _emulator == "ldplayer" else "LastZ"
+_LDPLAYER_ADB_PATH = config.get("ldplayer_adb_path") or None
+log.info("Emulator mode: %s (window='%s')", _emulator, _GAME_WINDOW_NAME)
+
 key_bindings      = {}   # key_char -> fn_name
 fn_enabled        = {}   # fn_name  -> bool
 schedules         = []   # [{ "function": ..., "cron": ... }]
@@ -237,11 +247,11 @@ _wincap_result = []
 _wincap_done = threading.Event()
 def _create_wincap():
     try:
-        _wincap_result.append(WindowCapture("LastZ"))
+        _wincap_result.append(WindowCapture(_GAME_WINDOW_NAME))
     except Exception as e:
         log.error("WindowCapture failed: {}".format(e))
-        # Window not found: try to start LastZ and wait for it to appear
-        if os.path.isfile(LASTZ_EXE_PATH):
+        # Window not found: for PC mode, try to start LastZ and wait for it to appear
+        if _emulator == "pc" and os.path.isfile(LASTZ_EXE_PATH):
             log.info("Starting LastZ: %s", LASTZ_EXE_PATH)
             try:
                 subprocess.Popen(
@@ -258,31 +268,68 @@ def _create_wincap():
                 for _ in range(_wait_sec // _interval_sec):
                     time.sleep(_interval_sec)
                     try:
-                        _wincap_result.append(WindowCapture("LastZ"))
-                        log.info("LastZ window found after auto-start.")
+                        _wincap_result.append(WindowCapture(_GAME_WINDOW_NAME))
+                        log.info("%s window found after auto-start.", _GAME_WINDOW_NAME)
                         break
                     except Exception:
                         pass
                 else:
-                    log.error("LastZ window did not appear within %ds.", _wait_sec)
-        else:
+                    log.error("%s window did not appear within %ds.", _GAME_WINDOW_NAME, _wait_sec)
+        elif _emulator == "pc":
             log.error("LastZ exe not found: %s", LASTZ_EXE_PATH)
+        else:
+            log.error("%s window not found. Make sure LDPlayer is running.", _GAME_WINDOW_NAME)
     finally:
         _wincap_done.set()
-log.info("Connecting to game window 'LastZ'...")
+log.info("Connecting to game window '%s'...", _GAME_WINDOW_NAME)
 sys.stdout.flush()
 threading.Thread(target=_create_wincap, daemon=True).start()
 try:
     if not _wincap_done.wait(timeout=90):
-        log.error("Window 'LastZ' not found or timeout (90s). Open the game or check lastz_exe_path.")
+        log.error(
+            "Window '%s' not found or timeout (90s). Open the game or check config.",
+            _GAME_WINDOW_NAME,
+        )
         sys.exit(1)
 except KeyboardInterrupt:
     log.info("Interrupted by user.")
     sys.exit(130)
 if not _wincap_result:
-    log.error("WindowCapture failed. Check that 'LastZ' window exists or lastz_exe_path in config.")
+    log.error(
+        "WindowCapture failed. Check that '%s' window exists or review config.",
+        _GAME_WINDOW_NAME,
+    )
     sys.exit(1)
 wincap = _wincap_result[0]
+
+# Create screenshot provider based on emulator mode
+screenshot_provider = create_screenshot_provider(
+    _emulator,
+    wincap=wincap,
+    adb_path=_LDPLAYER_ADB_PATH,
+)
+log.info(
+    "[Screenshot] Provider: %s (emulator=%s)",
+    type(screenshot_provider).__name__,
+    _emulator,
+)
+
+# Set up ADB input for LDPlayer mode (click / swipe via ADB)
+if _emulator == "ldplayer":
+    from adb_input import AdbInput as _AdbInput
+    _LDPLAYER_DEVICE_SERIAL = config.get("ldplayer_device_serial") or None
+    _adb_inst = _AdbInput(adb_path=_LDPLAYER_ADB_PATH, device_serial=_LDPLAYER_DEVICE_SERIAL)
+    if _LDPLAYER_DEVICE_SERIAL:
+        log.info("[ADB Input] Using manual device serial: %s", _LDPLAYER_DEVICE_SERIAL)
+    else:
+        log.info("[ADB Input] Auto-detecting LDPlayer device...")
+        _adb_inst.detect_and_connect()
+    adb_input.set_adb_input(_adb_inst)
+    log.info(
+        "[ADB Input] Ready — device=%s  adb=%s",
+        _adb_inst._device_serial or "none (commands will target default device)",
+        _LDPLAYER_ADB_PATH or "default",
+    )
 
 # Track LastZ process PID for connection_detector (kill/restart on disconnect)
 lastz_pid = {"pid": None}
@@ -593,6 +640,7 @@ _general_settings = {
     "window_width": _win_w,
     "window_height": _win_h,
     "language": _norm_lang(general_settings_ov.get("language", "en")),
+    "emulator": _emulator,
 }
 
 
@@ -621,6 +669,11 @@ def _on_general_setting_change(key, value):
         _general_settings["language"] = _norm_lang(value)
         config_manager.save(fn_configs, fn_enabled, general_settings=_general_settings)
         log.info("[Settings] UI language → {}".format(_general_settings["language"]))
+        return
+    elif key == "emulator":
+        _general_settings["emulator"] = value
+        config_manager.save(fn_configs, fn_enabled, general_settings=_general_settings)
+        log.info("[Settings] Emulator → %s (restart required for change to take effect)", value)
         return
     _general_settings["auto_focus"] = auto_focus
     config_manager.save(fn_configs, fn_enabled, general_settings=_general_settings)
@@ -740,7 +793,7 @@ connection_detector = ConnectionDetector(
     world_zoomout_button_path="buttons_template/WorldButton.png",
     lastz_exe_path=LASTZ_EXE_PATH,
     lastz_pid_ref=lastz_pid,
-    lastz_window_name="LastZ",
+    lastz_window_name=_GAME_WINDOW_NAME,
     interval_sec=300.0,   # 5 minutes
     buff_icon_threshold=0.75,
 )
@@ -754,11 +807,7 @@ _DETECTOR_INTERVAL = 5.0  # background detectors check every 2s
 _last_detector_screenshot_fail_log = 0.0  # throttle "screenshot failed" log
 
 def _detector_loop():
-    import mss as _mss_lib
-    import win32gui as _win32gui
-    import numpy as _np
     global _last_detector_screenshot_fail_log
-    _mss_inst = _mss_lib.mss()
     log.info("[Detector] Background thread started (interval={}s)".format(_DETECTOR_INTERVAL))
     _tick = 0
     while running and not exit_requested:
@@ -770,22 +819,26 @@ def _detector_loop():
             continue
         _tick += 1
         try:
-            w, h = wincap.w, wincap.h
-            hwnd = wincap.hwnd
-            if w <= 0 or h <= 0 or not hwnd:
-                log.warning("[Detector] #{} skip — invalid window size {}x{}".format(_tick, w, h))
+            img = screenshot_provider.get_screenshot()
+            if img is None:
+                _now = time.time()
+                if _now - _last_detector_screenshot_fail_log >= 15.0:
+                    log.warning(
+                        "[Detector] #{} screenshot returned None (window invalid or ADB error)".format(_tick)
+                    )
+                    _last_detector_screenshot_fail_log = _now
+                try:
+                    connection_detector.update(wincap, vision_cache, log, current_screenshot=None,
+                                               is_busy=lambda: runner.state == "running")
+                except Exception as conn_e:
+                    log.error("[Detector] connection_detector on screenshot fail: {}".format(conn_e))
                 continue
-            (left, top) = _win32gui.ClientToScreen(hwnd, (0, 0))
-            monitor = {'left': left, 'top': top, 'width': w, 'height': h}
-            raw = _mss_inst.grab(monitor)
-            img = _np.array(raw)[..., :3]
-            img = _np.ascontiguousarray(img)
         except Exception as e:
             _now = time.time()
             if _now - _last_detector_screenshot_fail_log >= 15.0:
                 log.warning("[Detector] #{} screenshot failed: {} (run connection_detector to recover)".format(_tick, e))
                 _last_detector_screenshot_fail_log = _now
-            # Still run connection_detector so it can check process and restart LastZ if needed
+            # Still run connection_detector so it can check process and restart game if needed
             try:
                 connection_detector.update(wincap, vision_cache, log, current_screenshot=None,
                                            is_busy=lambda: runner.state == "running")
@@ -963,7 +1016,7 @@ def _game_loop():
 
         # Get screenshot and update runner (invalid handle possible if connection_detector just killed LastZ)
         try:
-            screenshot = wincap.get_screenshot()
+            screenshot = screenshot_provider.get_screenshot()
         except Exception as _e:
             if getattr(_e, "winerror", None) == 1400:
                 _t = time.time()

@@ -184,12 +184,17 @@ def run(step: dict, screenshot, wincap, runner) -> str:
     if current < target_level:
         pts = vision_plus.find(screenshot, threshold=match_threshold)
         if pts:
-            sx, sy = wincap.get_screen_position((pts[0][0], pts[0][1]))
-            if not runner._safe_move(sx, sy, wincap, "set_level plus"):
-                return "running"
-            _mouse_ctrl.press(Button.left)
-            time.sleep(0.05)
-            _mouse_ctrl.release(Button.left)
+            import adb_input as _adb_mod
+            _adb = _adb_mod.get_adb_input()
+            if _adb is not None:
+                _adb.tap(pts[0][0], pts[0][1])
+            else:
+                sx, sy = wincap.get_screen_position((pts[0][0], pts[0][1]))
+                if not runner._safe_move(sx, sy, wincap, "set_level plus"):
+                    return "running"
+                _mouse_ctrl.press(Button.left)
+                time.sleep(0.05)
+                _mouse_ctrl.release(Button.left)
             log.info("[set_level] Lv.{} -> click Plus (target Lv.{})".format(current, target_level))
             time.sleep(click_interval)
         else:

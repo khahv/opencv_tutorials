@@ -54,20 +54,27 @@ def run(step: dict, screenshot, wincap, runner) -> str:
     py = int(wincap.h * oy)
     sx, sy = wincap.get_screen_position((px, py))
 
-    try:
-        if not runner._safe_move(sx, sy, wincap, "click_position"):
-            runner._advance_step(False)
-            return "running"
-        time.sleep(0.05)
-    except Exception:
-        pass
+    import adb_input as _adb_mod
+    _adb = _adb_mod.get_adb_input()
+    if _adb is not None:
+        # ADB (LDPlayer) mode: tap at client pixel coords
+        _adb.tap(px, py)
+    else:
+        # Win32 mode: move mouse then press/release
+        try:
+            if not runner._safe_move(sx, sy, wincap, "click_position"):
+                runner._advance_step(False)
+                return "running"
+            time.sleep(0.05)
+        except Exception:
+            pass
 
-    if hasattr(wincap, "focus_window"):
-        wincap.focus_window()
+        if hasattr(wincap, "focus_window"):
+            wincap.focus_window()
 
-    _mouse_ctrl.press(Button.left)
-    time.sleep(0.1)
-    _mouse_ctrl.release(Button.left)
+        _mouse_ctrl.press(Button.left)
+        time.sleep(0.1)
+        _mouse_ctrl.release(Button.left)
 
     if setting_key and positions_map and ox is not None:
         log.info("[click_position] {} -> true ({} -> x={}, y={})".format(

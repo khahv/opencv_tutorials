@@ -664,36 +664,44 @@ def run(step: dict, screenshot, wincap, runner) -> str:
             return "running"
 
         # ── Standard click path ────────────────────────────────────────────────
-        try:
-            if not runner._safe_move(sx, sy, wincap, "match_click"):
+        import adb_input as _adb_mod
+        _adb = _adb_mod.get_adb_input()
+        if _adb is not None:
+            # ADB (LDPlayer) mode: tap at client (screenshot) pixel coords
+            _adb.tap(center[0], center[1])
+            runner.step_click_count += 1
+        else:
+            # Win32 mode: move mouse then press/release
+            try:
+                if not runner._safe_move(sx, sy, wincap, "match_click"):
+                    return "running"
+                time.sleep(0.05)
+            except Exception as e:
+                log.warning("[match_click] Failed to set mouse position: {}".format(e))
                 return "running"
-            time.sleep(0.05)
-        except Exception as e:
-            log.warning("[match_click] Failed to set mouse position: {}".format(e))
-            return "running"
 
-        if debug_log:
-            actual = _mouse_ctrl.position
-            log.info("[match_click] {} | intended=({},{}) actual=({},{}) diff=({},{})".format(
-                runner._step_label(step), sx, sy, int(actual[0]), int(actual[1]),
-                int(actual[0] - sx), int(actual[1] - sy)))
+            if debug_log:
+                actual = _mouse_ctrl.position
+                log.info("[match_click] {} | intended=({},{}) actual=({},{}) diff=({},{})".format(
+                    runner._step_label(step), sx, sy, int(actual[0]), int(actual[1]),
+                    int(actual[0] - sx), int(actual[1] - sy)))
 
-        if hasattr(wincap, "focus_window"):
-            wincap.focus_window()
+            if hasattr(wincap, "focus_window"):
+                wincap.focus_window()
 
-        burst_start = time.time()
-        if not one_shot and click_interval_sec == 0:
-            burst_end = burst_start + 0.05
-            while time.time() < burst_end and runner.step_click_count < max_clicks:
+            burst_start = time.time()
+            if not one_shot and click_interval_sec == 0:
+                burst_end = burst_start + 0.05
+                while time.time() < burst_end and runner.step_click_count < max_clicks:
+                    _mouse_ctrl.press(Button.left)
+                    time.sleep(0.03)
+                    _mouse_ctrl.release(Button.left)
+                    runner.step_click_count += 1
+            else:
                 _mouse_ctrl.press(Button.left)
-                time.sleep(0.03)
+                time.sleep(0.1)
                 _mouse_ctrl.release(Button.left)
                 runner.step_click_count += 1
-        else:
-            _mouse_ctrl.press(Button.left)
-            time.sleep(0.1)
-            _mouse_ctrl.release(Button.left)
-            runner.step_click_count += 1
 
         if not one_shot:
             click_t = time.time()

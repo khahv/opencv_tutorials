@@ -93,4 +93,7 @@ MESSAGES = {
     "tt_hotkey": "Phím tắt: {hotkey}",
     "tt_eta_hm": "sau {h}h {m}p",
     "tt_eta_m": "sau {m}p",
+    "emulator_platform": "Giả lập",
+    "emulator_restart_note": "(cần khởi động lại)",
+    "toast_emulator_restart": "Đã đổi giả lập — khởi động lại bot để áp dụng.",
 }

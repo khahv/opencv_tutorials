@@ -11,6 +11,23 @@ window_height: 960
 show_preview: false   # hien thi cua so debug screenshot (true = bat, false = tat)
 auto_focus: false     # tự động chiếm quyền focus khi click (mặc định tắt)
 
+# Emulator selection: "pc" (default, LastZ PC client) or "ldplayer" (LDPlayer emulator).
+# - pc:       connects to the "LastZ" window; screenshots via win32 + mss.
+# - ldplayer: connects to the "LDPlayer" window; screenshots via ADB (adb exec-out screencap -p).
+emulator: pc
+
+# Path to LDPlayer's adb.exe (only used when emulator: ldplayer).
+# Defaults to C:\LDPlayer\LDPlayer9\adb.exe if not set.
+# ldplayer_adb_path: C:\LDPlayer\LDPlayer9\adb.exe
+
+# ADB device serial for LDPlayer (only used when emulator: ldplayer).
+# Leave commented-out (or remove) to enable auto-detection on startup:
+#   1. Checks 'adb devices' for an already-connected device.
+#   2. If none found, probes 127.0.0.1:5555, :5557, :5559 … (one port per LDPlayer instance).
+# Set manually only if auto-detect picks the wrong device (e.g. multiple emulators running).
+# Example: ldplayer_device_serial: 127.0.0.1:5555
+# ldplayer_device_serial:
+
 # Function list: key, cron, enabled, cooldown (seconds; for trigger-based functions, skip re-trigger within cooldown)
 # https://crontab.guru/ for cron syntax
 # Functions run in FIFO order: whoever triggers first runs first.
