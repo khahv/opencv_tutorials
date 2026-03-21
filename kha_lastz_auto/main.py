@@ -191,7 +191,16 @@ _win_w = general_settings_ov.get("window_width") or config.get("window_width")
 _win_h = general_settings_ov.get("window_height") or config.get("window_height")
 
 # LastZ executable path (startup auto-launch and connection_detector restart)
-LASTZ_EXE_PATH = config.get("lastz_exe_path") or r"C:\Users\hongkhavo\AppData\Local\Last Z\Last Z.exe"
+LASTZ_EXE_PATH = (
+    general_settings_ov.get("lastz_exe_path")
+    or config.get("lastz_exe_path")
+    or r"C:\Users\hongkhavo\AppData\Local\Last Z\Last Z.exe"
+)
+
+# Auto start LastZ when window not found (PC mode only)
+_auto_start_lastz = bool(
+    general_settings_ov.get("auto_start_lastz", config.get("auto_start_lastz", False))
+)
 
 # Emulator selection: "pc" (default, win32 window) or "ldplayer" (LDPlayer emulator, ADB screenshots)
 _emulator = (general_settings_ov.get("emulator") or config.get("emulator") or "pc").lower()
@@ -286,33 +295,38 @@ sys.stdout.flush()
 threading.Thread(target=_create_wincap, daemon=True).start()
 try:
     if not _wincap_done.wait(timeout=90):
-        log.error(
-            "Window '%s' not found or timeout (90s). Open the game or check config.",
+        log.warning(
+            "Window '%s' not found or timeout (90s) — UI will start in disconnected mode.",
             _GAME_WINDOW_NAME,
         )
-        sys.exit(1)
 except KeyboardInterrupt:
     log.info("Interrupted by user.")
     sys.exit(130)
-if not _wincap_result:
-    log.error(
-        "WindowCapture failed. Check that '%s' window exists or review config.",
+if _wincap_result:
+    wincap = _wincap_result[0]
+else:
+    log.warning(
+        "Window '%s' not found — starting UI in disconnected mode. "
+        "Launch the game (or change emulator in Settings) and the bot will auto-connect.",
         _GAME_WINDOW_NAME,
     )
-    sys.exit(1)
-wincap = _wincap_result[0]
+    wincap = None
 
 # Create screenshot provider based on emulator mode
-screenshot_provider = create_screenshot_provider(
-    _emulator,
-    wincap=wincap,
-    adb_path=_LDPLAYER_ADB_PATH,
-)
-log.info(
-    "[Screenshot] Provider: %s (emulator=%s)",
-    type(screenshot_provider).__name__,
-    _emulator,
-)
+if wincap is not None:
+    screenshot_provider = create_screenshot_provider(
+        _emulator,
+        wincap=wincap,
+        adb_path=_LDPLAYER_ADB_PATH,
+    )
+    log.info(
+        "[Screenshot] Provider: %s (emulator=%s)",
+        type(screenshot_provider).__name__,
+        _emulator,
+    )
+else:
+    screenshot_provider = None
+    log.info("[Screenshot] Provider deferred — window not connected yet.")
 
 # Set up ADB input for LDPlayer mode (click / swipe via ADB)
 if _emulator == "ldplayer":
@@ -333,40 +347,41 @@ if _emulator == "ldplayer":
 
 # Track LastZ process PID for connection_detector (kill/restart on disconnect)
 lastz_pid = {"pid": None}
-try:
-    import win32process
-    _, _pid = win32process.GetWindowThreadProcessId(wincap.hwnd)
-    lastz_pid["pid"] = _pid
-    log.info("LastZ process PID: %s", _pid)
-except Exception as e:
-    log.warning("Could not get LastZ process PID: %s", e)
+if wincap is not None:
+    try:
+        import win32process
+        _, _pid = win32process.GetWindowThreadProcessId(wincap.hwnd)
+        lastz_pid["pid"] = _pid
+        log.info("LastZ process PID: %s", _pid)
+    except Exception as e:
+        log.warning("Could not get LastZ process PID: %s", e)
 
 _ref_w = config.get("reference_width")   # template capture resolution → vision scale
 _ref_h = config.get("reference_height")
 _show_preview = config.get("show_preview", False)
 # _win_w, _win_h already set from general_settings_ov / config above
 
-# Apply initial auto_focus to wincap
-wincap.auto_focus = auto_focus
+if wincap is not None:
+    # Apply initial auto_focus to wincap
+    wincap.auto_focus = auto_focus
 
-# Resize window to desired size on startup.
-# focus_loop will keep enforcing this size throughout the session.
-if _win_w and _win_h:
-    wincap.resize_to_client(_win_w, _win_h)
-    log.info("Window resized to {}x{} (target)".format(wincap.w, wincap.h))
-else:
-    log.info("window_width/height not set — keeping current window size {}x{}".format(wincap.w, wincap.h))
+    # Resize window to desired size on startup.
+    # focus_loop will keep enforcing this size throughout the session.
+    if _win_w and _win_h:
+        wincap.resize_to_client(_win_w, _win_h)
+        log.info("Window resized to {}x{} (target)".format(wincap.w, wincap.h))
+    else:
+        log.info("window_width/height not set — keeping current window size {}x{}".format(wincap.w, wincap.h))
 
 def update_vision_scale():
-    current_w = wincap.w 
-    # Dùng luôn biến _ref_w đã load ở trên
+    if wincap is None:
+        return 1.0
+    current_w = wincap.w
     if _ref_w and current_w > 0:
         new_scale = current_w / _ref_w
         vision_module.set_global_scale(new_scale)
         return new_scale
     return 1.0
-
-# vision_module.set_global_scale(1.0)
 
 actual_scale = update_vision_scale()
 
@@ -641,14 +656,18 @@ _general_settings = {
     "window_height": _win_h,
     "language": _norm_lang(general_settings_ov.get("language", "en")),
     "emulator": _emulator,
+    "lastz_exe_path": LASTZ_EXE_PATH or "",
+    "auto_start_lastz": _auto_start_lastz,
 }
 
 
 def _on_general_setting_change(key, value):
-    global auto_focus, _win_w, _win_h
+    global auto_focus, _win_w, _win_h, _emulator, _GAME_WINDOW_NAME, wincap, screenshot_provider
+    global LASTZ_EXE_PATH, _auto_start_lastz
     if key == "auto_focus":
         auto_focus = value
-        wincap.auto_focus = value
+        if wincap is not None:
+            wincap.auto_focus = value
         _general_settings["auto_focus"] = value
     elif key == "resolution":
         # value is "1080x1920" or "540x960"
@@ -661,8 +680,9 @@ def _on_general_setting_change(key, value):
         _general_settings["window_width"] = _win_w
         _general_settings["window_height"] = _win_h
         config_manager.save(fn_configs, fn_enabled, general_settings=_general_settings)
-        wincap.resize_to_client(_win_w, _win_h)
-        update_vision_scale()
+        if wincap is not None:
+            wincap.resize_to_client(_win_w, _win_h)
+            update_vision_scale()
         log.info("[Settings] Resolution → {}x{}, saved to .env_config, window resized.".format(_win_w, _win_h))
         return
     elif key == "language":
@@ -671,9 +691,32 @@ def _on_general_setting_change(key, value):
         log.info("[Settings] UI language → {}".format(_general_settings["language"]))
         return
     elif key == "emulator":
-        _general_settings["emulator"] = value
+        _emulator = value.lower()
+        _GAME_WINDOW_NAME = "LDPlayer" if _emulator == "ldplayer" else "LastZ"
+        wincap = None
+        screenshot_provider = None
+        if _emulator == "pc":
+            adb_input.set_adb_input(None)
+            log.info("[Settings] Emulator → pc — ADB input cleared, waiting for LastZ window.")
+        else:
+            log.info("[Settings] Emulator → ldplayer — waiting for LDPlayer window.")
+        _general_settings["emulator"] = _emulator
         config_manager.save(fn_configs, fn_enabled, general_settings=_general_settings)
-        log.info("[Settings] Emulator → %s (restart required for change to take effect)", value)
+        _ui.notify_disconnected()
+        return
+    elif key == "lastz_exe_path":
+        LASTZ_EXE_PATH = value or ""
+        _general_settings["lastz_exe_path"] = LASTZ_EXE_PATH
+        config_manager.save(fn_configs, fn_enabled, general_settings=_general_settings)
+        if hasattr(connection_detector, "lastz_exe_path"):
+            connection_detector.lastz_exe_path = LASTZ_EXE_PATH
+        log.info("[Settings] LastZ exe path → %s", LASTZ_EXE_PATH)
+        return
+    elif key == "auto_start_lastz":
+        _auto_start_lastz = bool(value)
+        _general_settings["auto_start_lastz"] = _auto_start_lastz
+        config_manager.save(fn_configs, fn_enabled, general_settings=_general_settings)
+        log.info("[Settings] Auto start LastZ → %s", _auto_start_lastz)
         return
     _general_settings["auto_focus"] = auto_focus
     config_manager.save(fn_configs, fn_enabled, general_settings=_general_settings)
@@ -690,7 +733,8 @@ _ui = BotUI(fn_enabled, fn_configs, runner, next_run_at,
             enabled_callback=_on_enabled_change,
             quit_check=lambda: exit_requested,
             general_settings=_general_settings,
-            general_settings_callback=_on_general_setting_change)
+            general_settings_callback=_on_general_setting_change,
+            connection_status=lambda: wincap is not None and _is_game_window_valid())
 
 # ── Focus thread ──────────────────────────────────────────────────────────────
 running = True
@@ -711,6 +755,9 @@ def _safe_waitkey(ms=1):
 
 def focus_loop():
     while running and not exit_requested:
+        if wincap is None:
+            time.sleep(0.2)
+            continue
         if not bot_paused["paused"]:
             wincap.focus_window()
             if _win_w and _win_h and (wincap.w != _win_w or wincap.h != _win_h):
@@ -720,6 +767,75 @@ def focus_loop():
 
 focus_thread = threading.Thread(target=focus_loop, daemon=True)
 focus_thread.start()
+
+# ── Window auto-connect thread ─────────────────────────────────────────────────
+# When wincap is None (game window not found at startup), this thread retries every 3s.
+# As soon as the window appears, it initialises screenshot_provider, resizes, and updates scale.
+def _window_connect_loop():
+    global wincap, screenshot_provider
+    _last_autostart_attempt = 0.0
+    while running and not exit_requested:
+        time.sleep(3)
+        if not running or exit_requested:
+            break
+
+        # If wincap exists, verify the handle is still valid; clear if stale
+        if wincap is not None:
+            if not _is_game_window_valid():
+                log.warning("[WindowWatcher] Window handle became invalid — disconnecting.")
+                wincap = None
+                screenshot_provider = None
+                if _emulator == "ldplayer":
+                    adb_input.set_adb_input(None)
+            else:
+                continue
+
+        # Auto-start LastZ if enabled and not running (PC mode only)
+        if _emulator == "pc" and _auto_start_lastz and LASTZ_EXE_PATH:
+            _now = time.time()
+            if _now - _last_autostart_attempt >= 15.0:  # try at most every 15s
+                _last_autostart_attempt = _now
+                try:
+                    import win32gui as _wg
+                    if not _wg.FindWindow(None, _GAME_WINDOW_NAME) and os.path.isfile(LASTZ_EXE_PATH):
+                        log.info("[WindowWatcher] Auto-starting LastZ: %s", LASTZ_EXE_PATH)
+                        subprocess.Popen(LASTZ_EXE_PATH)
+                except Exception as _ae:
+                    log.warning("[WindowWatcher] Auto-start failed: %s", _ae)
+
+        try:
+            new_wincap = WindowCapture(_GAME_WINDOW_NAME)
+            new_wincap.auto_focus = auto_focus
+            if _win_w and _win_h:
+                new_wincap.resize_to_client(_win_w, _win_h)
+            new_sp = create_screenshot_provider(_emulator, wincap=new_wincap, adb_path=_LDPLAYER_ADB_PATH)
+            # Re-init ADB input for LDPlayer when previously cleared or not set up
+            if _emulator == "ldplayer" and adb_input.get_adb_input() is None:
+                try:
+                    from adb_input import AdbInput as _AdbInput
+                    _LDPLAYER_DEVICE_SERIAL = config.get("ldplayer_device_serial") or None
+                    _adb_inst = _AdbInput(adb_path=_LDPLAYER_ADB_PATH, device_serial=_LDPLAYER_DEVICE_SERIAL)
+                    _adb_inst.detect_and_connect()
+                    adb_input.set_adb_input(_adb_inst)
+                    log.info("[WindowWatcher] ADB input ready — device=%s",
+                             _adb_inst._device_serial or "default")
+                except Exception as _adb_e:
+                    log.warning("[WindowWatcher] ADB setup failed: %s", _adb_e)
+            try:
+                import win32process as _wp
+                _, _pid = _wp.GetWindowThreadProcessId(new_wincap.hwnd)
+                lastz_pid["pid"] = _pid
+            except Exception:
+                pass
+            wincap = new_wincap
+            screenshot_provider = new_sp
+            update_vision_scale()
+            log.info("[WindowWatcher] Connected to '%s'.", _GAME_WINDOW_NAME)
+        except Exception:
+            pass  # Window not available yet — retry silently
+
+_window_watcher_thread = threading.Thread(target=_window_connect_loop, daemon=True)
+_window_watcher_thread.start()
 
 # Initial focus with timeout so SetForegroundWindow cannot hang startup (Windows can block here)
 def _focus_window_with_timeout(timeout_sec=2.0):
@@ -735,8 +851,9 @@ def _focus_window_with_timeout(timeout_sec=2.0):
     t.start()
     if not done.wait(timeout=timeout_sec):
         log.warning("[Startup] focus_window did not finish in {}s, continuing anyway".format(timeout_sec))
-_focus_window_with_timeout(2.0)
-time.sleep(0.2)
+if wincap is not None:
+    _focus_window_with_timeout(2.0)
+    time.sleep(0.2)
 
 attack_detector = AttackDetector(
     warning_template_path="buttons_template/BeingAttackedWarning.png",
@@ -769,6 +886,8 @@ treasure_detector = TreasureDetector(
 # When game window is closed, detector can't run so _attacked/_treasure_visible never clear — we must return False so Zalo repeat stops.
 def _is_game_window_valid():
     try:
+        if wincap is None:
+            return False
         import win32gui as _wg
         return wincap.hwnd and _wg.IsWindow(wincap.hwnd)
     except Exception:
@@ -816,6 +935,9 @@ def _detector_loop():
             break
         # When Is Running (UI) = false, pause all detectors — no screenshot, no matchTemplate
         if bot_paused["paused"]:
+            continue
+        # Skip if window not connected yet
+        if wincap is None or screenshot_provider is None:
             continue
         _tick += 1
         try:
@@ -1002,6 +1124,10 @@ def _game_loop():
             _safe_waitkey(1)
             continue
         _last_capture_time = _now
+        # Skip screenshot loop if window not connected yet
+        if wincap is None or screenshot_provider is None:
+            _safe_waitkey(100)
+            continue
         try:
             update_vision_scale()
         except Exception as _e:

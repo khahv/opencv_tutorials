@@ -16,6 +16,10 @@ auto_focus: false     # tự động chiếm quyền focus khi click (mặc đ�
 # - ldplayer: connects to the "LDPlayer" window; screenshots via ADB (adb exec-out screencap -p).
 emulator: pc
 
+# Auto start LastZ (only when emulator: pc).
+# When true, the bot will auto-launch LastZ.exe if the process is not running.
+auto_start_lastz: false
+
 # Path to LDPlayer's adb.exe (only used when emulator: ldplayer).
 # Defaults to C:\LDPlayer\LDPlayer9\adb.exe if not set.
 # ldplayer_adb_path: C:\LDPlayer\LDPlayer9\adb.exe

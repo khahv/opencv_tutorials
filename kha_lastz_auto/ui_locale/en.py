@@ -17,6 +17,7 @@ MESSAGES = {
     "status_idle": "◼  Idle",
     "status_paused_all": "⏸  Paused — all functions suspended",
     "status_ready": "Ready",
+    "status_waiting_window": "⏳  Waiting for {window} window...",
     "status_init_ocr": "⚙  Initializing OCR engine...",
     "status_ocr_failed": "⚠  OpenOCR failed to load. Bot cannot run OCR functions.",
     "status_running": "▶  Running: {fn}",
@@ -94,6 +95,7 @@ MESSAGES = {
     "tt_eta_hm": "in {h}h {m}m",
     "tt_eta_m": "in {m}m",
     "emulator_platform": "Emulator",
-    "emulator_restart_note": "(restart required)",
-    "toast_emulator_restart": "Emulator changed — restart the bot for it to take effect.",
+    "lastz_exe_path": "LastZ exe path",
+    "auto_start_lastz": "Auto start LastZ",
+    "btn_browse": "Browse...",
 }

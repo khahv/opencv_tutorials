@@ -3,6 +3,7 @@ import os
 import threading
 import tkinter as tk
 import tkinter.ttk as ttk
+import tkinter.filedialog as filedialog
 from datetime import datetime
 
 from croniter import croniter
@@ -46,7 +47,8 @@ class BotUI:
                  enabled_callback=None,
                  quit_check=None,
                  general_settings: dict = None,
-                 general_settings_callback=None):
+                 general_settings_callback=None,
+                 connection_status=None):
         self._fn_enabled    = fn_enabled
         self._fn_configs    = [fc for fc in fn_configs if fc.get("name")]
         self._runner        = runner_ref
@@ -62,6 +64,11 @@ class BotUI:
         self._quit_check   = quit_check   # callable() -> bool, if True close UI (for Ctrl+C)
         self._general_settings = general_settings if general_settings is not None else {}
         self._general_settings_callback = general_settings_callback
+        self._connection_status = connection_status  # callable() -> bool; None = always connected
+        self._was_disconnected = False  # tracks last known disconnected state for transition detection
+        self._exe_path_var = None    # StringVar for LastZ exe path entry
+        self._auto_start_var = None  # BooleanVar for auto-start checkbox
+        self._pc_section_toggle = None  # callable() to show/hide PC-only settings rows
 
         self._vars       = {}   # fn_name → BooleanVar
         self._row_frames = {}   # fn_name → (row_frame, name_label, toggle_lbl)
@@ -155,7 +162,14 @@ class BotUI:
         dlg.attributes("-topmost", True)
         dlg.grab_set()
 
+        _emulator_at_open = self._general_settings.get("emulator", "pc")
+
         def _close():
+            # Apply emulator change only on close, to avoid mid-dialog reconnect side-effects
+            _new_emu = self._emulator_var.get()
+            if _new_emu != _emulator_at_open and self._general_settings_callback:
+                self._general_settings_callback("emulator", _new_emu)
+            self._pc_section_toggle = None
             dlg.grab_release()
             dlg.destroy()
             self._app_settings_win = None
@@ -205,8 +219,72 @@ class BotUI:
         om_emu.config(font=("Segoe UI", 10), bg=BG2, fg=FG, activebackground=GRAY2,
                       activeforeground=FG, highlightthickness=0, relief="flat")
         om_emu.pack(side="left", padx=(8, 0))
-        tk.Label(rf_emu, text=self._t("emulator_restart_note"),
-                 font=("Segoe UI", 8), bg=BG, fg=GRAY).pack(side="left", padx=(8, 0))
+
+        # ── PC-only settings (shown only when emulator = pc) ──────────────────
+        _cur_exe = self._general_settings.get("lastz_exe_path", "")
+        _cur_autostart = bool(self._general_settings.get("auto_start_lastz", False))
+        if self._exe_path_var is None:
+            self._exe_path_var = tk.StringVar(value=_cur_exe)
+        else:
+            self._exe_path_var.set(_cur_exe)
+        if self._auto_start_var is None:
+            self._auto_start_var = tk.BooleanVar(value=_cur_autostart)
+        else:
+            self._auto_start_var.set(_cur_autostart)
+
+        pc_frame = tk.Frame(dlg, bg=BG)
+
+        # LastZ exe path row
+        rf_exe = tk.Frame(pc_frame, bg=BG)
+        rf_exe.pack(fill="x", padx=0, pady=(0, 8))
+        tk.Label(rf_exe, text=self._t("lastz_exe_path"), font=("Segoe UI", 10),
+                 bg=BG, fg=FG, width=20, anchor="w").pack(side="left")
+        exe_entry = tk.Entry(rf_exe, textvariable=self._exe_path_var,
+                             font=("Segoe UI", 9), bg=BG2, fg=FG,
+                             insertbackground=FG, relief="flat", width=28)
+        exe_entry.pack(side="left", padx=(8, 4))
+
+        def _browse_exe():
+            path = filedialog.askopenfilename(
+                title="Select LastZ exe",
+                filetypes=[("Executable", "*.exe"), ("All files", "*.*")],
+                initialfile=self._exe_path_var.get() or "",
+            )
+            if path:
+                self._exe_path_var.set(path)
+                _on_exe_path_change()
+
+        def _on_exe_path_change(*_):
+            if self._general_settings_callback:
+                self._general_settings_callback("lastz_exe_path", self._exe_path_var.get())
+
+        exe_entry.bind("<FocusOut>", _on_exe_path_change)
+        exe_entry.bind("<Return>", _on_exe_path_change)
+        tk.Button(rf_exe, text=self._t("btn_browse"), command=_browse_exe,
+                  font=("Segoe UI", 9), bg=BG2, fg=ACCENT, relief="flat",
+                  padx=8, pady=2, cursor="hand2").pack(side="left")
+
+        # Auto-start checkbox row
+        rf_as = tk.Frame(pc_frame, bg=BG)
+        rf_as.pack(fill="x", padx=0, pady=(0, 4))
+        tk.Label(rf_as, bg=BG, width=20).pack(side="left")  # indent to align with label column
+        tk.Checkbutton(
+            rf_as, text=self._t("auto_start_lastz"), variable=self._auto_start_var,
+            command=lambda: (self._general_settings_callback("auto_start_lastz", self._auto_start_var.get())
+                             if self._general_settings_callback else None),
+            font=("Segoe UI", 10), bg=BG, activebackground=BG,
+            selectcolor=GRAY2, fg=FG, activeforeground=FG,
+            relief="flat", bd=0, highlightthickness=0,
+        ).pack(anchor="w")
+
+        def _refresh_pc_section():
+            if self._emulator_var.get() == "pc":
+                pc_frame.pack(fill="x", padx=16, pady=(0, 4))
+            else:
+                pc_frame.pack_forget()
+
+        self._pc_section_toggle = _refresh_pc_section
+        _refresh_pc_section()  # apply initial visibility
 
         rf_af = tk.Frame(dlg, bg=BG)
         rf_af.pack(fill="x", padx=16, pady=(0, 14))
@@ -481,17 +559,23 @@ class BotUI:
             _log.info("[UI] Is Running → ON (resumed)")
             self._running_cb.config(fg=GREEN, activeforeground=GREEN)
             self._status_lbl.config(text=self._t("status_ready"), fg=FG)
-            # Close app-settings modal if still open (e.g. after OCR auto-resume).
-            _asw = self._app_settings_win
-            if _asw is not None and _asw.winfo_exists():
-                try:
-                    _asw.grab_release()
-                    _asw.destroy()
-                except tk.TclError:
-                    pass
-                self._app_settings_win = None
         self._update_badge_states()
         self._update_app_settings_button_state()
+
+    def notify_disconnected(self):
+        """Called (thread-safe) when the game window is lost or emulator changes.
+        Forces Is Running = OFF and disables the toggle until connection is restored."""
+        if self._root:
+            self._root.after(0, self._apply_disconnected_state)
+
+    def _apply_disconnected_state(self):
+        """Runs on Tkinter main thread: turns off Is Running and disables the toggle."""
+        if self._running_var and self._running_var.get():
+            self._running_var.set(False)
+            self._on_running_toggle()
+        if self._running_cb:
+            self._running_cb.config(state="disabled", cursor="arrow")
+        self._was_disconnected = True
 
     def _update_app_settings_button_state(self) -> None:
         """Enable ⚙ Settings only when Is Running is off (same rule as schedule/gear)."""
@@ -513,9 +597,10 @@ class BotUI:
             self._general_settings_callback("resolution", value)
 
     def _on_emulator_change(self, value):
-        if self._general_settings_callback and value:
-            self._general_settings_callback("emulator", value)
-        self._show_toast(self._t("toast_emulator_restart"))
+        # Do NOT fire the callback here — emulator change is deferred to when settings dialog closes.
+        # Only update the PC-settings section visibility immediately.
+        if self._pc_section_toggle:
+            self._pc_section_toggle()
 
     def _update_badge_states(self):
         """Grey out / restore all key badges, schedule and gear buttons based on Is Running state."""
@@ -1416,6 +1501,29 @@ class BotUI:
         if self._rebinding:
             self._root.after(500, self._tick)
             return
+
+        # ── Window connection check ───────────────────────────────────────────
+        if self._connection_status is not None:
+            connected = self._connection_status()
+            if not connected:
+                self._running_cb.config(state="disabled", cursor="arrow")
+                emulator = self._general_settings.get("emulator", "pc")
+                window_name = "LDPlayer" if emulator == "ldplayer" else "LastZ"
+                self._status_lbl.config(
+                    text=self._t("status_waiting_window").format(window=window_name),
+                    fg=YELLOW,
+                )
+                self._was_disconnected = True
+                self._root.after(500, self._tick)
+                return
+            elif self._was_disconnected:
+                # Window just became available: re-enable toggle if OCR already done
+                self._was_disconnected = False
+                if self._ocr_ready:
+                    self._running_cb.config(state="normal", cursor="hand2", fg=GREEN, activeforeground=GREEN)
+                    self._running_var.set(True)
+                    self._on_running_toggle()
+                    _log.info("[UI] Window connected. Bot resumed.")
 
         # ── OpenOCR dynamic state check ───────────────────────────────────────
         if not self._ocr_ready:

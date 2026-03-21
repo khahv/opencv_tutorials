@@ -17,6 +17,7 @@ MESSAGES = {
     "status_idle": "◼  Rảnh",
     "status_paused_all": "⏸  Tạm dừng — đã dừng mọi chức năng",
     "status_ready": "Sẵn sàng",
+    "status_waiting_window": "⏳  Đang chờ cửa sổ {window}...",
     "status_init_ocr": "⚙  Đang khởi tạo OCR...",
     "status_ocr_failed": "⚠  OpenOCR không tải được. Bot không chạy được chức năng OCR.",
     "status_running": "▶  Đang chạy: {fn}",
@@ -94,6 +95,7 @@ MESSAGES = {
     "tt_eta_hm": "sau {h}h {m}p",
     "tt_eta_m": "sau {m}p",
     "emulator_platform": "Giả lập",
-    "emulator_restart_note": "(cần khởi động lại)",
-    "toast_emulator_restart": "Đã đổi giả lập — khởi động lại bot để áp dụng.",
+    "lastz_exe_path": "Đường dẫn LastZ exe",
+    "auto_start_lastz": "Tự động khởi động LastZ",
+    "btn_browse": "Chọn...",
 }
