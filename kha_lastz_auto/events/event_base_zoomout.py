@@ -7,7 +7,7 @@ Delegates to ``zoom_helpers.do_base_zoomout`` which scrolls out to the base
 view and confirms by looking for a template (e.g. the World button).
 
 Advances the step on success; logs and retries (without scrolling) when the
-World button is not yet visible.
+World button is not yet visible. Gives up and advances (True) after timeout_sec.
 
 Required YAML keys
 ------------------
@@ -15,8 +15,11 @@ template : str
     Template that confirms we are on the base/world screen.
 world_button : str
     Template of the button to click to enter the world view.
+timeout_sec : float
+    Give up retrying after this many seconds (default 30).
 """
 
+import time
 import logging
 
 from zoom_helpers import do_base_zoomout
@@ -28,11 +31,18 @@ def run(step: dict, screenshot, wincap, runner) -> str:
     """Execute one tick of the ``base_zoomout`` event."""
     template     = step.get("template")
     world_button = step.get("world_button")
+    timeout_sec  = float(step.get("timeout_sec", 30))
 
     if not template or not world_button:
         log.error("[base_zoomout] requires 'template' and 'world_button'. Got template=%s, world_button=%s",
                   template, world_button)
         runner._advance_step(False)
+        return "running"
+
+    elapsed = time.time() - runner.step_start_time
+    if elapsed >= timeout_sec:
+        log.warning("[base_zoomout] timeout ({:.0f}s), giving up and advancing".format(timeout_sec))
+        runner._advance_step(True)
         return "running"
 
     ok = do_base_zoomout(

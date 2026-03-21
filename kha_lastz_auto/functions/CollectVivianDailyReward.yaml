@@ -29,6 +29,13 @@ steps:
   - event_type: sleep
     duration_sec: 1
 
+  - event_type: click_position
+    x: 0.67
+    y: 0.09  
+
+  - event_type: sleep
+    duration_sec: 1
+    
   - event_type: match_click
     template: buttons_template/VivianClaimAllDailyReward.png
     threshold: 0.6

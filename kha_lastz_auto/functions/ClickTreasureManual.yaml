@@ -2,14 +2,14 @@
 description: "Click lien tuc vao Treasure Helicopter khi match"
 steps:
   - event_type: match_storm_click
-    template: buttons_template/TreasureTest.png
+    template: buttons_template/Treasure3.png
     threshold: 0.6
     run_always: true
-    timeout_sec: 60      # wait up to 60s for template to appear
-    storm_sec: 300       # click for up to 300s once found
-    max_clicks: 3000
+    timeout_sec: 300     # click for up to 300s (step ends normally when time is up)
     offset_change_time: 5
-    offset_x: 0.03       # ±3% of window width (~32px on 1080px window)
+    check_template_after: 100      # start checking template presence after 10s
+    check_template_frequence: 10  # then re-check every 10s
+    offset_x: 0.03       # ±3%10  of window width (~32px on 1080px window)
     offset_y: 0.03       # ±3% of window height (~58px on 1920px window)
     guard_outside: true  # block user clicks outside game window
     close_ui_check: true           # mặc định true, tắt thì set false
@@ -23,3 +23,26 @@ steps:
       offset_x: 0.05
       offset_y: 0.05
       every: 20
+
+  - event_type: close_ui
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    back_button: buttons_template/BackButton.png
+    back_button_threshold: 0.8
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
+    threshold: 0.6
+    run_always: true
+
+  - event_type: base_zoomout
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    back_button: buttons_template/BackButton.png
+    back_button_threshold: 0.8
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
+    threshold: 0.6
+    scroll_times: 5
+    scroll_interval_sec: 0.1

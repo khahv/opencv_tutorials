@@ -933,7 +933,11 @@ class FunctionRunner:
                     log.info("[Runner] {} [{}]: (no text read)".format(self._step_label(step), label))
                 if debug_path:
                     log.info("[Runner] ocr_log: ROI saved to {}".format(debug_path))
-                if exit_on_true and text and str(text).strip():
+                _on_success_goto = step.get("on_success_goto")
+                if text and str(text).strip() and _on_success_goto is not None:
+                    log.info("[Runner] {} → on_success_goto {}".format(self._step_label(step), _on_success_goto))
+                    self._goto_step(self._resolve_goto(_on_success_goto))
+                elif exit_on_true and text and str(text).strip():
                     self._advance_step(True, step=step)
                 else:
                     self._advance_step(True)
@@ -967,7 +971,11 @@ class FunctionRunner:
                         log.info("[Runner] {} [{}]: {}".format(self._step_label(step), rname, text))
                     else:
                         log.info("[Runner] {} [{}]: (no text read)".format(self._step_label(step), rname))
-                if exit_on_true and any_text:
+                _on_success_goto = step.get("on_success_goto")
+                if any_text and _on_success_goto is not None:
+                    log.info("[Runner] {} → on_success_goto {}".format(self._step_label(step), _on_success_goto))
+                    self._goto_step(self._resolve_goto(_on_success_goto))
+                elif exit_on_true and any_text:
                     self._advance_step(True, step=step)
                 else:
                     self._advance_step(True)

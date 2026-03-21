@@ -2,10 +2,12 @@ import logging
 import os
 import threading
 import tkinter as tk
+import tkinter.ttk as ttk
 from datetime import datetime
 
 from croniter import croniter
 from fn_settings_schema import SCHEMA as _FN_SETTINGS_SCHEMA, COMMON_FIELDS as _FN_COMMON_FIELDS
+from ui_locale import get_messages, normalize_language_code
 
 import ocr_openocr
 _log = logging.getLogger("kha_lastz")
@@ -20,6 +22,8 @@ YELLOW = "#f9e2af"
 RED    = "#f38ba8"
 GRAY   = "#6c7086"
 GRAY2  = "#45475a"
+# Secondary line under each function name (on BG2); brighter than GRAY for contrast
+FG_MUTED = "#a6adc8"
 
 
 class BotUI:
@@ -60,7 +64,8 @@ class BotUI:
         self._general_settings_callback = general_settings_callback
 
         self._vars       = {}   # fn_name → BooleanVar
-        self._row_frames = {}   # fn_name → (row_frame, name_label)
+        self._row_frames = {}   # fn_name → (row_frame, name_label, toggle_lbl)
+        self._meta_lbls  = {}   # fn_name → subtitle meta tk.Label (hotkey/cron/trigger)
         self._badge_lbls = {}   # fn_name → badge tk.Label
         self._sched_lbls = {}   # fn_name → schedule "S" tk.Label
         self._gear_lbls  = {}   # fn_name → gear tk.Label (or None if no settings)
@@ -76,8 +81,213 @@ class BotUI:
         self._kv_objs     = {}
         self._play_btns   = {}
         self._play_icons  = {}
-        self._play_lbls   = {}
         self._focus_var   = None
+        # Widget refs for language refresh (set in _build)
+        self._lbl_app_header = None
+        self._focus_cb       = None  # only inside app-settings dialog (if open)
+        self._lbl_resolution = None
+        self._lbl_language   = None
+        self._btn_app_settings = None
+        self._app_settings_win = None  # Toplevel or None
+        self._lbl_functions  = None
+        self._lbl_rebind_hint = None
+        self._btn_enable_all  = None
+        self._btn_disable_all = None
+
+    # Map YAML trigger id → ui_locale message key
+    _TRIGGER_I18N = {
+        "logged_out":        "trigger_logged_out",
+        "attacked":          "trigger_attacked",
+        "alliance_attacked": "trigger_alliance_attacked",
+        "treasure_detected": "trigger_treasure",
+    }
+
+    def _current_lang(self) -> str:
+        return normalize_language_code(self._general_settings.get("language", "en"))
+
+    def _t(self, msg_key: str, **kwargs) -> str:
+        """Translate *msg_key* using the current UI language."""
+        msgs = get_messages(self._current_lang())
+        s = msgs.get(msg_key, msg_key)
+        if kwargs:
+            try:
+                return s.format(**kwargs)
+            except (KeyError, ValueError):
+                return s
+        return s
+
+    def _lang_menu_labels(self):
+        """Fixed menu captions: English name / Vietnamese name (not swapped by UI lang)."""
+        en = get_messages("en")
+        vi = get_messages("vi")
+        return en["lang_en"], vi["lang_vi"]
+
+    def _lang_code_from_display(self, display_label: str) -> str:
+        en_l, vi_l = self._lang_menu_labels()
+        return "vi" if display_label == vi_l else "en"
+
+    def _apply_language_change(self, *_args) -> None:
+        """Persist UI language from ``self._lang_var`` and refresh visible strings."""
+        code = self._lang_code_from_display(self._lang_var.get())
+        self._general_settings["language"] = code
+        if self._general_settings_callback:
+            self._general_settings_callback("language", code)
+        self._refresh_static_ui_texts()
+        if self._status_lbl and self._bot_paused.get("paused") and not self._rebinding:
+            self._status_lbl.config(text=self._t("status_paused_all"), fg=YELLOW)
+
+    def _show_app_settings(self) -> None:
+        """Modal window: resolution, language, auto-focus (same behavior as former header)."""
+        if self._running_var is not None and self._running_var.get():
+            self._show_toast(self._t("toast_pause_for_settings"))
+            return
+        if self._app_settings_win is not None and self._app_settings_win.winfo_exists():
+            self._app_settings_win.lift()
+            self._app_settings_win.focus_force()
+            return
+
+        dlg = tk.Toplevel(self._root)
+        self._app_settings_win = dlg
+        dlg.title(self._t("dlg_app_settings_title"))
+        dlg.configure(bg=BG)
+        dlg.resizable(False, False)
+        dlg.transient(self._root)
+        dlg.attributes("-topmost", True)
+        dlg.grab_set()
+
+        def _close():
+            dlg.grab_release()
+            dlg.destroy()
+            self._app_settings_win = None
+
+        dlg.protocol("WM_DELETE_WINDOW", _close)
+
+        tk.Label(dlg, text=self._t("dlg_app_settings_heading"),
+                 font=("Segoe UI", 12, "bold"), bg=BG, fg=ACCENT
+                 ).pack(fill="x", padx=16, pady=(14, 8))
+        tk.Frame(dlg, bg=GRAY2, height=1).pack(fill="x", padx=16, pady=(0, 10))
+
+        RESOLUTIONS = ["1080x1920", "540x960"]
+        ww = self._general_settings.get("window_width")
+        wh = self._general_settings.get("window_height")
+        self._resolution_var.set(
+            "1080x1920" if (ww == 1080 and wh == 1920) else "540x960")
+        self._focus_var.set(bool(self._general_settings.get("auto_focus", False)))
+        en_lbl, vi_lbl = self._lang_menu_labels()
+        self._lang_var.set(vi_lbl if self._current_lang() == "vi" else en_lbl)
+
+        def _setting_row(label_key: str):
+            fr = tk.Frame(dlg, bg=BG)
+            fr.pack(fill="x", padx=16, pady=(0, 12))
+            tk.Label(fr, text=self._t(label_key), font=("Segoe UI", 10),
+                     bg=BG, fg=FG, width=20, anchor="w").pack(side="left")
+            return fr
+
+        rf_res = _setting_row("resolution")
+        om_res = tk.OptionMenu(rf_res, self._resolution_var, *RESOLUTIONS,
+                               command=self._on_resolution_change)
+        om_res.config(font=("Segoe UI", 10), bg=BG2, fg=FG, activebackground=GRAY2,
+                      activeforeground=FG, highlightthickness=0, relief="flat")
+        om_res.pack(side="left", padx=(8, 0))
+
+        rf_lang = _setting_row("language")
+        om_lang = tk.OptionMenu(rf_lang, self._lang_var, en_lbl, vi_lbl,
+                                command=lambda _v: self._apply_language_change())
+        om_lang.config(font=("Segoe UI", 10), bg=BG2, fg=FG, activebackground=GRAY2,
+                       activeforeground=FG, highlightthickness=0, relief="flat")
+        om_lang.pack(side="left", padx=(8, 0))
+
+        rf_af = tk.Frame(dlg, bg=BG)
+        rf_af.pack(fill="x", padx=16, pady=(0, 14))
+        tk.Checkbutton(
+            rf_af, text=self._t("auto_focus_window"), variable=self._focus_var,
+            command=self._on_focus_toggle,
+            font=("Segoe UI", 10), bg=BG, activebackground=BG,
+            selectcolor=GRAY2, fg=FG, activeforeground=FG,
+            relief="flat", bd=0, highlightthickness=0,
+        ).pack(anchor="w")
+
+        btn_cfg = dict(font=("Segoe UI", 9, "bold"), relief="flat",
+                       padx=16, pady=6, cursor="hand2")
+        tk.Button(dlg, text=self._t("btn_close"), command=_close,
+                  bg=GRAY2, fg=FG, **btn_cfg).pack(pady=(4, 14))
+
+        dlg.update_idletasks()
+        w, h = dlg.winfo_width(), dlg.winfo_height()
+        cx = self._root.winfo_x() + self._root.winfo_width()  // 2
+        cy = self._root.winfo_y() + self._root.winfo_height() // 2
+        dlg.geometry("+{}+{}".format(cx - w // 2, cy - h // 2))
+
+    def _format_row_meta(self, fc: dict) -> str:
+        """One-line subtitle under each function name (locale-aware)."""
+        trigger = fc.get("trigger", "")
+        cron    = fc.get("cron", "")
+        key     = fc.get("key", "")
+        if trigger:
+            return self._t("meta_trigger", trigger=trigger)
+        if cron:
+            return self._t("meta_cron", cron=cron)
+        if key:
+            return self._t("meta_hotkey")
+        return self._t("meta_manual")
+
+    def _refresh_all_row_meta(self) -> None:
+        for fc in self._fn_configs:
+            name = fc.get("name")
+            if not name or name not in self._meta_lbls:
+                continue
+            self._meta_lbls[name].config(text=self._format_row_meta(fc))
+
+    def _refresh_static_ui_texts(self) -> None:
+        """Update all main-window strings after a language change."""
+        if not self._root:
+            return
+        self._root.title(self._t("app_title"))
+        if self._lbl_app_header is not None:
+            self._lbl_app_header.config(text=self._t("app_title"))
+        if self._running_cb is not None:
+            self._running_cb.config(text=self._t("is_running"))
+        if self._focus_cb is not None:
+            self._focus_cb.config(text=self._t("auto_focus_window"))
+        if self._lbl_resolution is not None:
+            self._lbl_resolution.config(text=self._t("resolution"))
+        if self._lbl_language is not None:
+            self._lbl_language.config(text=self._t("language"))
+        if self._btn_app_settings is not None:
+            self._btn_app_settings.config(text=self._t("btn_app_settings"))
+            self._update_app_settings_button_state()
+        if self._lbl_functions is not None:
+            self._lbl_functions.config(text=self._t("functions_header"))
+        if self._lbl_rebind_hint is not None:
+            self._lbl_rebind_hint.config(text=self._t("rebind_hint"))
+        if self._btn_enable_all is not None:
+            self._btn_enable_all.config(text=self._t("enable_all"))
+        if self._btn_disable_all is not None:
+            self._btn_disable_all.config(text=self._t("disable_all"))
+        self._refresh_all_row_meta()
+
+    def _preset_definitions(self):
+        """(message_key, cron_expr) for schedule presets; first entry is empty placeholder."""
+        return [
+            ("preset_select",           ""),
+            ("preset_every_minute",     "* * * * *"),
+            ("preset_every_5_min",      "*/5 * * * *"),
+            ("preset_every_10_min",     "*/10 * * * *"),
+            ("preset_every_15_min",     "*/15 * * * *"),
+            ("preset_every_30_min",     "*/30 * * * *"),
+            ("preset_every_hour",       "0 * * * *"),
+            ("preset_every_2h",         "0 */2 * * *"),
+            ("preset_every_4h",         "0 */4 * * *"),
+            ("preset_every_6h",         "0 */6 * * *"),
+            ("preset_every_12h",        "0 */12 * * *"),
+            ("preset_daily_midnight",   "0 0 * * *"),
+            ("preset_daily_8am",        "0 8 * * *"),
+            ("preset_daily_noon",       "0 12 * * *"),
+            ("preset_weekly_mon_8",     "0 8 * * 1"),
+        ]
+
+    def _preset_pairs(self):
+        return [(self._t(k), c) for k, c in self._preset_definitions()]
 
     def start(self):
         """Start UI in a background thread (legacy). Prefer run_main() on main thread to avoid hangs."""
@@ -91,7 +301,7 @@ class BotUI:
 
     def _run(self):
         self._root = tk.Tk()
-        self._root.title("KhaLastZ Bot")
+        self._root.title(self._t("app_title"))
         self._root.configure(bg=BG)
         self._root.resizable(False, False)
         self._root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -108,13 +318,15 @@ class BotUI:
         # Header
         hf = tk.Frame(r, bg=BG3, padx=16, pady=12)
         hf.pack(fill="x")
-        tk.Label(hf, text="KhaLastZ Bot", font=("Segoe UI", 14, "bold"),
-                 bg=BG3, fg=ACCENT).pack(side="left")
+        self._lbl_app_header = tk.Label(hf, text=self._t("app_title"),
+                                        font=("Segoe UI", 14, "bold"),
+                                        bg=BG3, fg=ACCENT)
+        self._lbl_app_header.pack(side="left")
 
         # Is Running toggle — starts OFF, enabled only after EasyOCR preloads
         self._running_var = tk.BooleanVar(value=False)
         self._running_cb  = tk.Checkbutton(
-            hf, text="Is Running",
+            hf, text=self._t("is_running"),
             variable=self._running_var,
             command=self._on_running_toggle,
             font=("Segoe UI", 10, "bold"),
@@ -125,38 +337,32 @@ class BotUI:
             relief="flat", bd=0, highlightthickness=0)
         self._running_cb.pack(side="right")
 
-        # Auto Focus toggle
+        # Resolution / language / auto-focus live in the app-settings dialog (⚙ button).
         self._focus_var = tk.BooleanVar(value=self._general_settings.get("auto_focus", False))
-        tk.Checkbutton(
-            hf, text="Auto Focus Window",
-            variable=self._focus_var,
-            command=self._on_focus_toggle,
-            font=("Segoe UI", 10),
-            bg=BG3, activebackground=BG3,
-            fg=FG, activeforeground=FG,
-            selectcolor=GRAY2, cursor="arrow",
-            relief="flat", bd=0, highlightthickness=0).pack(side="right", padx=(0, 20))
+        _ww = self._general_settings.get("window_width")
+        _wh = self._general_settings.get("window_height")
+        _cur_res = "1080x1920" if (_ww == 1080 and _wh == 1920) else "540x960"
+        self._resolution_var = tk.StringVar(value=_cur_res)
+        _en0, _vi0 = self._lang_menu_labels()
+        self._lang_var = tk.StringVar(value=_vi0 if self._current_lang() == "vi" else _en0)
 
-        # Resolution dropdown (saved to .env_config, hot-reloads window size)
-        RESOLUTIONS = ["1080x1920", "540x960"]
-        ww = self._general_settings.get("window_width")
-        wh = self._general_settings.get("window_height")
-        current = "1080x1920" if (ww == 1080 and wh == 1920) else "540x960"
-        self._resolution_var = tk.StringVar(value=current)
-        tk.Label(hf, text="Resolution", font=("Segoe UI", 10), bg=BG3, fg=FG).pack(side="right", padx=(0, 6))
-        om = tk.OptionMenu(hf, self._resolution_var, *RESOLUTIONS, command=self._on_resolution_change)
-        om.config(font=("Segoe UI", 10), bg=BG2, fg=FG, activebackground=BG2, activeforeground=FG,
-                  highlightthickness=0, relief="flat")
-        om.pack(side="right", padx=(0, 16))
+        self._btn_app_settings = tk.Button(
+            hf, text=self._t("btn_app_settings"),
+            command=self._show_app_settings,
+            font=("Segoe UI", 10, "bold"), bg=GRAY2, fg=ACCENT,
+            relief="flat", padx=12, pady=4, cursor="hand2",
+            activebackground=GRAY2, activeforeground=ACCENT)
+        self._btn_app_settings.pack(side="right", padx=(0, 16))
+        self._update_app_settings_button_state()
 
         # Status bar
         sf = tk.Frame(r, bg=BG2, padx=16, pady=8)
         sf.pack(fill="x", pady=(1, 0))
 
-        init_text = "◼  Idle"
+        init_text = self._t("status_idle")
         init_fg   = FG
         if not ocr_openocr.OPENOCR_OK:
-            init_text = "⚙  Initializing OCR engine..."
+            init_text = self._t("status_init_ocr")
             init_fg   = ACCENT
 
         self._status_lbl = tk.Label(sf, text=init_text,
@@ -166,10 +372,25 @@ class BotUI:
         # Section header
         lf = tk.Frame(r, bg=BG, padx=16)
         lf.pack(fill="x", pady=(10, 4))
-        tk.Label(lf, text="FUNCTIONS", font=("Segoe UI", 8, "bold"),
-                 bg=BG, fg=GRAY).pack(side="left")
-        tk.Label(lf, text="click [key] to rebind  (pause first)",
-                 font=("Segoe UI", 8), bg=BG, fg=GRAY).pack(side="right")
+        self._lbl_functions = tk.Label(lf, text=self._t("functions_header"),
+                                       font=("Segoe UI", 8, "bold"),
+                                       bg=BG, fg=GRAY)
+        self._lbl_functions.pack(side="left")
+        self._lbl_rebind_hint = tk.Label(lf, text=self._t("rebind_hint"),
+                                         font=("Segoe UI", 8), bg=BG, fg=GRAY)
+        self._lbl_rebind_hint.pack(side="right")
+        _btn_cfg = dict(font=("Segoe UI", 8, "bold"), relief="flat",
+                        padx=8, pady=1, cursor="hand2")
+        self._btn_disable_all = tk.Button(lf, text=self._t("disable_all"),
+                                          bg=GRAY2, fg=GRAY,
+                                          command=lambda: self._toggle_all_enabled(False),
+                                          **_btn_cfg)
+        self._btn_disable_all.pack(side="right", padx=(0, 4))
+        self._btn_enable_all = tk.Button(lf, text=self._t("enable_all"),
+                                         bg=GRAY2, fg=GREEN,
+                                         command=lambda: self._toggle_all_enabled(True),
+                                         **_btn_cfg)
+        self._btn_enable_all.pack(side="right", padx=(0, 4))
 
         # Function list: fixed height + scroll (theo tài liệu Tk: scrollregion + yscrollcommand + command)
         LIST_HEIGHT = 620
@@ -210,7 +431,17 @@ class BotUI:
         def _on_mousewheel(e):
             canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
 
-        canvas.bind("<MouseWheel>", _on_mousewheel)
+        # Bind globally while the mouse is anywhere inside list_container.
+        # Using the outermost container avoids spurious Leave events that fire
+        # when the mouse moves between inner child widgets (buttons, labels, etc.).
+        def _on_list_enter(e):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        def _on_list_leave(e):
+            canvas.unbind_all("<MouseWheel>")
+
+        list_container.bind("<Enter>", _on_list_enter)
+        list_container.bind("<Leave>", _on_list_leave)
 
         scrollbar.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
@@ -232,12 +463,32 @@ class BotUI:
             if cancelled:
                 _log.info("[UI] Cancelled running function: {}".format(cancelled))
             self._running_cb.config(fg=RED, activeforeground=RED)
-            self._status_lbl.config(text="⏸  Paused — all functions suspended", fg=YELLOW)
+            self._status_lbl.config(text=self._t("status_paused_all"), fg=YELLOW)
         else:
             _log.info("[UI] Is Running → ON (resumed)")
             self._running_cb.config(fg=GREEN, activeforeground=GREEN)
-            self._status_lbl.config(text="Ready", fg=FG)
+            self._status_lbl.config(text=self._t("status_ready"), fg=FG)
+            # Close app-settings modal if still open (e.g. after OCR auto-resume).
+            _asw = self._app_settings_win
+            if _asw is not None and _asw.winfo_exists():
+                try:
+                    _asw.grab_release()
+                    _asw.destroy()
+                except tk.TclError:
+                    pass
+                self._app_settings_win = None
         self._update_badge_states()
+        self._update_app_settings_button_state()
+
+    def _update_app_settings_button_state(self) -> None:
+        """Enable ⚙ Settings only when Is Running is off (same rule as schedule/gear)."""
+        btn = self._btn_app_settings
+        if btn is None or self._running_var is None:
+            return
+        if self._running_var.get():
+            btn.config(state="disabled", fg=GRAY, cursor="arrow", takefocus=0)
+        else:
+            btn.config(state="normal", fg=ACCENT, cursor="hand2")
 
     def _on_focus_toggle(self):
         if self._general_settings_callback:
@@ -293,17 +544,7 @@ class BotUI:
     def _build_row(self, parent, fc):
         name    = fc.get("name")
         key     = fc.get("key", "")
-        cron    = fc.get("cron", "")
-        trigger = fc.get("trigger", "")
-
-        if trigger:
-            meta = "trigger: {}".format(trigger)
-        elif cron:
-            meta = "cron: {}".format(cron)
-        elif key:
-            meta = "hotkey"
-        else:
-            meta = "manual"
+        meta    = self._format_row_meta(fc)
 
         enabled = self._fn_enabled.get(name, True)
         var = tk.BooleanVar(value=enabled)
@@ -341,8 +582,10 @@ class BotUI:
                             font=("Segoe UI", 10, "bold"),
                             bg=BG2, fg=FG if enabled else GRAY, anchor="w")
         name_lbl.pack(fill="x")
-        tk.Label(inner, text=meta, font=("Segoe UI", 8),
-                 bg=BG2, fg=GRAY, anchor="w").pack(fill="x")
+        _meta_lbl = tk.Label(inner, text=meta, font=("Segoe UI", 8),
+                             bg=BG2, fg=FG_MUTED, anchor="w")
+        _meta_lbl.pack(fill="x")
+        self._meta_lbls[name] = _meta_lbl
 
         # Key badge — greyed out when Is Running; clickable only when paused
         badge_text = " {} ".format(key.upper()) if key else " + "
@@ -387,7 +630,7 @@ class BotUI:
         play_lbl.pack(side="right", padx=(0, 4))
         play_lbl.bind("<Button-1>", lambda e, n=name: self._run_fn(n))
 
-        self._row_frames[name] = (row, name_lbl)
+        self._row_frames[name] = (row, name_lbl, toggle_lbl)
         self._badge_lbls[name] = badge_lbl
         self._sched_lbls[name] = sched_lbl
         self._gear_lbls[name]  = gear_lbl
@@ -399,28 +642,9 @@ class BotUI:
 
     # ── Schedule dialog ───────────────────────────────────────────────────────
 
-    # Preset label → cron string
-    _PRESETS = [
-        ("— select preset —",  ""),
-        ("Every minute",        "* * * * *"),
-        ("Every 5 minutes",     "*/5 * * * *"),
-        ("Every 10 minutes",    "*/10 * * * *"),
-        ("Every 15 minutes",    "*/15 * * * *"),
-        ("Every 30 minutes",    "*/30 * * * *"),
-        ("Every hour",          "0 * * * *"),
-        ("Every 2 hours",       "0 */2 * * *"),
-        ("Every 4 hours",       "0 */4 * * *"),
-        ("Every 6 hours",       "0 */6 * * *"),
-        ("Every 12 hours",      "0 */12 * * *"),
-        ("Daily at midnight",   "0 0 * * *"),
-        ("Daily at 8 AM",       "0 8 * * *"),
-        ("Daily at noon",       "0 12 * * *"),
-        ("Weekly (Mon 8 AM)",   "0 8 * * 1"),
-    ]
-
     def _show_schedule(self, name, sched_lbl):
         if not self._bot_paused["paused"]:
-            self._show_toast("Bot is running — pause it first (uncheck Is Running) to edit schedules.")
+            self._show_toast(self._t("toast_pause_for_schedule"))
             return
 
         fc = next((f for f in self._fn_configs if f.get("name") == name), None)
@@ -435,14 +659,14 @@ class BotUI:
         parts = parts[:5]
 
         dlg = tk.Toplevel(self._root)
-        dlg.title("Schedule — {}".format(name))
+        dlg.title(self._t("dlg_schedule_title", name=name))
         dlg.configure(bg=BG)
         dlg.resizable(False, False)
         dlg.attributes("-topmost", True)
         dlg.grab_set()
 
         # ── Title ──────────────────────────────────────────────────────────────
-        tk.Label(dlg, text="Schedule  —  {}".format(name),
+        tk.Label(dlg, text=self._t("dlg_schedule_heading", name=name),
                  font=("Segoe UI", 11, "bold"), bg=BG, fg=ACCENT
                  ).pack(fill="x", padx=14, pady=(10, 6))
 
@@ -452,10 +676,11 @@ class BotUI:
         # ── Preset dropdown ────────────────────────────────────────────────────
         preset_frame = tk.Frame(dlg, bg=BG)
         preset_frame.pack(fill="x", padx=14, pady=(0, 6))
-        tk.Label(preset_frame, text="Preset:", font=("Segoe UI", 9),
+        tk.Label(preset_frame, text=self._t("preset_label"), font=("Segoe UI", 9),
                  bg=BG, fg=GRAY, width=9, anchor="w").pack(side="left")
 
-        preset_labels = [p[0] for p in self._PRESETS]
+        preset_pairs  = self._preset_pairs()
+        preset_labels = [p[0] for p in preset_pairs]
         preset_var    = tk.StringVar(value=preset_labels[0])
         om = tk.OptionMenu(preset_frame, preset_var, *preset_labels)
         om.config(bg=BG2, fg=FG, activebackground=GRAY2, activeforeground=FG,
@@ -470,11 +695,11 @@ class BotUI:
         fields_frame.pack(fill="x", padx=14, pady=(2, 0))
 
         FIELD_DEFS = [
-            ("Min",     "0-59\n*/N\n0,30", parts[0]),
-            ("Hour",    "0-23\n*/N",       parts[1]),
-            ("Day",     "1-31\n*/N",       parts[2]),
-            ("Month",   "1-12\nJAN-DEC",   parts[3]),
-            ("Weekday", "0-6\nSUN-SAT",    parts[4]),
+            (self._t("cron_field_min"),     self._t("cron_hint_min"),     parts[0]),
+            (self._t("cron_field_hour"),    self._t("cron_hint_hour"),    parts[1]),
+            (self._t("cron_field_day"),     self._t("cron_hint_day"),     parts[2]),
+            (self._t("cron_field_month"),   self._t("cron_hint_month"),   parts[3]),
+            (self._t("cron_field_weekday"), self._t("cron_hint_weekday"), parts[4]),
         ]
         field_vars = []
         for col, (label, hint, default) in enumerate(FIELD_DEFS):
@@ -496,7 +721,7 @@ class BotUI:
         cron_frame = tk.Frame(dlg, bg=BG)
         cron_frame.pack(fill="x", padx=14, pady=(10, 0))
 
-        tk.Label(cron_frame, text="Cron:", font=("Segoe UI", 9),
+        tk.Label(cron_frame, text=self._t("cron_label"), font=("Segoe UI", 9),
                  bg=BG, fg=GRAY, width=9, anchor="w").pack(side="left")
         cron_preview_var = tk.StringVar()
         tk.Label(cron_frame, textvariable=cron_preview_var,
@@ -510,7 +735,7 @@ class BotUI:
         # ── Next runs ──────────────────────────────────────────────────────────
         next_frame = tk.Frame(dlg, bg=BG)
         next_frame.pack(fill="x", padx=14, pady=(4, 0))
-        tk.Label(next_frame, text="Next:", font=("Segoe UI", 9),
+        tk.Label(next_frame, text=self._t("next_label"), font=("Segoe UI", 9),
                  bg=BG, fg=GRAY, width=9, anchor="w").pack(side="left")
         next_var = tk.StringVar()
         tk.Label(next_frame, textvariable=next_var,
@@ -523,7 +748,7 @@ class BotUI:
             cron = " ".join(v.get().strip() or "*" for v in field_vars)
             cron_preview_var.set(cron)
             if croniter.is_valid(cron):
-                valid_var.set("✓ valid")
+                valid_var.set(self._t("valid_ok"))
                 valid_lbl.config(fg=GREEN)
                 it = croniter(cron, datetime.now().astimezone())
                 runs = [datetime.fromtimestamp(it.get_next(float)).strftime("%m/%d %H:%M")
@@ -532,7 +757,7 @@ class BotUI:
                 if save_btn_ref:
                     save_btn_ref[0].config(state="normal", bg=ACCENT, fg=BG3)
             else:
-                valid_var.set("✗ invalid")
+                valid_var.set(self._t("valid_bad"))
                 valid_lbl.config(fg=RED)
                 next_var.set("")
                 if save_btn_ref:
@@ -543,7 +768,7 @@ class BotUI:
 
         def _apply_preset(*_):
             label = preset_var.get()
-            cron  = next((p[1] for p in self._PRESETS if p[0] == label), "")
+            cron  = next((p[1] for p in preset_pairs if p[0] == label), "")
             if not cron:
                 return
             pparts = cron.split()
@@ -581,11 +806,11 @@ class BotUI:
                 self._cron_callback(name, "")
             dlg.destroy()
 
-        tk.Button(btn_frame, text="Clear schedule", bg=GRAY2, fg=GRAY,
+        tk.Button(btn_frame, text=self._t("btn_clear_schedule"), bg=GRAY2, fg=GRAY,
                   command=_clear, **btn_cfg).pack(side="left")
-        tk.Button(btn_frame, text="Cancel", bg=GRAY2, fg=FG,
+        tk.Button(btn_frame, text=self._t("btn_cancel"), bg=GRAY2, fg=FG,
                   command=dlg.destroy, **btn_cfg).pack(side="left", padx=(6, 0))
-        save_btn = tk.Button(btn_frame, text="Save", bg=ACCENT, fg=BG3,
+        save_btn = tk.Button(btn_frame, text=self._t("btn_save"), bg=ACCENT, fg=BG3,
                              command=_save, **btn_cfg)
         save_btn.pack(side="right")
         save_btn_ref.append(save_btn)
@@ -604,7 +829,7 @@ class BotUI:
 
     def _show_fn_settings(self, name):
         if not self._bot_paused["paused"]:
-            self._show_toast("Bot is running — pause it first (uncheck Is Running) to edit settings.")
+            self._show_toast(self._t("toast_pause_for_settings"))
             return
         schema = _FN_COMMON_FIELDS + (_FN_SETTINGS_SCHEMA.get(name) or [])
         if not schema:
@@ -613,28 +838,130 @@ class BotUI:
         current = self._fn_settings.get(name, {})
 
         dlg = tk.Toplevel(self._root)
-        dlg.title("Settings — {}".format(name))
+        dlg.title(self._t("dlg_settings_title", name=name))
         dlg.configure(bg=BG)
         dlg.resizable(False, False)
         dlg.attributes("-topmost", True)
         dlg.grab_set()
 
-        tk.Label(dlg, text="Settings  —  {}".format(name),
+        tk.Label(dlg, text=self._t("dlg_settings_heading", name=name),
                  font=("Segoe UI", 11, "bold"), bg=BG, fg=ACCENT
                  ).pack(fill="x", padx=14, pady=(12, 6))
         tk.Frame(dlg, bg=GRAY2, height=1).pack(fill="x", padx=14, pady=(0, 10))
 
-        field_vars = {}  # key → tk var
+        field_vars  = {}  # key → tk var
+        _extra_state = {}  # key → state dict for complex types (e.g. fragment_filters)
 
         for field in schema:
-            key   = field["key"]
-            label = field["label"]
-            ftype = field.get("type", "str")
-            desc  = field.get("description", "")
-            fmin  = field.get("min")
-            fmax  = field.get("max")
-            fdef  = field.get("default")
+            key    = field["key"]
+            label  = field["label"]
+            ftype  = field.get("type", "str")
+            desc   = field.get("description", "")
+            fmin   = field.get("min")
+            fmax   = field.get("max")
+            fdef   = field.get("default")
             stored = current.get(key, fdef)
+
+            # ── fragment_filters: full-width dynamic list widget ───────────────
+            if ftype == "fragment_filters":
+                choices = list(field.get("choices") or [])
+                # Load choices from the function YAML if choices_yaml_key is set.
+                # If choices_yaml_step_type is also set, scan that event_type step for the key;
+                # otherwise fall back to the top-level YAML key.
+                _yaml_key       = field.get("choices_yaml_key")
+                _yaml_step_type = field.get("choices_yaml_step_type")
+                if _yaml_key:
+                    try:
+                        import yaml as _yaml
+                        _fn_yaml = os.path.join("functions", "{}.yaml".format(name))
+                        with open(_fn_yaml, encoding="utf-8") as _fy:
+                            _fn_data = _yaml.safe_load(_fy)
+                        _yaml_choices = []
+                        if _yaml_step_type:
+                            for _step in (_fn_data.get("steps") or []):
+                                if _step.get("event_type") == _yaml_step_type:
+                                    _yaml_choices = _step.get(_yaml_key) or []
+                                    break
+                        if not _yaml_choices:
+                            _yaml_choices = _fn_data.get(_yaml_key) or []
+                        if _yaml_choices:
+                            choices = list(_yaml_choices)
+                    except Exception as _ye:
+                        _log.debug("[ui] fragment_filters: could not load choices from YAML: %s", _ye)
+                _val_to_disp = {c: os.path.splitext(os.path.basename(c))[0] for c in choices}
+                _disp_to_val = {v: k for k, v in _val_to_disp.items()}
+                _disp_list   = [_val_to_disp.get(c, c) for c in choices]
+                _sv          = stored if isinstance(stored, dict) else {}
+                _mode_var    = tk.StringVar(value=_sv.get("mode", "AND"))
+                _rows_data   = []  # list of [tpl_var, count_var]
+                _extra_state[key] = {
+                    "mode_var":   _mode_var,
+                    "rows_data":  _rows_data,
+                    "disp_to_val": _disp_to_val,
+                }
+                field_vars[key] = tk.StringVar(value="__ff__")
+
+                _ff = tk.Frame(dlg, bg=BG)
+                _ff.pack(fill="x", padx=14, pady=(0, 8))
+
+                # Header: label on left, "mode:" label + AND/OR radios on right
+                _hdr = tk.Frame(_ff, bg=BG)
+                _hdr.pack(fill="x")
+                tk.Label(_hdr, text=label, font=("Segoe UI", 9, "bold"),
+                         bg=BG, fg=FG, anchor="w").pack(side="left")
+                tk.Label(_hdr, text=self._t("fragment_mode"), font=("Segoe UI", 8),
+                         bg=BG, fg=GRAY).pack(side="right", padx=(8, 2))
+                for _m in ["OR", "AND"]:
+                    tk.Radiobutton(_hdr, text=_m, variable=_mode_var, value=_m,
+                                   bg=BG, activebackground=BG, selectcolor=BG2,
+                                   fg=ACCENT, activeforeground=ACCENT,
+                                   font=("Segoe UI", 9, "bold")).pack(side="right", padx=1)
+
+                _rows_frame = tk.Frame(_ff, bg=BG)
+                _rows_frame.pack(fill="x", pady=(2, 0))
+
+                def _add_ff_row(tpl_val=None, cnt_val=1,
+                                _rc=_rows_frame, _rd=_rows_data,
+                                _dl=_disp_list,  _vtd=_val_to_disp):
+                    _rf = tk.Frame(_rc, bg=BG2)
+                    _rf.pack(fill="x", pady=1)
+                    _init = _vtd.get(tpl_val, _dl[0] if _dl else "")
+                    _tv   = tk.StringVar(value=_init)
+                    _cv   = tk.IntVar(value=max(1, int(cnt_val or 1)))
+                    _e    = [_tv, _cv]
+                    _rd.append(_e)
+                    ttk.Combobox(_rf, textvariable=_tv, values=_dl,
+                                 state="readonly", width=22,
+                                 font=("Consolas", 10)).pack(side="left", padx=(4, 2), pady=2)
+                    tk.Spinbox(_rf, from_=1, to=99, textvariable=_cv, width=4,
+                               bg=BG2, fg=YELLOW, buttonbackground=GRAY2,
+                               insertbackground=FG, relief="flat",
+                               font=("Consolas", 11, "bold"),
+                               justify="center").pack(side="left", padx=2)
+                    def _rm(f=_rf, e=_e, rd=_rd):
+                        f.pack_forget()
+                        f.destroy()
+                        try:
+                            rd.remove(e)
+                        except ValueError:
+                            pass
+                    tk.Button(_rf, text="✕", command=_rm, bg=GRAY2, fg=RED,
+                              relief="flat", font=("Segoe UI", 9),
+                              cursor="hand2", padx=4).pack(side="left", padx=2)
+                    dlg.update_idletasks()
+
+                for _filt in _sv.get("filters", []):
+                    _add_ff_row(_filt.get("template"), _filt.get("count", 1))
+
+                tk.Button(_ff, text=self._t("add_filter"), command=_add_ff_row,
+                          bg=GRAY2, fg=ACCENT, relief="flat",
+                          font=("Segoe UI", 9, "bold"), cursor="hand2",
+                          padx=8, pady=2).pack(anchor="w", pady=(4, 0))
+                if desc:
+                    tk.Label(_ff, text=desc, font=("Segoe UI", 8),
+                             bg=BG, fg=GRAY).pack(anchor="w")
+                continue
+            # ── end fragment_filters ───────────────────────────────────────────
 
             row = tk.Frame(dlg, bg=BG)
             row.pack(fill="x", padx=14, pady=(0, 8))
@@ -669,7 +996,7 @@ class BotUI:
                     textvariable=var, width=8,
                     bg=BG2, fg=YELLOW, buttonbackground=GRAY2,
                     insertbackground=FG, relief="flat",
-                    font=("Consolas", 11, "bold"), justify="center", format="%.3g")
+                    font=("Consolas", 11, "bold"), justify="center")
                 spin.pack(side="left")
                 if desc:
                     tk.Label(row, text=desc, font=("Segoe UI", 8),
@@ -727,21 +1054,37 @@ class BotUI:
         def _save():
             saved = self._fn_settings.setdefault(name, {})
             for field in schema:
-                k = field["key"]
+                k     = field["key"]
                 ftype = field.get("type", "str")
-                raw = field_vars[k].get()
-                # Coerce to correct Python type
-                try:
-                    if ftype == "int":
-                        v = int(raw)
-                    elif ftype == "float":
-                        v = float(raw)
-                    elif ftype == "bool":
-                        v = bool(raw)
-                    else:
-                        v = str(raw)
-                except (ValueError, TypeError):
-                    v = raw
+                if ftype == "fragment_filters":
+                    state = _extra_state.get(k)
+                    if state is None:
+                        continue
+                    _mode    = state["mode_var"].get()
+                    _filters = []
+                    for _tv, _cv in state["rows_data"]:
+                        _disp = _tv.get()
+                        _tpl  = state["disp_to_val"].get(_disp, _disp)
+                        try:
+                            _cnt = max(1, int(_cv.get()))
+                        except (ValueError, TypeError):
+                            _cnt = 1
+                        if _tpl:
+                            _filters.append({"template": _tpl, "count": _cnt})
+                    v = {"mode": _mode, "filters": _filters}
+                else:
+                    raw = field_vars[k].get()
+                    try:
+                        if ftype == "int":
+                            v = int(raw)
+                        elif ftype == "float":
+                            v = float(raw)
+                        elif ftype == "bool":
+                            v = bool(raw)
+                        else:
+                            v = str(raw)
+                    except (ValueError, TypeError):
+                        v = raw
                 saved[k] = v
                 # Also push to runner immediately so bot picks it up without restart
                 if hasattr(self._runner, "fn_settings"):
@@ -752,16 +1095,21 @@ class BotUI:
 
         def _reset():
             for field in schema:
-                k = field["key"]
-                v = field.get("default")
-                if k in field_vars and v is not None:
+                k     = field["key"]
+                ftype = field.get("type", "str")
+                v     = field.get("default")
+                if ftype == "fragment_filters":
+                    state = _extra_state.get(k)
+                    if state and isinstance(v, dict):
+                        state["mode_var"].set(v.get("mode", "AND"))
+                elif k in field_vars and v is not None:
                     field_vars[k].set(v)
 
-        tk.Button(btn_frame, text="Reset defaults", bg=GRAY2, fg=GRAY,
+        tk.Button(btn_frame, text=self._t("reset_defaults"), bg=GRAY2, fg=GRAY,
                   command=_reset, **btn_cfg).pack(side="left")
-        tk.Button(btn_frame, text="Cancel", bg=GRAY2, fg=FG,
+        tk.Button(btn_frame, text=self._t("btn_cancel"), bg=GRAY2, fg=FG,
                   command=dlg.destroy, **btn_cfg).pack(side="left", padx=(6, 0))
-        tk.Button(btn_frame, text="Save", bg=ACCENT, fg=BG3,
+        tk.Button(btn_frame, text=self._t("btn_save"), bg=ACCENT, fg=BG3,
                   command=_save, **btn_cfg).pack(side="right")
 
         # Center over root
@@ -775,22 +1123,15 @@ class BotUI:
 
     def _run_fn(self, name):
         if self._bot_paused["paused"]:
-            self._show_toast("Bot is paused — enable Is Running first.")
+            self._show_toast(self._t("toast_enable_running_first"))
             return
         if not self._fn_enabled.get(name, True):
-            self._show_toast("{} is disabled — enable it first.".format(name))
+            self._show_toast(self._t("toast_fn_disabled", name=name))
             return
         if self._run_callback:
             self._run_callback(name)
 
     # ── Row tooltip ───────────────────────────────────────────────────────────
-
-    _TRIGGER_LABELS = {
-        "logged_out":        "Logout detected",
-        "attacked":          "Under attack detected",
-        "alliance_attacked": "Alliance attack detected",
-        "treasure_detected": "Treasure detected",
-    }
 
     def _row_tooltip_text(self, name):
         fc = next((f for f in self._fn_configs if f.get("name") == name), None)
@@ -804,13 +1145,14 @@ class BotUI:
 
         trigger = fc.get("trigger", "")
         if trigger:
-            label = self._TRIGGER_LABELS.get(trigger, trigger)
+            i18n_k = self._TRIGGER_I18N.get(trigger)
+            label  = self._t(i18n_k) if i18n_k else trigger
             if fn_disabled:
-                lines.append("Trigger: {}  (disabled)".format(label))
+                lines.append(self._t("tt_trigger_disabled", label=label))
             elif bot_paused:
-                lines.append("Trigger: {}  (bot paused)".format(label))
+                lines.append(self._t("tt_trigger_paused", label=label))
             else:
-                lines.append("Trigger: {}".format(label))
+                lines.append(self._t("tt_trigger", label=label))
 
         cron = fc.get("cron", "")
         if cron and croniter.is_valid(cron):
@@ -818,23 +1160,24 @@ class BotUI:
             nxt    = datetime.fromtimestamp(it.get_next(float))
             diff_s = (nxt - datetime.now()).total_seconds()
             mins   = int(diff_s / 60)
-            eta    = "in {}h {}m".format(mins // 60, mins % 60) if mins >= 60 \
-                     else "in {}m".format(mins)
+            eta    = (self._t("tt_eta_hm", h=mins // 60, m=mins % 60) if mins >= 60
+                      else self._t("tt_eta_m", m=mins))
+            tstr   = nxt.strftime("%H:%M")
             if fn_disabled:
-                lines.append("Next run: —  (function disabled)")
+                lines.append(self._t("tt_next_disabled"))
             elif bot_paused:
-                lines.append("Next run: {}  ({}, bot paused)".format(
-                    nxt.strftime("%H:%M"), eta))
+                lines.append(self._t("tt_next_paused", time=tstr, eta=eta))
             else:
-                lines.append("Next run: {}  ({})".format(nxt.strftime("%H:%M"), eta))
-            lines.append("Cron: {}".format(cron))
+                lines.append(self._t("tt_next", time=tstr, eta=eta))
+            lines.append(self._t("tt_cron", cron=cron))
 
         key = fc.get("key", "")
         if key:
+            ku = key.upper()
             if fn_disabled:
-                lines.append("Hotkey: {}  (disabled)".format(key.upper()))
+                lines.append(self._t("tt_hotkey_disabled", hotkey=ku))
             else:
-                lines.append("Hotkey: {}".format(key.upper()))
+                lines.append(self._t("tt_hotkey", hotkey=ku))
 
         return "\n".join(lines)
 
@@ -874,9 +1217,22 @@ class BotUI:
     def _refresh_row(self, name):
         if name not in self._row_frames:
             return
-        _, name_lbl = self._row_frames[name]
+        _, name_lbl, toggle_lbl = self._row_frames[name]
         enabled = self._fn_enabled.get(name, True)
         name_lbl.config(fg=FG if enabled else GRAY)
+        toggle_lbl.config(text="✓" if enabled else "✗",
+                          fg=GREEN if enabled else GRAY)
+
+    def _toggle_all_enabled(self, enable: bool) -> None:
+        """Enable or disable all functions at once and persist the change."""
+        for name in list(self._vars):
+            self._vars[name].set(enable)
+            self._fn_enabled[name] = enable
+            self._refresh_row(name)
+            if self._enabled_callback:
+                self._enabled_callback(name, enable)
+        if self._save_callback:
+            self._save_callback()
 
     # ── Key rebinding ─────────────────────────────────────────────────────────
 
@@ -899,7 +1255,7 @@ class BotUI:
 
     def _start_rebind(self, name, badge_lbl):
         if not self._bot_paused["paused"]:
-            self._show_toast("⚠  Pause 'Is Running' before rebinding a key")
+            self._show_toast(self._t("toast_pause_rebind"))
             return
         if self._rebinding:
             self._cancel_rebind()
@@ -908,7 +1264,7 @@ class BotUI:
         self._rebind_lbl = badge_lbl
         badge_lbl.config(text=" ▶ ... ", bg=RED, fg=BG3)
         self._status_lbl.config(
-            text="⌨  Press new key for [{}]  —  Esc to cancel".format(name),
+            text=self._t("status_rebind_press", name=name),
             fg=YELLOW)
         self._root.focus_force()
         self._root.bind("<Key>",    self._capture_key)
@@ -937,15 +1293,14 @@ class BotUI:
     def _confirm_overwrite_key(self, name, char, conflict):
         """Modal dialog asking whether to overwrite a conflicting key binding."""
         dlg = tk.Toplevel(self._root)
-        dlg.title("Key conflict")
+        dlg.title(self._t("dlg_key_conflict"))
         dlg.configure(bg=BG)
         dlg.resizable(False, False)
         dlg.attributes("-topmost", True)
         dlg.grab_set()
 
         tk.Label(dlg,
-                 text="Key  [ {} ]  is already used by\n\"{}\"\n\nOverwrite?".format(
-                     char.upper(), conflict),
+                 text=self._t("dlg_key_conflict_msg", char=char.upper(), conflict=conflict),
                  font=("Segoe UI", 10), bg=BG, fg=FG,
                  padx=20, pady=14, justify="center").pack()
 
@@ -963,14 +1318,14 @@ class BotUI:
             dlg.destroy()
             # Resume key capture so the user can pick a different key
             self._status_lbl.config(
-                text="⌨  Press new key for [{}]  —  Esc to cancel".format(name),
+                text=self._t("status_rebind_press", name=name),
                 fg=YELLOW)
             self._root.bind("<Key>",    self._capture_key)
             self._root.bind("<Escape>", lambda e: self._cancel_rebind())
 
-        tk.Button(btn_frame, text="Overwrite", bg=RED, fg=BG3,
+        tk.Button(btn_frame, text=self._t("btn_overwrite"), bg=RED, fg=BG3,
                   command=_yes, **btn_cfg).pack(side="left", padx=(0, 8))
-        tk.Button(btn_frame, text="Cancel", bg=GRAY2, fg=FG,
+        tk.Button(btn_frame, text=self._t("btn_cancel"), bg=GRAY2, fg=FG,
                   command=_no, **btn_cfg).pack(side="left")
 
         # Center over root
@@ -1030,7 +1385,7 @@ class BotUI:
         self._rebind_lbl = None
         self._root.unbind("<Key>")
         self._root.unbind("<Escape>")
-        self._status_lbl.config(text="⏸  Paused — all functions suspended", fg=YELLOW)
+        self._status_lbl.config(text=self._t("status_paused_all"), fg=YELLOW)
 
     # ── Status tick ───────────────────────────────────────────────────────────
 
@@ -1055,12 +1410,12 @@ class BotUI:
                 _log.info("[UI] OpenOCR loaded. Bot resumed.")
             elif ocr_openocr._loading or not ocr_openocr._tried:
                 # Still loading or preload thread hasn't started yet
-                self._status_lbl.config(text="⚙  Initializing OCR engine...", fg=ACCENT)
+                self._status_lbl.config(text=self._t("status_init_ocr"), fg=ACCENT)
                 self._root.after(500, self._tick)
                 return
             else:
                 # _tried=True, OPENOCR_OK=False → load failed
-                self._status_lbl.config(text="⚠  OpenOCR failed to load. Bot cannot run OCR functions.", fg=RED)
+                self._status_lbl.config(text=self._t("status_ocr_failed"), fg=RED)
                 self._root.after(2000, self._tick)
                 return
 
@@ -1071,7 +1426,7 @@ class BotUI:
             state = getattr(self._runner, "state", "idle")
             fn    = getattr(self._runner, "function_name", None)
             if state == "running" and fn:
-                self._status_lbl.config(text="▶  Running: {}".format(fn), fg=GREEN)
+                self._status_lbl.config(text=self._t("status_running", fn=fn), fg=GREEN)
             else:
                 now = datetime.now().timestamp()
                 upcoming = [(ts, n) for n, ts in self._next_run_at.items()
@@ -1080,9 +1435,9 @@ class BotUI:
                     ts, n = min(upcoming)
                     dt = datetime.fromtimestamp(ts).strftime("%H:%M")
                     self._status_lbl.config(
-                        text="◼  Idle  —  next: {} @ {}".format(n, dt), fg=FG)
+                        text=self._t("status_idle_next", name=n, time=dt), fg=FG)
                 else:
-                    self._status_lbl.config(text="◼  Idle", fg=FG)
+                    self._status_lbl.config(text=self._t("status_idle"), fg=FG)
         except Exception:
             pass
         self._root.after(500, self._tick)

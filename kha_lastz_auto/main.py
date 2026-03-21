@@ -12,6 +12,8 @@ from datetime import datetime
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
+from ui_locale import normalize_language_code as _norm_lang
+
 
 def _require_admin_win():
     """If not running as admin on Windows, trigger UAC and re-launch elevated; then exit."""
@@ -406,9 +408,13 @@ def _try_start(fn_name, trigger="hotkey", trigger_event=None, trigger_active_cb=
     if runner.state == "running":
         cur_name = runner.function_name
         if cur_name == fn_name:
-            # Same function: toggle stop
-            runner.stop()
-            log.info("[Scheduler] {} stopped (same key toggle)".format(fn_name))
+            if trigger in ("hotkey", "ui_play"):
+                # Hotkey or UI play button on same running function: toggle stop
+                runner.stop()
+                log.info("[Scheduler] {} stopped ({} toggle)".format(fn_name, trigger))
+            else:
+                # Detector re-fired while already running: ignore to avoid interrupting
+                log.debug("[Scheduler] {} already running, ignoring re-trigger ({})".format(fn_name, trigger))
         else:
             log.info("[Scheduler] {} blocked by {} [{}] -> queued".format(fn_name, cur_name, trigger))
             _queue_add(fn_name, reason=trigger, trigger_event=trigger_event, trigger_active_cb=trigger_active_cb)
@@ -581,8 +587,13 @@ def _on_enabled_change(fn_name, enabled):
     _rebuild_schedules()
 
 
-# Mutable dict for general_settings; written to .env_config on save (auto_focus, window_width, window_height).
-_general_settings = {"auto_focus": auto_focus, "window_width": _win_w, "window_height": _win_h}
+# Mutable dict for general_settings; written to .env_config on save.
+_general_settings = {
+    "auto_focus": auto_focus,
+    "window_width": _win_w,
+    "window_height": _win_h,
+    "language": _norm_lang(general_settings_ov.get("language", "en")),
+}
 
 
 def _on_general_setting_change(key, value):
@@ -605,6 +616,11 @@ def _on_general_setting_change(key, value):
         wincap.resize_to_client(_win_w, _win_h)
         update_vision_scale()
         log.info("[Settings] Resolution → {}x{}, saved to .env_config, window resized.".format(_win_w, _win_h))
+        return
+    elif key == "language":
+        _general_settings["language"] = _norm_lang(value)
+        config_manager.save(fn_configs, fn_enabled, general_settings=_general_settings)
+        log.info("[Settings] UI language → {}".format(_general_settings["language"]))
         return
     _general_settings["auto_focus"] = auto_focus
     config_manager.save(fn_configs, fn_enabled, general_settings=_general_settings)

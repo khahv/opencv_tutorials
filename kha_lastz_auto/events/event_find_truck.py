@@ -45,9 +45,15 @@ debug_save : bool
     Save OCR crops to debug_ocr/ for inspection.
 
 fragment_template : str
-    Template for the OrangeHeroFragment badge.
+    Template for a single fragment badge (legacy; use fragment_filters for multi).
 fragment_count : int
-    Minimum number of fragment badges required (default 2).
+    Minimum count for the single legacy fragment_template (default 2).
+fragment_filters : list of dict
+    List of ``{template, count}`` pairs. Evaluated together using fragment_filter_mode.
+    Takes priority over fragment_template/fragment_count when present.
+    Can also be overridden at runtime via fn_settings["fragment_filters"].
+fragment_filter_mode : str
+    ``"AND"`` (default) — all filters must pass.  ``"OR"`` — any one filter passes.
 fragment_threshold : float
     Template match threshold for fragment detection (default 0.90).
 ocr_on_fragment_fail : bool
@@ -83,6 +89,8 @@ import time
 import logging
 import datetime
 import tempfile
+
+from vision import Vision
 
 import cv2 as cv
 
@@ -245,9 +253,25 @@ def run(step: dict, screenshot, wincap, runner) -> str:
     debug_log             = bool(step.get("debug_log", False))
     debug_save            = bool(step.get("debug_save", False))
 
-    fragment_template     = step.get("fragment_template")
-    fragment_count        = int(step.get("fragment_count", 2))
     fragment_threshold    = float(step.get("fragment_threshold", 0.90))
+
+    # ── Resolve fragment filter list ───────────────────────────────────────────
+    # Priority: fn_settings["fragment_filters"] > YAML fragment_filters list
+    #           > YAML single fragment_template/fragment_count (backward compat)
+    _ff_ov = runner._fn_setting("fragment_filters")
+    if _ff_ov and isinstance(_ff_ov, dict) and _ff_ov.get("filters"):
+        fragment_filters      = _ff_ov["filters"]
+        fragment_filter_mode  = _ff_ov.get("mode", "AND")
+    elif step.get("fragment_filters") and isinstance(step.get("fragment_filters"), list):
+        fragment_filters      = step["fragment_filters"]
+        fragment_filter_mode  = step.get("fragment_filter_mode", "AND")
+    elif step.get("fragment_template"):
+        fragment_filters      = [{"template": step["fragment_template"],
+                                   "count": int(step.get("fragment_count", 2))}]
+        fragment_filter_mode  = "AND"
+    else:
+        fragment_filters      = []
+        fragment_filter_mode  = "AND"
 
     ocr_anchor_template   = step.get("ocr_anchor_template")
     ocr_threshold         = float(step.get("ocr_threshold", 0.70))
@@ -364,22 +388,41 @@ def run(step: dict, screenshot, wincap, runner) -> str:
 
     # ── Fragment check ─────────────────────────────────────────────────────────
     _fragment_failed = False
-    if fragment_template:
-        v_frag = runner.vision_cache.get(fragment_template)
-        if v_frag:
-            frag_pts = v_frag.find(scr2, threshold=fragment_threshold, multi=True)
-            found_frags = len(frag_pts) if frag_pts else 0
-            if found_frags < fragment_count:
-                log.info("[find_truck] OrangeHeroFragment {}/{} -> skip truck".format(
-                    found_frags, fragment_count))
+    if fragment_filters:
+        _frag_results = []
+        for _filt in fragment_filters:
+            _tpl = _filt.get("template")
+            _req = max(1, int(_filt.get("count", 1)))
+            if not _tpl:
+                continue
+            v_frag = runner.vision_cache.get(_tpl)
+            if v_frag is None:
+                # Template not pre-loaded (e.g. added via UI fn_settings) — lazy-load and cache
+                try:
+                    v_frag = Vision(_tpl)
+                    runner.vision_cache[_tpl] = v_frag
+                    log.info("[find_truck] lazy-loaded fragment template: {}".format(_tpl))
+                except Exception as _le:
+                    log.warning("[find_truck] fragment template load failed [{}]: {}".format(_tpl, _le))
+            if v_frag:
+                frag_pts    = v_frag.find(scr2, threshold=fragment_threshold, multi=True)
+                found_frags = len(frag_pts) if frag_pts else 0
+                _passed     = found_frags >= _req
+                log.info("[find_truck] fragment [{}] {}/{} -> {}".format(
+                    os.path.basename(_tpl), found_frags, _req,
+                    "OK" if _passed else "skip"))
+                _frag_results.append(_passed)
+            else:
+                log.warning("[find_truck] fragment template not available: {}".format(_tpl))
+                _frag_results.append(False)
+
+        if _frag_results:
+            _overall = (any(_frag_results) if fragment_filter_mode.upper() == "OR"
+                        else all(_frag_results))
+            if not _overall:
                 if not ocr_on_fragment_fail:
                     return "running"
                 _fragment_failed = True
-            else:
-                log.info("[find_truck] OrangeHeroFragment {}/{} OK".format(
-                    found_frags, fragment_count))
-        else:
-            log.info("[find_truck] fragment_template not loaded -> skip fragment check")
 
     # ── OCR assertion check ────────────────────────────────────────────────────
     if ocr_regions and ocr_anchor_template:
@@ -499,6 +542,11 @@ def collect_templates(step: dict) -> list:
         templates.append(tpl)
     for key in ("refresh_template", "fragment_template", "ocr_anchor_template"):
         tpl = step.get(key)
+        if tpl:
+            templates.append(tpl)
+    # New: collect templates from fragment_filters list (YAML format)
+    for _filt in (step.get("fragment_filters") or []):
+        tpl = _filt.get("template")
         if tpl:
             templates.append(tpl)
     return templates

@@ -56,14 +56,19 @@ steps:
         match_center_y: -0.05
         exclude_area_x: 1.7
         exclude_area_y: 2.3
+      - template: buttons_template/Radar5-4.png
+        match_center_x: 0.0
+        match_center_y: -0.05
+        exclude_area_x: 1.7
+        exclude_area_y: 2.3
     exclude_template: buttons_template/RadarRedDot.png
     exclude_threshold: 0.85
 
     threshold: 0.88
     one_shot: true
     timeout_sec: 2
-    # debug_log: true
-    # log_all_scores: true
+    debug_log: true
+    log_all_scores: true
 
     max_tries: 10
     on_max_tries_reach_goto: CloseUI
@@ -111,10 +116,12 @@ steps:
     run_always: true
     on_fail_goto: ClickMiddleScreen
   
+
+  # Click Top-middle screen
   - event_type: click_position
     name: ClickMiddleScreen
     x: 0.5
-    y: 0.5
+    y: 0.01
     on_success_goto: FindRadarItem
 
   - event_type: sleep
@@ -127,6 +134,7 @@ steps:
     template_array:
       - buttons_template/RadarAttack.png
       - buttons_template/RadarHelp.png
+      - buttons_template/TeamUp.png
     threshold: 0.7
     one_shot: true
     timeout_sec: 5

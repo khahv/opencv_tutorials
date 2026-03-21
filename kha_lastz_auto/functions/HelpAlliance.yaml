@@ -6,5 +6,39 @@ steps:
     template: buttons_template/HelpAlliance.png
     threshold: 0.75
     one_shot: true
-    timeout_sec: 5
+    timeout_sec: 1
     match_color: true
+    on_fail_goto: CloseUI
+
+
+  - event_type: close_ui
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    back_button: buttons_template/BackButton.png
+    name: CloseUI
+    back_button_threshold: 0.8
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
+    threshold: 0.6
+    run_always: true
+
+  - event_type: base_zoomout
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    back_button: buttons_template/BackButton.png
+    back_button_threshold: 0.8
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
+    threshold: 0.6
+    scroll_times: 0
+    scroll_interval_sec: 0.1
+
+  - event_type: match_click
+    template: buttons_template/HelpAlliance.png
+    threshold: 0.75
+    one_shot: true
+    timeout_sec: 1
+    match_color: true
+  

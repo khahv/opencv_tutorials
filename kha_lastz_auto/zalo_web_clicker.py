@@ -161,11 +161,75 @@ def click_conversation_by_name(page, receiver_name: str, timeout_ms: int = 10000
         return False
 
 
+CONV_LIST_SELECTOR = ".conv-item-title__name, [class*='conv-item-title']"
+CONV_LIST_TIMEOUT_MS = 25000
+SEND_MAX_RETRIES = 3
+SEND_RETRY_DELAY_SEC = 5
+
+
+def _send_once(page, message: str, target: str, _log) -> bool:
+    """Single attempt to send a Zalo message. Returns True on success."""
+    if "chat.zalo.me" not in (page.url or ""):
+        page.goto(ZALO_CHAT_URL, wait_until="domcontentloaded", timeout=20000)
+
+    # Wait for conversation list; try networkidle first, fallback to selector.
+    try:
+        page.wait_for_load_state("networkidle", timeout=10000)
+    except Exception:
+        pass
+    page.wait_for_selector(CONV_LIST_SELECTOR, timeout=CONV_LIST_TIMEOUT_MS)
+
+    time.sleep(0.5)
+    if CONV_ITEM_SELECTOR:
+        page.locator(CONV_ITEM_SELECTOR).first.click(timeout=5000)
+    else:
+        click_conversation_by_name(page, target, timeout_ms=5000)
+    time.sleep(0.4)
+    page.wait_for_selector(CHAT_INPUT_SELECTOR, timeout=8000)
+    page.locator(CHAT_INPUT_SELECTOR).click()
+    time.sleep(0.15)
+
+    msg = message.strip()
+    if msg.lower().startswith("@all "):
+        text_after = msg[5:].strip()
+        time.sleep(DEBUG_STEP_SLEEP)
+        page.keyboard.type("@", delay=50)
+        time.sleep(DEBUG_STEP_SLEEP)
+        page.keyboard.type("A", delay=50)
+        time.sleep(DEBUG_STEP_SLEEP)
+        page.keyboard.type("l", delay=50)
+        time.sleep(DEBUG_STEP_SLEEP)
+        page.keyboard.type("l", delay=50)
+        time.sleep(DEBUG_STEP_SLEEP)
+        mention_ok = False
+        try:
+            page.get_by_title(MENTION_ALL_TITLE).first.click(timeout=5000)
+            mention_ok = True
+        except Exception:
+            try:
+                page.locator(".mention-popover__item").first.click(timeout=3000)
+                mention_ok = True
+            except Exception:
+                pass
+        if not mention_ok:
+            _log.info("[ZaloWeb] Mention @All popover not found, typing rest as text")
+        if text_after:
+            page.keyboard.type(" " + text_after, delay=40)
+        time.sleep(DEBUG_STEP_SLEEP)
+    else:
+        page.keyboard.type(message, delay=40)
+        time.sleep(0.15)
+
+    page.locator(SEND_BUTTON_SELECTOR).first.click(timeout=3000)
+    return True
+
+
 def send_zalo_message(message: str, receiver_name: str = None, logger=None):
     """
     Send Zalo message to the conversation (receiver_name hoac DEFAULT_CLICK_AFTER_OPEN).
     receiver_name: ten hien thi trong danh sach chat (vd. "Nhóm HLSE", "My Documents", "Safira-Chủ Căn hộ-BQT").
     Connect Edge -> open Zalo -> click conversation by name -> type message -> click Send -> disconnect.
+    Retries up to SEND_MAX_RETRIES times on failure.
     Tra ve True neu thanh cong, False neu loi. Chay trong thread de tranh block.
     """
     _log = logger or log
@@ -175,68 +239,31 @@ def send_zalo_message(message: str, receiver_name: str = None, logger=None):
     except ImportError:
         _log.warning("[ZaloWeb] Chua cai Playwright, bo qua gui tin.")
         return False
-    try:
-        with sync_playwright() as p:
-            browser, context, page = connect_real_edge(p)
-            if not page:
-                _log.warning("[ZaloWeb] Khong ket noi duoc Edge, bo qua gui tin.")
-                return False
-            try:
-                if "chat.zalo.me" not in (page.url or ""):
-                    page.goto(ZALO_CHAT_URL, wait_until="domcontentloaded", timeout=20000)
-                page.wait_for_selector(".conv-item-title__name, [class*='conv-item-title']", timeout=15000)
-                time.sleep(0.5)
-                if CONV_ITEM_SELECTOR:
-                    page.locator(CONV_ITEM_SELECTOR).first.click(timeout=5000)
-                else:
-                    click_conversation_by_name(page, target, timeout_ms=5000)
-                time.sleep(0.4)
-                page.wait_for_selector(CHAT_INPUT_SELECTOR, timeout=8000)
-                page.locator(CHAT_INPUT_SELECTOR).click()
-                time.sleep(0.15)
-                # Chi 1 dang: message bat dau "@All ...". Go tung chu "@", "A", "l", "l" -> click nut "Bao cho ca nhom" -> go phan con lai.
-                msg = message.strip()
-                if msg.lower().startswith("@all "):
-                    text_after = msg[5:].strip()  # sau "@all "
-                    time.sleep(DEBUG_STEP_SLEEP)
-                    page.keyboard.type("@", delay=50)
-                    time.sleep(DEBUG_STEP_SLEEP)
-                    page.keyboard.type("A", delay=50)
-                    time.sleep(DEBUG_STEP_SLEEP)
-                    page.keyboard.type("l", delay=50)
-                    time.sleep(DEBUG_STEP_SLEEP)
-                    page.keyboard.type("l", delay=50)
-                    time.sleep(DEBUG_STEP_SLEEP)
-                    mention_ok = False
-                    try:
-                        page.get_by_title(MENTION_ALL_TITLE).first.click(timeout=5000)
-                        mention_ok = True
-                    except Exception:
-                        try:
-                            page.locator(".mention-popover__item").first.click(timeout=3000)
-                            mention_ok = True
-                        except Exception:
-                            pass
-                    if not mention_ok:
-                        # Chat khong phai nhom hoac popover cham: da go "@All", chi them phan sau
-                        _log.info("[ZaloWeb] Mention @All popover not found, typing rest as text")
-                    if text_after:
-                        page.keyboard.type(" " + text_after, delay=40)
-                    time.sleep(DEBUG_STEP_SLEEP)
-                else:
-                    page.keyboard.type(message, delay=40)
-                    time.sleep(0.15)
-                page.locator(SEND_BUTTON_SELECTOR).first.click(timeout=3000)
-                _log.info("[ZaloWeb] Sent message to %s: %s", target, message[:50])
-                return True
-            finally:
+
+    for attempt in range(1, SEND_MAX_RETRIES + 1):
+        try:
+            with sync_playwright() as p:
+                browser, context, page = connect_real_edge(p)
+                if not page:
+                    _log.warning("[ZaloWeb] Khong ket noi duoc Edge, bo qua gui tin.")
+                    return False
                 try:
-                    browser.close()
-                except Exception:
-                    pass
-    except Exception as e:
-        _log.warning("[ZaloWeb] Loi gui tin: %s", e)
-        return False
+                    _send_once(page, message, target, _log)
+                    _log.info("[ZaloWeb] Sent message to %s: %s", target, message[:50])
+                    return True
+                finally:
+                    try:
+                        browser.close()
+                    except Exception:
+                        pass
+        except Exception as e:
+            _log.warning("[ZaloWeb] Loi gui tin (attempt %d/%d): %s", attempt, SEND_MAX_RETRIES, e)
+            if attempt < SEND_MAX_RETRIES:
+                _log.info("[ZaloWeb] Retrying in %ds...", SEND_RETRY_DELAY_SEC)
+                time.sleep(SEND_RETRY_DELAY_SEC)
+
+    _log.error("[ZaloWeb] Failed to send message after %d attempts to %s", SEND_MAX_RETRIES, target)
+    return False
 
 
 def main():

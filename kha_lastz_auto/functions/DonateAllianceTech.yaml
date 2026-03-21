@@ -25,8 +25,7 @@ steps:
     template: buttons_template/AllianceIconButton.png
     threshold: 0.7
     one_shot: true
-    timeout_sec: 10
-    debug_log: true
+    timeout_sec: 3
 
   - event_type: sleep
     duration_sec: 2
@@ -36,16 +35,14 @@ steps:
     template: buttons_template/AllianceTechs.png
     threshold: 0.8
     one_shot: true
-    timeout_sec: 10
-    debug_log: true
+    timeout_sec: 3
 
   # Click Like de chon tech can donate
   - event_type: match_click
     template: buttons_template/AllianceTechLike1.png
     threshold: 0.8
     one_shot: true
-    timeout_sec: 10
-    debug_log: true
+    timeout_sec: 5
 
   # Donate 20 lan
   - event_type: match_click
@@ -56,7 +53,6 @@ steps:
     max_clicks: 30
     click_interval_sec: 0.03
     timeout_sec: 20
-    debug_log: true
 
   # --- Dong panel: luon chay du step truoc false ---
   - event_type: sleep
@@ -81,7 +77,47 @@ steps:
     run_always: true
     duration_sec: 2
 
+  - event_type: match_click
+    template: buttons_template/AllianceGifts.png
+    threshold: 0.8
+    one_shot: true
+    timeout_sec: 3
+  
+  - event_type: match_click
+    template: buttons_template/AllianceClaimAll.png
+    threshold: 0.8
+    one_shot: true
+    timeout_sec: 3
+    on_fail_goto: ClickRareTab
+
   - event_type: click_position
+    x: 0.5
+    y: 0.01
+
+  # click to Rare tab
+  - event_type: click_position
+    name: ClickRareTab
+    x: 0.71
+    y: 0.37
+
+  - event_type: sleep
     run_always: true
-    offset_x: 0.05
-    offset_y: 0.05
+    duration_sec: 2
+
+  - event_type: match_click
+    template: buttons_template/AllianceClaimAll.png
+    threshold: 0.8
+    one_shot: true
+    timeout_sec: 3
+    
+  - event_type: close_ui
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    back_button: buttons_template/BackButton.png
+    back_button_threshold: 0.8
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
+    threshold: 0.6
+    debug_log: true
+    run_always: true

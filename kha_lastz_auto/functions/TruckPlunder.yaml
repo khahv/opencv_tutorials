@@ -2,7 +2,30 @@
 description: "Plunder trucks: open panel -> filter -> click truck -> OCR check server+power -> plunder if conditions met"
 
 steps:
+  
+  - event_type: close_ui
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    back_button: buttons_template/BackButton.png
+    back_button_threshold: 0.8
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
+    threshold: 0.6
+    run_always: true
 
+  - event_type: base_zoomout
+    template: buttons_template/HeadquartersButton.png
+    world_button: buttons_template/WorldButton.png
+    back_button: buttons_template/BackButton.png
+    back_button_threshold: 0.8
+    roi_center_x: 0.93
+    roi_center_y: 0.96
+    roi_padding: 2
+    threshold: 0.6
+    scroll_times: 5
+    scroll_interval_sec: 0.1
+    
   - event_type: match_click
     template: buttons_template/TruckIcon.png
     threshold: 0.6
@@ -52,10 +75,19 @@ steps:
     # debug_log: true
     # debug_save: true
 
-    # Filter 1 – OrangeHeroFragment must appear exactly fragment_count times
-    fragment_template: buttons_template/OrangeHeroFragment.png
+    # Filter 1 – fragment badge check (override via UI Fragment Filters setting)
+    fragment_template: buttons_template/TruckPlunderOrangeHeroFragment.png
     fragment_count: 1
-    fragment_threshold: 0.90
+    # Templates available in the UI Fragment Filters dropdown.
+    # Add entries here — they appear automatically in the settings dialog.
+    fragment_template_choices:
+      - buttons_template/TruckPlunderOrangeHeroFragment.png
+      - buttons_template/TruckPlunderDiamon.png
+      - buttons_template/TruckPlunderAlliancePoint.png
+      - buttons_template/TruckPlunderDispatchOrder.png
+      - buttons_template/TruckPlunderPrimeRecuirtment.png
+      - buttons_template/TruckPlunderExteriorModule.png
+    fragment_threshold: 0.85
     ocr_on_fragment_fail: true    # always run OCR even if fragment fails (for debug logging)
 
     # Filter 2 – OCR assertions on server + power

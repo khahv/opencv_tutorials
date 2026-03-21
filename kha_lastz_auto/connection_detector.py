@@ -211,15 +211,11 @@ class ConnectionDetector:
 
         Args:
             is_busy: optional callable returning True while a bot function is actively running.
-                     All checks are deferred while a function is running to avoid interfering with it.
+                     Only the full connection check is deferred when busy; process check and
+                     window reattach always run so LastZ is recovered even during a bot function.
         """
         now = time.time()
-
-        # Guard: skip ALL checks while any bot function is actively running
-        if is_busy and is_busy():
-            log.debug("[ConnectionDetector] Skipped — bot function is running")
-            self._last_run_time = now  # reset interval so check runs after interval_sec of idle time
-            return
+        busy = is_busy and is_busy()
 
         pid = self._lastz_pid_ref.get("pid")
 
@@ -268,6 +264,12 @@ class ConnectionDetector:
                 except Exception:
                     pass
             return  # no screenshot available, skip full check
+
+        # Guard: skip full connection check while any bot function is actively running
+        if busy:
+            log.debug("[ConnectionDetector] Skipped — bot function is running")
+            self._last_run_time = now  # reset interval so check runs after interval_sec of idle time
+            return
 
         # 2) Full connection check only every interval_sec (e.g. 5 min)
         if not self.should_run(now):

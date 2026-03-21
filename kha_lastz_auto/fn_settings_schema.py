@@ -8,7 +8,7 @@ Field definition keys:
     key         str   – storage key in fn_settings[fn_name]
     label       str   – display label in dialog
     description str   – hint/tooltip text (optional)
-    type        str   – "int" | "float" | "str" | "bool" | "password"
+    type        str   – "int" | "float" | "str" | "bool" | "password" | "fragment_filters"
     min/max     num   – for int/float: bounds
     default     any   – default value if not stored
 
@@ -42,28 +42,6 @@ SCHEMA: dict = {
         },
     ],
 
-    "ClickTreasure": [
-        {
-            "key":         "max_clicks",
-            "label":       "Max Clicks",
-            "description": "Maximum clicks per session",
-            "type":        "int",
-            "min":         1,
-            "max":         99999,
-            "default":     2000,
-        },
-        {
-            "key":         "click_interval_sec",
-            "label":       "Click Interval (sec)",
-            "description": "Seconds between clicks (0 = max speed)",
-            "type":        "float",
-            "min":         0.0,
-            "max":         5.0,
-            "step":        0.01,
-            "default":     0.01,
-        },
-    ],
-
     "TruckPlunder": [
         {
             "key":         "servers",
@@ -80,6 +58,16 @@ SCHEMA: dict = {
             "min":         0,
             "max":         99999999,
             "default":     10000000,
+        },
+        {
+            "key":                   "fragment_filters",
+            "label":                 "Fragment Filters",
+            "description":           "Badge conditions — AND: all must pass  |  OR: any one passes",
+            "type":                  "fragment_filters",
+            "choices":               [],   # populated at dialog open from YAML step
+            "choices_yaml_key":      "fragment_template_choices",
+            "choices_yaml_step_type": "find_truck",   # scan this event_type step for the key
+            "default":               {"mode": "AND", "filters": []},
         },
     ],
 

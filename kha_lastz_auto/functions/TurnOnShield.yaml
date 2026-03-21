@@ -43,13 +43,13 @@ steps:
     duration_sec: 3
 
   # Đọc vùng timer PeaceShield (vd. "23:32:13"). ocr_regions: x,y,w,h = tỉ lệ màn hình (0.0–1.0).
-  # exit_on_true: đọc được text (shield đang bật) → kết thúc function.
+  # on_success_goto: shield đang bật → nhảy thẳng tới CloseUI (bỏ qua các bước bật shield).
   - event_type: ocr_log
     label: "PeaceShield remaining"
     char_whitelist: "0123456789:"
     debug_save: true
     debug_log: true
-    exit_on_true: true
+    on_success_goto: CloseUI
     ocr_regions:
       - name: remaining
         x: 0.32
@@ -66,8 +66,8 @@ steps:
     threshold: 0.75
     one_shot: true
     timeout_sec: 10
-    click_offset_x: 0.48
-    click_offset_y: 0.0
+    # click_offset_x: 0.48
+    # click_offset_y: 0.0
 
   - event_type: sleep
     duration_sec: 1
@@ -84,6 +84,7 @@ steps:
 
   # Always close the City Walls panel — runs even if previous steps aborted
   - event_type: close_ui
+    name: CloseUI
     template: buttons_template/HeadquartersButton.png
     world_button: buttons_template/WorldButton.png
     back_button: buttons_template/BackButton.png

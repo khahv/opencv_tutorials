@@ -9,4 +9,4 @@ croniter
 pytesseract
 python-dotenv
 playwright
-easyocr
+openocr-python
