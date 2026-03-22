@@ -15,6 +15,7 @@ Behaviour
 
 All parameters can be overridden at runtime via ``fn_settings``:
 
+  ``send_zalo``                  — if false, skip sending (ClickTreasure UI checkbox)
   ``send_zalo_message``          — overrides ``message``
   ``send_zalo_receiver_name``    — overrides ``receiver_name``
   ``send_zalo_repeat_interval_sec`` — overrides ``repeat_interval_sec``
@@ -34,6 +35,14 @@ except ImportError:
 
 def run(step: dict, screenshot, wincap, runner) -> str:
     """Execute the ``send_zalo`` event (fires once then advances)."""
+    # Optional master switch (e.g. ClickTreasure): when false, advance without sending.
+    _enable_ov = runner._fn_setting("send_zalo")
+    if _enable_ov is not None and not bool(_enable_ov):
+        log.info("[send_zalo] {} -> skipped (send_zalo disabled in function settings)".format(
+            runner._step_label(step)))
+        runner._advance_step(True)
+        return "running"
+
     # ── Resolve message / receiver / interval (fn_settings override first) ───
     _msg_ov = runner._fn_setting("send_zalo_message")
     message = (_msg_ov if _msg_ov is not None and str(_msg_ov).strip() else "") \

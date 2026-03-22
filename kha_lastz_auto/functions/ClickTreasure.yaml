@@ -2,6 +2,7 @@
 # Triggered by treasure_detected. Sends Zalo alert then clicks treasure.
 description: "Treasure detected: send Zalo, then click lien tuc vao Treasure Helicopter"
 steps:
+  # send_zalo: toggle on/off in function settings (gear) via "Send Zalo notification" / send_zalo
   - event_type: send_zalo
     receiver_name: "Nhóm HLSE"
     message: "@All Có kho báo!"

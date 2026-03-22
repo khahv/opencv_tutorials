@@ -100,6 +100,8 @@ MESSAGES = {
     "fn_zalo_repeat_desc_testalliance": "Gửi lại mỗi N giây khi icon còn hiện (0 = chỉ 1 lần)",
     "fn_shield_duration_label": "Loại shield",
     "fn_shield_duration_desc": "8h | 24h | 3d — vị trí click cố định theo từng lựa chọn",
+    "fn_clicktreasure_send_zalo_label": "Gửi thông báo Zalo",
+    "fn_clicktreasure_send_zalo_desc": "Tắt: vẫn click kho báo nhưng không gửi tin Zalo",
     "fn_clicktreasure_zalo_msg_label": "Tin nhắn Zalo (kho báo)",
     "fn_clicktreasure_zalo_msg_desc": "Nội dung khi phát hiện kho báo",
     "fn_clicktreasure_zalo_recv_label": "Người nhận Zalo",

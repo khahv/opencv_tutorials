@@ -100,6 +100,8 @@ MESSAGES = {
     "fn_zalo_repeat_desc_testalliance": "Resend every N s while icon visible (0 = once)",
     "fn_shield_duration_label": "Shield type",
     "fn_shield_duration_desc": "8h | 24h | 3d — fixed click target per option",
+    "fn_clicktreasure_send_zalo_label": "Send Zalo notification",
+    "fn_clicktreasure_send_zalo_desc": "When off, treasure clicks still run but no Zalo message is sent",
     "fn_clicktreasure_zalo_msg_label": "Zalo message (treasure)",
     "fn_clicktreasure_zalo_msg_desc": "Message when treasure is detected",
     "fn_clicktreasure_zalo_recv_label": "Zalo receiver",

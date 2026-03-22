@@ -176,6 +176,15 @@ SCHEMA: dict = {
 
     "ClickTreasure": [
         {
+            "key":             "send_zalo",
+            "label":           "Send Zalo notification",
+            "label_key":       "fn_clicktreasure_send_zalo_label",
+            "description":     "When off, treasure detection still runs clicks but no Zalo message is sent",
+            "description_key": "fn_clicktreasure_send_zalo_desc",
+            "type":            "bool",
+            "default":         True,
+        },
+        {
             "key":             "send_zalo_message",
             "label":           "Zalo message (treasure)",
             "label_key":       "fn_clicktreasure_zalo_msg_label",
