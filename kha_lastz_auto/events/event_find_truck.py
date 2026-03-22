@@ -246,7 +246,7 @@ def run(step: dict, screenshot, wincap, runner) -> str:
     refresh_template      = step.get("refresh_template")
     refresh_sleep_sec     = float(step.get("refresh_sleep_sec", 1.5))
     max_refreshes         = int(step.get("max_refreshes", 20))
-    timeout_sec           = float(step.get("timeout_sec", 120))
+    timeout_sec           = float(step.get("timeout_sec", 15))
     _dedup_base           = float(step.get("dedup_tolerance", 0.04))
     dedup_tol_x           = float(step.get("dedup_tolerance_x", _dedup_base))
     dedup_tol_y           = float(step.get("dedup_tolerance_y", _dedup_base))

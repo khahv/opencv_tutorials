@@ -33,6 +33,7 @@ class BotUI:
     - Checkbox to enable/disable each function (persisted to .env_config)
     - [KEY] badge is clickable to rebind hotkey (only when Is Running = off)
     - Status bar shows current running function / next cron
+    - Stop button above the status bar aborts only the current function (Is Running stays on)
     """
 
     def __init__(self, fn_enabled: dict, fn_configs: list, runner_ref,
@@ -87,6 +88,7 @@ class BotUI:
         self._running_var = None
         self._running_cb  = None
         self._status_lbl  = None
+        self._btn_stop_fn = None
         self._fn_objs     = {}
         self._kv_objs     = {}
         self._play_btns   = {}
@@ -359,6 +361,8 @@ class BotUI:
             self._btn_enable_all.config(text=self._t("enable_all"))
         if self._btn_disable_all is not None:
             self._btn_disable_all.config(text=self._t("disable_all"))
+        if self._btn_stop_fn is not None:
+            self._btn_stop_fn.config(text=self._t("btn_stop_function"))
         self._refresh_all_row_meta()
 
     def _preset_definitions(self):
@@ -460,9 +464,30 @@ class BotUI:
             activebackground=GRAY2, activeforeground=GREEN)
         self._update_start_lastz_button_visibility()
 
+        # Stop current function only (does not pause Is Running)
+        # Frame() does not accept pady=(top, bottom) — Tcl errors with "bad screen distance".
+        stop_row = tk.Frame(r, bg=BG2, padx=16, pady=4)
+        stop_row.pack(fill="x", pady=(1, 0))
+        self._btn_stop_fn = tk.Button(
+            stop_row,
+            text=self._t("btn_stop_function"),
+            command=self._on_stop_function,
+            font=("Segoe UI", 9, "bold"),
+            bg=GRAY2,
+            fg=RED,
+            activebackground=GRAY2,
+            activeforeground=RED,
+            relief="flat",
+            padx=12,
+            pady=4,
+            cursor="hand2",
+            state="disabled",
+        )
+        self._btn_stop_fn.pack(side="right")
+
         # Status bar
         sf = tk.Frame(r, bg=BG2, padx=16, pady=8)
-        sf.pack(fill="x", pady=(1, 0))
+        sf.pack(fill="x", pady=(0, 0))
 
         init_text = self._t("status_idle")
         init_fg   = FG
@@ -555,6 +580,48 @@ class BotUI:
             self._build_row(ff, fc)
 
         tk.Frame(r, bg=BG, height=8).pack(fill="x")
+
+    def _on_stop_function(self):
+        """Abort the running YAML function; keep Is Running ON so cron/detectors continue."""
+        if self._bot_paused.get("paused"):
+            return
+        r = self._runner
+        if getattr(r, "state", "idle") != "running":
+            return
+        fn = getattr(r, "function_name", None)
+        if not fn:
+            return
+        if hasattr(r, "abort_current_function"):
+            r.abort_current_function()
+        else:
+            r.stop()
+        _log.info("[UI] Stop button — aborted function: {}".format(fn))
+
+    def _sync_stop_function_button(self):
+        """Enable Stop only when a function is active and the bot is not globally paused."""
+        btn = self._btn_stop_fn
+        if btn is None:
+            return
+        try:
+            if not btn.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        if self._connection_status is not None and not self._connection_status():
+            btn.config(state="disabled", cursor="arrow")
+            return
+        if not self._ocr_ready:
+            btn.config(state="disabled", cursor="arrow")
+            return
+        if self._bot_paused.get("paused"):
+            btn.config(state="disabled", cursor="arrow")
+            return
+        if getattr(self._runner, "state", "idle") == "running" and getattr(
+            self._runner, "function_name", None
+        ):
+            btn.config(state="normal", cursor="hand2")
+        else:
+            btn.config(state="disabled", cursor="arrow")
 
     def _on_running_toggle(self):
         paused = not self._running_var.get()
@@ -961,6 +1028,20 @@ class BotUI:
 
     # ── Function settings dialog ──────────────────────────────────────────────
 
+    def _fn_field_label(self, field: dict) -> str:
+        """Translated label from schema (label_key → ui_locale), else English fallback."""
+        lk = field.get("label_key")
+        if lk:
+            return self._t(lk)
+        return str(field.get("label", ""))
+
+    def _fn_field_description(self, field: dict) -> str:
+        """Translated hint from schema (description_key → ui_locale), else fallback."""
+        dk = field.get("description_key")
+        if dk:
+            return self._t(dk)
+        return str(field.get("description", "") or "")
+
     def _show_fn_settings(self, name):
         if not self._bot_paused["paused"]:
             self._show_toast(self._t("toast_pause_for_settings"))
@@ -988,9 +1069,9 @@ class BotUI:
 
         for field in schema:
             key    = field["key"]
-            label  = field["label"]
+            label  = self._fn_field_label(field)
             ftype  = field.get("type", "str")
-            desc   = field.get("description", "")
+            desc   = self._fn_field_description(field)
             fmin   = field.get("min")
             fmax   = field.get("max")
             fdef   = field.get("default")
@@ -1530,6 +1611,7 @@ class BotUI:
             self._root.quit()
             return
         if self._rebinding:
+            self._sync_stop_function_button()
             self._root.after(500, self._tick)
             return
 
@@ -1548,6 +1630,7 @@ class BotUI:
                     fg=YELLOW,
                 )
                 self._was_disconnected = True
+                self._sync_stop_function_button()
                 self._root.after(500, self._tick)
                 return
             elif self._was_disconnected:
@@ -1571,6 +1654,7 @@ class BotUI:
             elif ocr_openocr._loading or not ocr_openocr._tried:
                 # Still loading or preload thread hasn't started yet
                 self._status_lbl.config(text=self._t("status_init_ocr"), fg=ACCENT)
+                self._sync_stop_function_button()
                 self._root.after(500, self._tick)
                 return
             else:
@@ -1583,6 +1667,7 @@ class BotUI:
                 _log.warning("[UI] OpenOCR not available. Bot running without OCR support.")
 
         if self._bot_paused["paused"]:
+            self._sync_stop_function_button()
             self._root.after(500, self._tick)
             return
         try:
@@ -1603,4 +1688,5 @@ class BotUI:
                     self._status_lbl.config(text=self._t("status_idle"), fg=FG)
         except Exception:
             pass
+        self._sync_stop_function_button()
         self._root.after(500, self._tick)

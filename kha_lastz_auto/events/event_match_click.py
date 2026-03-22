@@ -95,7 +95,7 @@ def run(step: dict, screenshot, wincap, runner) -> str:
     min_inliers    = step.get("min_inliers")
     one_shot       = step.get("one_shot", True)
     no_click       = bool(step.get("no_click", False))
-    timeout_sec    = step.get("timeout_sec") or 999
+    timeout_sec    = step.get("timeout_sec") or 15
 
     # ── template_array: try each template in order, each with its own timeout ─
     _tpls = template_array if isinstance(template_array, list) and template_array else None

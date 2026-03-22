@@ -53,6 +53,16 @@ Follow PEP 8; use these consistently:
 
 ---
 
+## After Editing Python (agents)
+
+- **Always verify Python syntax** after finishing work on any `.py` files—do not treat the task as complete until syntax checks pass.
+- Run, for example:
+  - `python -m py_compile path/to/changed_file.py` for each modified file, or
+  - `python -m compileall -q path/to/touched_package` when many files under one directory changed.
+- Fix any `SyntaxError` or compile failures before concluding the task.
+
+---
+
 ## Additional Rules
 
 - **Type hints**: Use type hints for function parameters and return values when they clarify intent or public APIs; not required for every trivial helper.

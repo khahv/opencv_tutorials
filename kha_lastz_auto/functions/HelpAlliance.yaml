@@ -9,7 +9,7 @@ steps:
     timeout_sec: 1
     match_color: true
     on_fail_goto: CloseUI
-
+    exit_on_true: true
 
   - event_type: close_ui
     template: buttons_template/HeadquartersButton.png
@@ -21,7 +21,6 @@ steps:
     roi_center_y: 0.96
     roi_padding: 2
     threshold: 0.6
-    run_always: true
 
   - event_type: base_zoomout
     template: buttons_template/HeadquartersButton.png

@@ -2,7 +2,7 @@
 event_set_level.py
 ------------------
 Handler for the ``set_level`` event type.
-
+Used for FindBoomer, Find Zombie
 Reads the current level from the screen via OCR, then clicks Plus or Minus
 until ``target_level`` is reached.
 
@@ -93,7 +93,7 @@ def run(step: dict, screenshot, wincap, runner) -> str:
     plus_template         = step.get("plus_template")
     minus_template        = step.get("minus_template")
     match_threshold       = step.get("threshold", 0.75)
-    timeout_sec           = step.get("timeout_sec") or 30
+    timeout_sec           = step.get("timeout_sec") or 10
     click_interval        = step.get("click_interval_sec", 0.3)
     min_level             = step.get("min_level", 1)
     max_level             = step.get("max_level", 99)

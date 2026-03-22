@@ -388,6 +388,18 @@ class FunctionRunner:
         self.state = "idle"
         self.function_name = None
 
+    def abort_current_function(self) -> bool:
+        """Stop the active YAML function only. Does not change global pause (bot_paused).
+
+        Returns True if a function was running and was aborted.
+        """
+        if self.state != "running":
+            return False
+        name = self.function_name
+        log.info("[Runner] Aborted function: {} (user stop)".format(name))
+        self.stop()
+        return True
+
     def update(self, screenshot, wincap):
         """Tra ve 'running' | 'done' | 'idle'. Neu running thi xu ly step hien tai."""
         if self.state != "running" or screenshot is None or self.step_index >= len(self.steps):

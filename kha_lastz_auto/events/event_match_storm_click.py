@@ -66,7 +66,7 @@ def run(step: dict, screenshot, wincap, runner) -> str:
 
     template         = step.get("template")
     threshold        = float(step.get("threshold", 0.75))
-    timeout_sec      = float(step.get("timeout_sec") or 999)
+    timeout_sec      = float(step.get("timeout_sec") or 15)
     offset_x         = int(wincap.w * float(step.get("offset_x") or 0))
     offset_y         = int(wincap.h * float(step.get("offset_y") or 0))
     guard_outside    = bool(step.get("guard_outside", True))

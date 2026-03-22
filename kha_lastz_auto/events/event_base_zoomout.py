@@ -31,7 +31,7 @@ def run(step: dict, screenshot, wincap, runner) -> str:
     """Execute one tick of the ``base_zoomout`` event."""
     template     = step.get("template")
     world_button = step.get("world_button")
-    timeout_sec  = float(step.get("timeout_sec", 30))
+    timeout_sec  = float(step.get("timeout_sec", 15))
 
     if not template or not world_button:
         log.error("[base_zoomout] requires 'template' and 'world_button'. Got template=%s, world_button=%s",

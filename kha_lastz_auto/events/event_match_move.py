@@ -21,7 +21,7 @@ def run(step: dict, screenshot, wincap, runner) -> str:
 
     template       = step.get("template")
     threshold      = step.get("threshold", 0.75)
-    timeout_sec    = step.get("timeout_sec") or 999
+    timeout_sec    = step.get("timeout_sec") or 15
     click_offset_x = step.get("click_offset_x") or 0.0
     click_offset_y = step.get("click_offset_y") or 0.0
     debug_click    = step.get("debug_click", False)
