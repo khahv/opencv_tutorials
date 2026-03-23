@@ -11,7 +11,7 @@ steps:
   - event_type: match_click
     template_array:
       - buttons_template/Treasure1-3.png
-    threshold: 0.7
+    threshold: 0.65
     one_shot: true
     timeout_sec: 10
     debug_log: true
@@ -42,7 +42,7 @@ steps:
     offset_change_time: 5
     offset_change_pause_sec: 0.1  # idle after offset rollover before new random pixel (default 0.2)
     storm_click_interval_sec: 0.05  # sleep after each storm click; default 0.1 (~10/s). Or storm_click_max_rate
-    check_template_after: 100      # start checking template presence after 10s
+    check_template_after: 250      # start checking template presence after 10s
     check_template_frequence: 10  # then re-check every 10s
     offset_x: 0.03       # ±3%10  of window width (~32px on 1080px window)
     offset_y: 0.03       # ±3% of window height (~58px on 1920px window)
