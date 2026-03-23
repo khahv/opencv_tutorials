@@ -7,22 +7,25 @@ steps:
     run_always: true
     timeout_sec: 300     # click for up to 300s (step ends normally when time is up)
     offset_change_time: 5
+    offset_change_pause_sec: 0.1  # idle after offset rollover before new random pixel (default 0.2)
+    storm_click_interval_sec: 0.05  # sleep after each storm click; default 0.1 (~10/s). Or storm_click_max_rate
     check_template_after: 100      # start checking template presence after 10s
     check_template_frequence: 10  # then re-check every 10s
     offset_x: 0.03       # ±3%10  of window width (~32px on 1080px window)
     offset_y: 0.03       # ±3% of window height (~58px on 1920px window)
-    guard_outside: true  # block user clicks outside game window
-    close_ui_check: true           # mặc định true, tắt thì set false
+    # guard_outside: true  # block user clicks outside game window
+    close_ui_check: false           # mặc định true, tắt thì set false
     close_ui_click_x: 0.03        # vị trí click để dismiss UI (default)
-    close_ui_click_y: 0.08
+    close_ui_click_y: 0.5
     close_ui_back_button: buttons_template/BackButton.png  # optional
 
 
     #position_refresh_sec: 1
-    corner:              # every N clicks, send 1 click here to keep window focused
-      offset_x: 0.05
-      offset_y: 0.05
-      every: 20
+    # corner:              # every N clicks, send 1 click here to keep window focused
+    #   offset_x: 0.05
+    #   offset_y: 0.5
+    #   every: 20
+    #   pause_sec: 0.2     # wait after storm stops before corner click (then resume storm)
 
   - event_type: close_ui
     template: buttons_template/HeadquartersButton.png

@@ -181,6 +181,10 @@ config = load_config("config.yaml")
 fn_configs = config.get("functions") or []
 general_settings_ov = config_manager.apply_overrides(fn_configs) or {}  # .env_config overrides config.yaml
 
+import user_mouse_abort
+
+user_mouse_abort.apply_settings_from_dict(general_settings_ov, config)
+
 # Auto Focus setting
 auto_focus = config.get("auto_focus", False)
 if "auto_focus" in general_settings_ov:
@@ -356,6 +360,8 @@ def on_release(key):
 listener = keyboard.Listener(on_press=on_press, on_release=on_release)
 listener.daemon = True
 listener.start()
+
+user_mouse_abort.start()
 
 # ── Cron schedule ─────────────────────────────────────────────────────────────
 next_run_at = {}
@@ -958,6 +964,31 @@ detector_lock = threading.Lock()
 _last_detector_restart = 0
 _was_paused_prev = True   # so on first run we don't reset; reset logout_detector when resuming from pause
 
+
+_user_mouse_skip_log_t = 0.0
+
+
+def _maybe_abort_on_fast_user_mouse():
+    """Abort the active YAML function if physical mouse moved unusually fast (Windows hook)."""
+    global _user_mouse_skip_log_t
+
+    if not user_mouse_abort.is_enabled():
+        return
+    if bot_paused["paused"] or runner.state != "running":
+        if user_mouse_abort.consume_abort_request():
+            now = time.time()
+            if now - _user_mouse_skip_log_t >= 5.0:
+                _user_mouse_skip_log_t = now
+                log.debug(
+                    "[UserMouse] Discarded abort latch (paused=%s function_running=%s)",
+                    bot_paused["paused"],
+                    runner.state == "running",
+                )
+        return
+    if user_mouse_abort.consume_abort_request():
+        runner.abort_current_function(reason="fast user mouse")
+
+
 def _game_loop():
     global _last_detector_restart, _detector_thread, running, _last_capture_time, _last_invalid_handle_log, last_stopped_key, _show_preview, _was_paused_prev
     now = time.time()
@@ -1105,12 +1136,14 @@ def _game_loop():
         except queue.Empty:
             pass
 
+        _maybe_abort_on_fast_user_mouse()
         was_running = runner.state == "running"
         try:
             runner.update(screenshot, wincap)
         except Exception as e:
             log.error("[Runner] CRASH in update: {}".format(e), exc_info=True)
             runner.state = "idle"
+        _maybe_abort_on_fast_user_mouse()
 
         # After function finishes, process pending queue
         if was_running and runner.state == "idle":
@@ -1134,6 +1167,7 @@ except KeyboardInterrupt:
     log.info("Ctrl+C received, shutting down...")
     sys.exit(0)
 
+user_mouse_abort.stop()
 listener.stop()
 try:
     cv.destroyAllWindows()

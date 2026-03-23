@@ -136,6 +136,15 @@ functions:
     enabled: true
     key: x
 
+# If true (Windows only), abort the running YAML function when the user moves the
+# physical mouse unusually fast. Synthetic bot input (pynput/pyautogui) is ignored.
+# Override in .env_config under general_settings if needed.
+abort_on_fast_user_mouse: true
+# fast_user_mouse_min_speed_px_s: 7500   # peak speed (px/s) between two physical moves
+# fast_user_mouse_window_sec: 0.12       # sliding window for path-length test
+# fast_user_mouse_window_min_dist_px: 380 # total physical path in window to trigger
+# fast_user_mouse_cooldown_sec: 0.45     # ignore further triggers briefly after abort
+# fast_user_mouse_count_all_moves_as_physical: false  # true = ignore injected flag (debug only; bot may trip)
 
 
  

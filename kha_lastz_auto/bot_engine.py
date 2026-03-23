@@ -279,6 +279,8 @@ class FunctionRunner:
         self._storm_start_t: float = 0.0
         self._storm_clicker_kwargs: dict = {}        # last start() args, used to restart after offset change
         self._storm_offset_restart_t: float | None = None  # time when offset_changed was first detected
+        self._storm_corner_restart_t: float | None = None  # delay before isolated corner click + FastClicker restart
+        self._match_click_storm_kwargs: dict = {}    # match_click click_storm: args for FastClicker restart
         self._step_pos_cache = None
         self._debug_click_saved = False
         self._step_last_click_t = None
@@ -336,6 +338,8 @@ class FunctionRunner:
         self._storm_start_t = 0.0
         self._storm_clicker_kwargs = {}
         self._storm_offset_restart_t = None
+        self._storm_corner_restart_t = None
+        self._match_click_storm_kwargs = {}
         self._last_zero_refresh_t = 0
         self._last_truck_crop_path = None
         self._ocr_prev_vals = {}  # {step_index: last_read_value} for wait_for_change_region
@@ -388,7 +392,7 @@ class FunctionRunner:
         self.state = "idle"
         self.function_name = None
 
-    def abort_current_function(self) -> bool:
+    def abort_current_function(self, reason: str = "user stop") -> bool:
         """Stop the active YAML function only. Does not change global pause (bot_paused).
 
         Returns True if a function was running and was aborted.
@@ -396,7 +400,7 @@ class FunctionRunner:
         if self.state != "running":
             return False
         name = self.function_name
-        log.info("[Runner] Aborted function: {} (user stop)".format(name))
+        log.info("[Runner] Aborted function: {} ({})".format(name, reason))
         self.stop()
         return True
 
@@ -1249,6 +1253,8 @@ class FunctionRunner:
         #                          template gone on refresh → storm stops immediately
         #   offset_change_time   — seconds between offset re-randomizations (default 1.0)
         #                          all clicks within the window land on the same pixel
+        #   offset_change_pause_sec — idle after offset rollover before restart (default 0.2)
+        #   storm_click_interval_sec — sleep after each storm click (default 0.1); or storm_click_max_rate
         #   close_ui_check       — every 1s, if template not visible click once at close_ui
         #                          position to dismiss any accidentally-opened UI (default true)
         #   close_ui_click_x/y   — fractional position to click when dismissing UI (default 0.03, 0.08)
