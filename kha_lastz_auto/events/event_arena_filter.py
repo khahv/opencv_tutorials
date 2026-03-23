@@ -9,9 +9,9 @@ Flow
 2. Take a fresh screenshot, then OCR *my_power* from an absolute screen-ratio region.
 3. OCR each opponent's power from their respective ratio regions.
 4. Collect opponents whose power is strictly less than my_power.
-5. Click the attack button of the weakest eligible opponent.
-6. Sleep ``sleep_before_combat`` seconds.
-7. Find and click the combat confirm button via template match.
+5. Click the attack button of the weakest eligible opponent, then advance the step (success).
+
+Follow-up UI (Combat, deploy, etc.) should be separate YAML steps (e.g. ``match_click``).
 
 YAML keys
 ---------
@@ -23,12 +23,6 @@ opponents : list of {x, y, w, h, attack_x, attack_y}
 sleep_before_ocr : float
     Seconds to wait after the step starts before taking the OCR screenshot.
     Allows the challenge screen to finish rendering. Default: 1.5
-combat_template : str
-    Path to the combat confirm button template image.
-combat_threshold : float
-    Template match threshold (default 0.8).
-sleep_before_combat : float
-    Seconds to wait after clicking Attack before clicking Combat (default 2.0).
 debug_save : bool
     When true, each OCR crop is saved to ``debug_ocr/arena_filter_<label>_<ts>_raw.png``.
 
@@ -192,20 +186,17 @@ def run(step: dict, screenshot, wincap, runner) -> str:
     wincap : WindowCapture
         Provides ``.w``, ``.h``, ``.get_screen_position()``, ``.get_screenshot()``.
     runner : FunctionRunner
-        Provides ``vision_cache``, ``_safe_click()``, ``_advance_step()``.
+        Provides ``_safe_click()``, ``_advance_step()``.
 
     Returns
     -------
     str
         Always ``"running"`` — consistent with bot_engine step conventions.
     """
-    my_power_cfg        = step.get("my_power_region") or {}
-    opponents_cfg       = step.get("opponents") or []
-    sleep_before_ocr    = float(step.get("sleep_before_ocr", 1.5))
-    combat_template     = step.get("combat_template")
-    combat_threshold    = float(step.get("combat_threshold", 0.8))
-    sleep_before_combat = float(step.get("sleep_before_combat", 2.0))
-    debug_save          = bool(step.get("debug_save", False))
+    my_power_cfg     = step.get("my_power_region") or {}
+    opponents_cfg    = step.get("opponents") or []
+    sleep_before_ocr = float(step.get("sleep_before_ocr", 1.5))
+    debug_save       = bool(step.get("debug_save", False))
 
     # Wait for the challenge screen to finish rendering before OCR
     if sleep_before_ocr > 0:
@@ -248,25 +239,7 @@ def run(step: dict, screenshot, wincap, runner) -> str:
     atk_py = int(float(best_opp.get("attack_y", 0.5)) * wincap.h)
     atk_sx, atk_sy = wincap.get_screen_position((atk_px, atk_py))
     runner._safe_click(atk_sx, atk_sy, wincap, "arena_filter attack")
-    log.info("[arena_filter] clicked attack at screen ({},{})".format(atk_sx, atk_sy))
-
-    # Step 4 – wait, then click the combat confirm button
-    time.sleep(sleep_before_combat)
-
-    if combat_template:
-        v_combat = runner.vision_cache.get(combat_template)
-        if v_combat:
-            scr_combat = wincap.get_screenshot()
-            combat_pts = v_combat.find(scr_combat, threshold=combat_threshold)
-            if combat_pts:
-                ccx, ccy = combat_pts[0][0], combat_pts[0][1]
-                csx, csy = wincap.get_screen_position((ccx, ccy))
-                runner._safe_click(csx, csy, wincap, "arena_filter combat")
-                log.info("[arena_filter] clicked combat button at ({},{})".format(ccx, ccy))
-            else:
-                log.info("[arena_filter] combat template not found on screen")
-        else:
-            log.info("[arena_filter] combat template not loaded: {}".format(combat_template))
+    log.info("[arena_filter] clicked attack at screen ({},{}) -> step done".format(atk_sx, atk_sy))
 
     runner._advance_step(True)
     return "running"
@@ -275,10 +248,6 @@ def run(step: dict, screenshot, wincap, runner) -> str:
 def collect_templates(step: dict) -> list:
     """Return template paths used by this step so they can be pre-loaded.
 
-    Called by ``bot_engine.collect_templates`` for every ``arena_filter`` step.
+    ``arena_filter`` does not use template images; returns an empty list.
     """
-    templates = []
-    tpl = step.get("combat_template")
-    if tpl:
-        templates.append(tpl)
-    return templates
+    return []

@@ -1,5 +1,5 @@
 # Function: AttackArena
-description: "Navigate to Arena -> Challenge screen -> Filter opponents by power -> Attack weakest -> Combat"
+description: "Navigate to Arena -> Challenge screen -> OCR powers -> click Attack on weakest eligible opponent (follow-up steps in YAML)"
 
 steps:
 
@@ -60,11 +60,10 @@ steps:
     one_shot: true
     timeout_sec: 2
 
-  # arena_filter: read my_power + 5 opponent powers from absolute screen ratio regions.
-  # Compare each opponent against my_power; click attack for the weakest one that is
-  # strictly less than my own power, then sleep and click the Combat confirm button.
+  # arena_filter: OCR my_power + opponent powers; pick weakest opponent with power < mine;
+  # click that row's Attack ratio position, then this step ends (add match_click / sleep after as needed).
   #
-  # Power format: e.g. "109.55M", "22.33M", "9.5M"  (captured by power_pattern)
+  # Power format: e.g. "109.55M", "22.33M", "9.5M"
   - event_type: arena_filter
     
 
@@ -118,14 +117,53 @@ steps:
         attack_x: 0.75
         attack_y: 0.64
 
-    # Combat confirm button clicked after sleep_before_combat seconds
-    combat_template: buttons_template/ArenaCombat.png
-    combat_threshold: 0.8
-    sleep_before_combat: 2.0
+  
+  - event_type: sleep
+    duration_sec: 2
+
+  - event_type: match_click
+    template: buttons_template/ArenaQuickDeploy.png
+    match_color: true
+    threshold: 0.8
+    one_shot: true
+    timeout_sec: 2
+    on_fail_goto: ArenaFight
+
+  - event_type: match_click
+    name: ArenaFight
+    template: buttons_template/ArenaFight.png
+    threshold: 0.8
+    one_shot: true
+    timeout_sec: 2
+    on_fail_goto: ArenaCombat
+    on_success_goto: SleepBeforeQuickComplete
+  
+
+  # Combat button only visible in 3v3 mode:
+  - event_type: match_click
+    name: ArenaCombat
+    template: buttons_template/ArenaCombat.png
+    on_success_goto: SleepBeforeCloseUI
+    threshold: 0.8
+    one_shot: true
+    timeout_sec: 2
+
+
+  - event_type: sleep 
+    duration_sec: 4
+    name: SleepBeforeQuickComplete
+
+  - event_type: match_click
+    template: buttons_template/ArenaQuickCompleteBattle.png
+    threshold: 0.8
+    one_shot: true
+    timeout_sec: 2
 
 
   - event_type: sleep
     duration_sec: 4
+    name: SleepBeforeCloseUI
+    run_always: true
 
   - event_type: close_ui
     template: buttons_template/HeadquartersButton.png
