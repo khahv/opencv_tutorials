@@ -141,6 +141,11 @@ class FastClicker:
                     time.sleep(click_sleep_sec)
                     continue
 
+            try:
+                import user_mouse_abort as _uma
+                _uma.suppress_trip_for_sec(max(0.12, click_sleep_sec * 0.5))
+            except Exception:
+                pass
             _mouse.position = (_cur_x, _cur_y)
             self.last_target_xy = (_cur_x, _cur_y)
             _mouse.click(Button.left)

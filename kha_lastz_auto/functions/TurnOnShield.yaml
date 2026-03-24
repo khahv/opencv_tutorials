@@ -81,10 +81,19 @@ steps:
       "8h":  [0.75, 0.31]
       "24h": [0.75, 0.40]
       "3d":  [0.75, 0.49]
+   
+  - event_type: sleep
+    duration_sec: 2
+    
+  - event_type: match_click
+    template: buttons_template/ShieldConfirmButton.png
+    threshold: 0.75
+    one_shot: true
 
   # Always close the City Walls panel — runs even if previous steps aborted
   - event_type: close_ui
     name: CloseUI
+    run_always: true
     template: buttons_template/HeadquartersButton.png
     world_button: buttons_template/WorldButton.png
     back_button: buttons_template/BackButton.png

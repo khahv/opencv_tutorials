@@ -192,15 +192,9 @@ def _send_once(page, message: str, target: str, _log) -> bool:
     msg = message.strip()
     if msg.lower().startswith("@all "):
         text_after = msg[5:].strip()
-        time.sleep(DEBUG_STEP_SLEEP)
-        page.keyboard.type("@", delay=50)
-        time.sleep(DEBUG_STEP_SLEEP)
-        page.keyboard.type("A", delay=50)
-        time.sleep(DEBUG_STEP_SLEEP)
-        page.keyboard.type("l", delay=50)
-        time.sleep(DEBUG_STEP_SLEEP)
-        page.keyboard.type("l", delay=50)
-        time.sleep(DEBUG_STEP_SLEEP)
+        # Type @All slowly so Zalo's mention popover has time to appear
+        page.keyboard.type("@All", delay=80)
+        time.sleep(0.6)
         mention_ok = False
         try:
             page.get_by_title(MENTION_ALL_TITLE).first.click(timeout=5000)
@@ -213,20 +207,23 @@ def _send_once(page, message: str, target: str, _log) -> bool:
                 pass
         if not mention_ok:
             _log.info("[ZaloWeb] Mention @All popover not found, typing rest as text")
+        # Use keyboard.type instead of execCommand — execCommand is deprecated and
+        # does not trigger React state updates in modern Chromium, leaving the send
+        # button disabled.
         if text_after:
-            page.evaluate(
-                "(text) => document.execCommand('insertText', false, text)",
-                " " + text_after,
-            )
-        time.sleep(DEBUG_STEP_SLEEP)
+            time.sleep(0.2)
+            page.keyboard.type(" " + text_after, delay=30)
     else:
-        page.evaluate(
-            "(text) => document.execCommand('insertText', false, text)",
-            message,
-        )
-        time.sleep(0.15)
+        page.keyboard.type(msg, delay=30)
 
-    page.locator(SEND_BUTTON_SELECTOR).first.click(timeout=3000)
+    time.sleep(0.3)
+    # Press Enter as primary send method; fall back to button click if needed.
+    # The send button may remain data-disabled when React state is not updated,
+    # so keyboard Enter is more reliable.
+    try:
+        page.keyboard.press("Enter")
+    except Exception:
+        page.locator(SEND_BUTTON_SELECTOR).first.click(timeout=5000)
     return True
 
 

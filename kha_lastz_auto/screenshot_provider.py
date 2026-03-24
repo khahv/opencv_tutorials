@@ -6,19 +6,38 @@ Abstracts screenshot capture for different emulator modes.
   Win32ScreenshotProvider  — captures via win32gui + mss (default, PC / native window)
   AdbScreenshotProvider    — captures via LDPlayer ADB  (adb exec-out screencap -p)
 
+  ScreenshotCaptureService — single pipeline: only capture_frame() performs a grab;
+                             get_cached() returns the last frame for detectors and
+                             wincap.get_screenshot() (no duplicate screencap).
+
 Usage:
-    provider = create_screenshot_provider("pc", wincap=wincap)
-    img = provider.get_screenshot()   # BGR ndarray or None
+    service = create_screenshot_capture_service("pc", wincap=wincap)
+    img = service.capture_frame()   # main loop / explicit refresh only
+    cached = service.get_cached()   # readers (detectors, events use tick screenshot when possible)
 """
 
 import logging
 import subprocess
 import threading
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 
 log = logging.getLogger("kha_lastz")
+
+# Set by main / game_surface after connect; cleared on disconnect.
+_active_capture_service: Optional["ScreenshotCaptureService"] = None
+
+
+def set_active_capture_service(service: Optional["ScreenshotCaptureService"]) -> None:
+    """Install the single capture service (PC or LDPlayer). None on disconnect."""
+    global _active_capture_service
+    _active_capture_service = service
+
+
+def get_active_capture_service() -> Optional["ScreenshotCaptureService"]:
+    """Return the active ScreenshotCaptureService, or None if not connected."""
+    return _active_capture_service
 
 
 class Win32ScreenshotProvider:
@@ -127,6 +146,45 @@ class AdbScreenshotProvider:
         except Exception as exc:
             log.warning("[ADB] screencap error: %s", exc)
             return None
+
+
+class ScreenshotCaptureService:
+    """
+    Single capture pipeline for both PC (Win32) and LDPlayer (ADB).
+
+    Only capture_frame() calls the backend grab. All other code should use
+    get_cached() or the per-tick ``screenshot`` passed into runner.update.
+    """
+
+    def __init__(self, backend: Any) -> None:
+        self._backend = backend
+        self._lock = threading.Lock()
+        self._last: Optional[np.ndarray] = None
+
+    def capture_frame(self) -> Optional[np.ndarray]:
+        """Perform one real screen grab and store it. Main game loop and reconnect use this."""
+        with self._lock:
+            img = self._backend.get_screenshot()
+            self._last = img
+            return img
+
+    def get_cached(self) -> Optional[np.ndarray]:
+        """Last frame from capture_frame(); no grab. Safe for background detector thread."""
+        with self._lock:
+            return self._last
+
+
+def create_screenshot_capture_service(
+    emulator: str,
+    wincap=None,
+    adb_path: Optional[str] = None,
+    device_serial: Optional[str] = None,
+) -> ScreenshotCaptureService:
+    """Build backend + ScreenshotCaptureService (PC or LDPlayer)."""
+    backend = create_screenshot_provider(
+        emulator, wincap=wincap, adb_path=adb_path, device_serial=device_serial
+    )
+    return ScreenshotCaptureService(backend)
 
 
 def create_screenshot_provider(

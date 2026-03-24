@@ -789,7 +789,15 @@ class FunctionRunner:
                         _sx, _sy = wincap.get_screen_position((_px, _py))
                         self._safe_click(_sx, _sy, wincap, "close_ui default")
                     time.sleep(1)
-                    _fresh = wincap.get_screenshot() if hasattr(wincap, "get_screenshot") else None
+                    _fresh = None
+                    try:
+                        from screenshot_provider import get_active_capture_service
+
+                        _svc = get_active_capture_service()
+                        if _svc is not None:
+                            _fresh = _svc.capture_frame()
+                    except Exception:
+                        pass
                     if _fresh is not None:
                         scr = _fresh
                     time.sleep(0.3)
@@ -1240,7 +1248,7 @@ class FunctionRunner:
             return _ev_arena_filter.run(step, screenshot, wincap, self)
 
         # ── match_storm_click ────────────────────────────────────────────────────
-        # Dedicated storm-click step: find template → guard outside clicks → FastClick.
+        # Dedicated storm-click step: find template → FastClick storm.
         # YAML keys:
         #   template, threshold (default 0.75)
         #   timeout_sec          — wait up to N seconds for template (default 999)
@@ -1248,7 +1256,6 @@ class FunctionRunner:
         #   max_clicks           — stop after this many clicks (default 0 = unlimited)
         #   offset_x/y           — ±random click offset as fraction of window size (default 0)
         #                          e.g. 0.03 = ±3% of window width/height in pixels
-        #   guard_outside        — block user clicks outside game window (default true)
         #   position_refresh_sec — re-detect template every N seconds and reposition (default 0 = off)
         #                          template gone on refresh → storm stops immediately
         #   offset_change_time   — seconds between offset re-randomizations (default 1.0)
@@ -1319,6 +1326,11 @@ class FunctionRunner:
                 " [{}]".format(label) if label else "",
             )
             return False
+        try:
+            import user_mouse_abort as _uma
+            _uma.suppress_trip_for_sec(0.18)
+        except Exception:
+            pass
         _mouse_ctrl.position = (sx, sy)
         return True
 

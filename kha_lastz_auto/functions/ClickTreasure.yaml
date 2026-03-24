@@ -42,13 +42,14 @@ steps:
     offset_change_time: 5
     offset_change_pause_sec: 0.1  # idle after offset rollover before new random pixel (default 0.2)
     storm_click_interval_sec: 0.05  # sleep after each storm click; default 0.1 (~10/s). Or storm_click_max_rate
-    check_template_after: 250      # start checking template presence after 10s
-    check_template_frequence: 10  # then re-check every 10s
+    check_template_after: 250       # seconds after storm start before first periodic template check
+    check_template_frequence: 10    # then re-check every N seconds (storm pauses + template_verify_settle_sec before capture)
+    template_verify_settle_sec: 0.25  # optional; wait after stopping clicks so Treasure3 is visible (default 0.25)
     offset_x: 0.03       # ±3%10  of window width (~32px on 1080px window)
     offset_y: 0.03       # ±3% of window height (~58px on 1920px window)
-    # guard_outside: true  # block user clicks outside game window
-    close_ui_check: false           # mặc định true, tắt thì set false
-    close_ui_click_x: 0.03        # vị trí click để dismiss UI (default)
+    close_ui_check: true                # mặc định true, tắt thì set false
+    close_ui_check_interval_sec: 5.0   # tần suất check close_ui (giây); default 1.0
+    close_ui_click_x: 0.03             # vị trí click để dismiss UI (default)
     close_ui_click_y: 0.5
     close_ui_back_button: buttons_template/BackButton.png  # optional
 

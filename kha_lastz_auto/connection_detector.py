@@ -29,8 +29,8 @@ AFTER_ZOOMOUT_SLEEP_SEC: float = 2.0     # sleep after world_zoomout before clic
 AFTER_CLICK_SLEEP_SEC: float = 2.0       # sleep after clicking middle before screenshot
 
 # ── BuffIcon check ────────────────────────────────────────────────────────────
-BUFF_MISS_RECHECK_SEC: float = 300    # re-check delay (seconds) after first BuffIcon miss
-BUFF_MISSES_BEFORE_RESTART: int = 5      # consecutive misses required before killing and restarting
+BUFF_MISS_RECHECK_SEC: float = 60     # re-check delay (seconds) after first BuffIcon miss
+BUFF_MISSES_BEFORE_RESTART: int = 3      # consecutive misses required before killing and restarting
 
 # ── Vision thresholds ─────────────────────────────────────────────────────────
 THRESHOLD_DEFAULT: float = 0.75          # default template-match threshold
@@ -179,6 +179,7 @@ class ConnectionDetector:
         lastz_window_name: str = "LastZ",
         interval_sec: float = 300.0,
         buff_icon_threshold: float = 0.75,
+        autostart_state_ref: dict | None = None,
     ):
         self._buff_icon_path = buff_icon_template_path
         self._world_template = world_zoomout_template_path
@@ -190,7 +191,16 @@ class ConnectionDetector:
         self._buff_threshold = buff_icon_threshold
         self._last_run_time = time.time()  # first check after interval_sec from startup
         self._last_start_time: float = 0.0  # timestamp of last _start_lastz call
-        self._buff_miss_count: int = 0  # consecutive BuffIcon-not-found count; restart only at 2
+        self._buff_miss_count: int = 0  # consecutive BuffIcon-not-found; restart at BUFF_MISSES_BEFORE_RESTART
+        self._busy_deferred_log_t: float = 0.0  # throttle "deferred" log while busy
+        # Shared with maybe_autostart_lastz so both systems respect the same cooldown.
+        # When connection_detector starts LastZ, it stamps this dict so the watcher loop
+        # won't start a second copy while the game is still loading.
+        self._autostart_state_ref: dict = autostart_state_ref if autostart_state_ref is not None else {}
+
+    def _stamp_autostart(self) -> None:
+        """Stamp the shared autostart-state dict so maybe_autostart_lastz won't fire a second start."""
+        self._autostart_state_ref["t"] = time.time()
 
     def reset(self):
         """On resume: next full check in interval_sec (e.g. 5 min), not immediately."""
@@ -243,6 +253,7 @@ class ConnectionDetector:
             log.info("[ConnectionDetector] LastZ process not running (PID=%s), waiting %.0fs then starting...", pid, WAIT_BEFORE_START_SEC)
             time.sleep(WAIT_BEFORE_START_SEC)
             self._last_start_time = now
+            self._stamp_autostart()
             if _start_lastz(self._lastz_exe, log):
                 time.sleep(WAIT_AFTER_START_SEC)
             hwnd, new_pid = _find_window_and_pid(self._window_name)
@@ -268,14 +279,16 @@ class ConnectionDetector:
                     pass
             return  # no screenshot available, skip full check
 
-        # Guard: skip full connection check while any bot function is actively running
-        if busy:
-            log.debug("[ConnectionDetector] Skipped — bot function is running")
-            self._last_run_time = now  # reset interval so check runs after interval_sec of idle time
-            return
-
         # 2) Full connection check only every interval_sec (e.g. 5 min)
         if not self.should_run(now):
+            return
+
+        # Guard: skip full connection check while any bot function is actively running.
+        # Do NOT reset _last_run_time here — the check remains "due" and fires as soon as idle.
+        if busy:
+            if now - self._busy_deferred_log_t >= 30.0:
+                log.debug("[ConnectionDetector] Check due but deferred — bot function is running")
+                self._busy_deferred_log_t = now
             return
         # Skip connection check when on login screen (PasswordSlot visible)
         if current_screenshot is not None:
@@ -351,12 +364,13 @@ class ConnectionDetector:
             self._last_run_time = now - self._interval_sec + BUFF_MISS_RECHECK_SEC  # schedule re-check
             return
 
-        # Two consecutive misses → assume disconnected, kill and restart
+        # BUFF_MISSES_BEFORE_RESTART consecutive misses → assume disconnected, kill and restart
         self._buff_miss_count = 0
-        log.warning("[ConnectionDetector] BuffIcon not found 2 times in a row → disconnection, killing and restarting LastZ")
+        log.warning("[ConnectionDetector] BuffIcon not found %d times in a row → disconnection, killing and restarting LastZ", BUFF_MISSES_BEFORE_RESTART)
         _kill_process(pid, log)
         time.sleep(KILL_WAIT_SEC)
         self._last_start_time = time.time()
+        self._stamp_autostart()
         if _start_lastz(self._lastz_exe, log):
             time.sleep(WAIT_AFTER_START_SEC)
         hwnd, new_pid = _find_window_and_pid(self._window_name)

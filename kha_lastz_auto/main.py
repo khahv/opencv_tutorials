@@ -14,32 +14,6 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 from ui_locale import normalize_language_code as _norm_lang
 
-
-def _require_admin_win():
-    """If not running as admin on Windows, trigger UAC and re-launch elevated; then exit."""
-    if sys.platform != "win32":
-        return
-    try:
-        if ctypes.windll.shell32.IsUserAnAdmin() != 0:
-            return
-    except Exception:
-        pass
-    # Not admin: run self with "runas" to show UAC prompt
-    script = os.path.abspath(sys.argv[0])
-    quoted = '"' + script + '"' if " " in script else script
-    params = quoted + (" " + " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "")
-    ret = ctypes.windll.shell32.ShellExecuteW(
-        None, "runas", sys.executable, params, os.getcwd(), 1  # 1 = SW_SHOWNORMAL
-    )
-    if ret > 32:  # success
-        sys.exit(0)
-    # UAC cancelled or error: exit anyway so user sees no duplicate window
-    sys.exit(1)
-
-
-_require_admin_win()
-
-
 from dotenv import load_dotenv
 
 def _load_dotenv(path=".env"):
@@ -212,6 +186,20 @@ _GAME_WINDOW_NAME = "LDPlayer" if _emulator == "ldplayer" else "LastZ"
 _LDPLAYER_ADB_PATH = config.get("ldplayer_adb_path") or None
 log.info("Emulator mode: %s (window='%s')", _emulator, _GAME_WINDOW_NAME)
 
+# Min seconds between ScreenshotCaptureService.capture_frame() in the game loop (UI: App settings)
+_civ = general_settings_ov.get("capture_interval_sec")
+if _civ is None:
+    _civ = config.get("capture_interval_sec", 0.1)
+try:
+    _CAPTURE_INTERVAL = max(0.02, min(2.0, float(_civ)))
+except (TypeError, ValueError):
+    _CAPTURE_INTERVAL = 0.1
+log.info(
+    "Screenshot capture interval: %.3fs (~%.0f FPS cap)",
+    _CAPTURE_INTERVAL,
+    (1.0 / _CAPTURE_INTERVAL) if _CAPTURE_INTERVAL > 0 else 0.0,
+)
+
 key_bindings      = {}   # key_char -> fn_name
 fn_enabled        = {}   # fn_name  -> bool
 schedules         = []   # [{ "function": ..., "cron": ... }]
@@ -264,19 +252,20 @@ from game_surface import (
     sync_lastz_pid_from_wincap,
     PcWin32Surface,
 )
+from screenshot_provider import set_active_capture_service
 
 wincap = None
-screenshot_provider = None
+screenshot_service = None
 
 if _emulator == "ldplayer":
-    wincap, screenshot_provider = LdplayerAdbSurface.connect(
+    wincap, screenshot_service = LdplayerAdbSurface.connect(
         adb_path=_LDPLAYER_ADB_PATH,
         device_serial=config.get("ldplayer_device_serial") or None,
         logger=log,
     )
 else:
     try:
-        wincap, screenshot_provider = initial_pc_connect_or_none(
+        wincap, screenshot_service = initial_pc_connect_or_none(
             window_name=_GAME_WINDOW_NAME,
             adb_path=_LDPLAYER_ADB_PATH,
             logger=log,
@@ -291,7 +280,8 @@ sync_lastz_pid_from_wincap(wincap, lastz_pid, log)
 
 _ref_w = config.get("reference_width")   # template capture resolution → vision scale
 _ref_h = config.get("reference_height")
-_show_preview = config.get("show_preview", False)
+_sp_ov = general_settings_ov.get("show_preview")
+_show_preview = bool(config.get("show_preview", False)) if _sp_ov is None else bool(_sp_ov)
 # _win_w, _win_h already set from general_settings_ov / config above
 
 apply_post_connect_window_prefs(
@@ -319,6 +309,9 @@ fn_settings = config_manager.load_fn_settings()
 bot_paused = {"paused": True}
 runner = FunctionRunner(vision_cache, fn_settings=fn_settings, bot_paused=bot_paused)
 runner.load(functions)
+
+if wincap is not None:
+    wincap.mouse_log_suppress = lambda: runner.state == "running"
 
 # ── Ctrl+C / SIGINT ──────────────────────────────────────────────────────────
 exit_requested = False
@@ -361,6 +354,7 @@ listener = keyboard.Listener(on_press=on_press, on_release=on_release)
 listener.daemon = True
 listener.start()
 
+user_mouse_abort.set_ui_running_source(bot_paused)
 user_mouse_abort.start()
 
 # ── Cron schedule ─────────────────────────────────────────────────────────────
@@ -581,7 +575,10 @@ def _on_enabled_change(fn_name, enabled):
 
 
 # Mutable dict for general_settings; written to .env_config on save.
-_general_settings = {
+# Start from the full .env_config general_settings so that unmanaged keys
+# (e.g. fast_user_mouse_min_speed_px_s) are preserved across saves.
+_general_settings = dict(general_settings_ov)
+_general_settings.update({
     "auto_focus": auto_focus,
     "window_width": _win_w,
     "window_height": _win_h,
@@ -589,12 +586,14 @@ _general_settings = {
     "emulator": _emulator,
     "lastz_exe_path": LASTZ_EXE_PATH or "",
     "auto_start_lastz": _auto_start_lastz,
-}
+    "capture_interval_sec": _CAPTURE_INTERVAL,
+    "show_preview": _show_preview,
+})
 
 
 def _on_general_setting_change(key, value):
-    global auto_focus, _win_w, _win_h, _emulator, _GAME_WINDOW_NAME, wincap, screenshot_provider
-    global LASTZ_EXE_PATH, _auto_start_lastz
+    global auto_focus, _win_w, _win_h, _emulator, _GAME_WINDOW_NAME, wincap, screenshot_service
+    global LASTZ_EXE_PATH, _auto_start_lastz, _CAPTURE_INTERVAL, _show_preview
     if key == "auto_focus":
         auto_focus = value
         if wincap is not None:
@@ -625,7 +624,8 @@ def _on_general_setting_change(key, value):
         _emulator = value.lower()
         _GAME_WINDOW_NAME = "LDPlayer" if _emulator == "ldplayer" else "LastZ"
         wincap = None
-        screenshot_provider = None
+        screenshot_service = None
+        set_active_capture_service(None)
         if _emulator == "pc":
             adb_input.set_adb_input(None)
             log.info("[Settings] Emulator → pc — ADB input cleared, waiting for LastZ window.")
@@ -649,7 +649,36 @@ def _on_general_setting_change(key, value):
         config_manager.save(fn_configs, fn_enabled, general_settings=_general_settings)
         log.info("[Settings] Auto start LastZ → %s", _auto_start_lastz)
         return
-    _general_settings["auto_focus"] = auto_focus
+    elif key == "capture_interval_sec":
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            log.warning("[Settings] Invalid capture_interval_sec: %r", value)
+            return
+        v = max(0.02, min(2.0, v))
+        _CAPTURE_INTERVAL = v
+        _general_settings["capture_interval_sec"] = v
+        config_manager.save(fn_configs, fn_enabled, general_settings=_general_settings)
+        log.info(
+            "[Settings] capture_interval_sec → %.3fs (~%.0f FPS cap)",
+            v,
+            (1.0 / v) if v > 0 else 0.0,
+        )
+        return
+    elif key == "show_preview":
+        _show_preview = bool(value)
+        _general_settings["show_preview"] = _show_preview
+        config_manager.save(fn_configs, fn_enabled, general_settings=_general_settings)
+        if _show_preview:
+            _start_preview_thread()
+        else:
+            _stop_preview_thread()
+        log.info("[Settings] show_preview → %s", _show_preview)
+        return
+    else:
+        log.debug("[Settings] Unknown general_setting key %r — ignored.", key)
+        return
+    # auto_focus: only branch that falls through — persist after wincap / dict update.
     config_manager.save(fn_configs, fn_enabled, general_settings=_general_settings)
 
 # UI will run on main thread via .run_main() after game loop thread is started (reduces startup hang)
@@ -683,13 +712,49 @@ _ui = BotUI(fn_enabled, fn_configs, runner, next_run_at,
             connection_status=lambda: wincap is not None and _is_game_window_valid(),
             start_lastz_callback=_launch_lastz)
 
+_preview_imshow_failed_logged = False
+
+
+def _sync_show_preview_checkbox_false() -> None:
+    """Uncheck live preview in the UI from a background thread (Tkinter is not thread-safe)."""
+    try:
+        root = getattr(_ui, "_root", None)
+        var = getattr(_ui, "_show_preview_var", None)
+        if root is not None and var is not None:
+            root.after(0, lambda v=var: v.set(False))
+    except Exception:
+        pass
+
+
+def _persist_show_preview_off(*, reason_for_log: str | None = None) -> None:
+    """Disable live preview, persist to .env_config, and sync the settings checkbox."""
+    global _show_preview, _preview_imshow_failed_logged
+    _show_preview = False
+    _general_settings["show_preview"] = False
+    try:
+        config_manager.save(fn_configs, fn_enabled, general_settings=_general_settings)
+    except Exception as exc:
+        log.warning("[Settings] Could not persist show_preview=False: %s", exc)
+    _stop_preview_thread()
+    if reason_for_log is not None and not _preview_imshow_failed_logged:
+        _preview_imshow_failed_logged = True
+        msg = reason_for_log.split("\n", 0)[0][:240]
+        log.warning(
+            "[OpenCV] Live preview disabled (%s). Install the GUI build: pip install opencv-python "
+            "(uninstall opencv-python-headless if present).",
+            msg,
+        )
+    _sync_show_preview_checkbox_false()
+    log.info("[Settings] show_preview → False (HighGUI unavailable, saved)")
+
+
 # ── Focus thread ──────────────────────────────────────────────────────────────
 running = True
 
 _highgui_warned = False
 
 def _safe_waitkey(ms=1):
-    """Yield time / pump HighGUI events if available. Works on OpenCV builds with GUI: NONE."""
+    """Pump HighGUI events if available. Only call this when an OpenCV window exists."""
     global _highgui_warned
     try:
         return cv.waitKey(ms)
@@ -699,6 +764,66 @@ def _safe_waitkey(ms=1):
             _highgui_warned = True
         time.sleep(ms / 1000.0)
         return -1
+
+
+# ── Preview thread ────────────────────────────────────────────────────────────
+# Owns the OpenCV HighGUI window on its own thread so it never competes with
+# Tkinter's Win32 message pump on the main thread.
+_preview_stop_event = threading.Event()
+_PREVIEW_WINDOW = "LastZ Capture"
+
+
+def _preview_thread_fn():
+    """Dedicated thread that owns the OpenCV preview window lifecycle.
+
+    Polls the active ScreenshotCaptureService cache at the same interval as the
+    screenshot capture thread (_CAPTURE_INTERVAL), so every captured frame is shown.
+    """
+    from screenshot_provider import get_active_capture_service
+    window_open = False
+    while not _preview_stop_event.is_set():
+        time.sleep(_CAPTURE_INTERVAL)
+        svc = get_active_capture_service()
+        if svc is None:
+            continue
+        frame = svc.get_cached()
+        if frame is None:
+            continue
+        if not window_open:
+            try:
+                cv.namedWindow(_PREVIEW_WINDOW, cv.WINDOW_NORMAL)
+                window_open = True
+            except Exception as e:
+                log.warning("[Preview] Could not create window: %s", e)
+                continue
+        try:
+            cv.imshow(_PREVIEW_WINDOW, frame)
+            cv.waitKey(1)
+        except Exception as e:
+            log.warning("[Preview] imshow failed: %s — disabling preview.", e)
+            _persist_show_preview_off(reason_for_log=str(e))
+            break
+    if window_open:
+        try:
+            cv.destroyWindow(_PREVIEW_WINDOW)
+        except Exception:
+            pass
+
+
+_preview_thread: threading.Thread | None = None
+
+
+def _start_preview_thread() -> None:
+    global _preview_thread
+    if _preview_thread is not None and _preview_thread.is_alive():
+        return
+    _preview_stop_event.clear()
+    _preview_thread = threading.Thread(target=_preview_thread_fn, daemon=True, name="PreviewThread")
+    _preview_thread.start()
+
+
+def _stop_preview_thread() -> None:
+    _preview_stop_event.set()
 
 def focus_loop():
     while running and not exit_requested:
@@ -720,25 +845,26 @@ _pc_autostart_watch_state = {"t": 0.0}
 
 
 def _window_connect_loop():
-    global wincap, screenshot_provider
+    global wincap, screenshot_service
     while running and not exit_requested:
         time.sleep(3)
         if not running or exit_requested:
             break
 
+        _prev_wincap = wincap
         if _emulator == "ldplayer":
-            wincap, screenshot_provider = LdplayerAdbSurface.watcher_step(
+            wincap, screenshot_service = LdplayerAdbSurface.watcher_step(
                 wincap,
-                screenshot_provider,
+                screenshot_service,
                 adb_path=_LDPLAYER_ADB_PATH,
                 device_serial=config.get("ldplayer_device_serial") or None,
                 logger=log,
                 update_vision_scale=update_vision_scale,
             )
         else:
-            wincap, screenshot_provider = PcWin32Surface.watcher_step(
+            wincap, screenshot_service = PcWin32Surface.watcher_step(
                 wincap,
-                screenshot_provider,
+                screenshot_service,
                 window_name=_GAME_WINDOW_NAME,
                 adb_path=_LDPLAYER_ADB_PATH,
                 auto_focus=auto_focus,
@@ -752,6 +878,8 @@ def _window_connect_loop():
                 logger=log,
                 update_vision_scale=update_vision_scale,
             )
+        if wincap is not None and wincap is not _prev_wincap:
+            wincap.mouse_log_suppress = lambda: runner.state == "running"
 
 _window_watcher_thread = threading.Thread(target=_window_connect_loop, daemon=True)
 _window_watcher_thread.start()
@@ -828,6 +956,7 @@ connection_detector = ConnectionDetector(
     lastz_window_name=_GAME_WINDOW_NAME,
     interval_sec=300.0,   # 5 minutes
     buff_icon_threshold=0.75,
+    autostart_state_ref=_pc_autostart_watch_state,
 )
 
 # ── Detector background thread ─────────────────────────────────────────────────
@@ -835,7 +964,7 @@ connection_detector = ConnectionDetector(
 # main thread blocks clicking. Instead, run them in a background thread every 2s
 # and post events to a queue for the main loop to handle.
 _detector_event_queue = queue.Queue()
-_DETECTOR_INTERVAL = 5.0  # background detectors check every 2s
+_DETECTOR_INTERVAL = 5.0  # background detectors: read cached frame every N seconds (no grab)
 _last_detector_screenshot_fail_log = 0.0  # throttle "screenshot failed" log
 
 def _detector_loop():
@@ -850,11 +979,11 @@ def _detector_loop():
         if bot_paused["paused"]:
             continue
         # Skip if window not connected yet
-        if wincap is None or screenshot_provider is None:
+        if wincap is None or screenshot_service is None:
             continue
         _tick += 1
         try:
-            img = screenshot_provider.get_screenshot()
+            img = screenshot_service.get_cached()
             if img is None:
                 _now = time.time()
                 if _now - _last_detector_screenshot_fail_log >= 15.0:
@@ -956,20 +1085,61 @@ _detector_thread = threading.Thread(target=_detector_loop, daemon=True)
 _detector_thread.start()
 
 # ── Game loop (background thread; Tkinter runs on main thread to avoid startup hang) ──
-_CAPTURE_INTERVAL = 0.1   # 10 FPS cap
-_last_capture_time = 0.0
+# _CAPTURE_INTERVAL is set at startup from config / .env_config (see above)
 _last_invalid_handle_log = 0.0   # throttle "Invalid window handle" log to at most once per 15s
 last_stopped_key = None
 detector_lock = threading.Lock()
 _last_detector_restart = 0
 _was_paused_prev = True   # so on first run we don't reset; reset logout_detector when resuming from pause
+_user_mouse_pause_prev = None  # edge-detect UI pause for user_mouse_abort hook queue drain
+
+# ── Screenshot capture thread ──────────────────────────────────────────────────
+# Runs independently from the game loop so bot functions never block fresh captures.
+_screenshot_stop_event = threading.Event()
+
+
+def _screenshot_loop():
+    """Continuously capture frames at _CAPTURE_INTERVAL into the service cache.
+    All consumers (game loop, bot functions, preview, detectors) read get_cached()."""
+    _last_invalid_log = 0.0
+    while not _screenshot_stop_event.is_set():
+        svc = screenshot_service
+        wc = wincap
+        if svc is None or wc is None:
+            time.sleep(0.05)
+            continue
+        try:
+            update_vision_scale()
+        except Exception as _e:
+            if getattr(_e, "winerror", None) == 1400:
+                _t = time.time()
+                if _t - _last_invalid_log >= 15.0:
+                    log.warning("[ScreenshotThread] Invalid window handle, skipping")
+                    _last_invalid_log = _t
+                time.sleep(0.1)
+                continue
+        try:
+            svc.capture_frame()
+        except Exception as _e:
+            if getattr(_e, "winerror", None) == 1400:
+                _t = time.time()
+                if _t - _last_invalid_log >= 15.0:
+                    log.warning("[ScreenshotThread] Invalid window handle on capture, skipping")
+                    _last_invalid_log = _t
+                time.sleep(0.1)
+                continue
+        time.sleep(_CAPTURE_INTERVAL)
+
+
+_screenshot_thread = threading.Thread(target=_screenshot_loop, daemon=True, name="ScreenshotThread")
+_screenshot_thread.start()
 
 
 _user_mouse_skip_log_t = 0.0
 
 
 def _maybe_abort_on_fast_user_mouse():
-    """Abort the active YAML function if physical mouse moved unusually fast (Windows hook)."""
+    """Abort the active YAML function if the user performed the zoom-shake mouse gesture (Windows)."""
     global _user_mouse_skip_log_t
 
     if not user_mouse_abort.is_enabled():
@@ -977,7 +1147,10 @@ def _maybe_abort_on_fast_user_mouse():
     if bot_paused["paused"] or runner.state != "running":
         if user_mouse_abort.consume_abort_request():
             now = time.time()
-            if now - _user_mouse_skip_log_t >= 5.0:
+            if (
+                user_mouse_abort.LOG_USER_MOUSE_SHAKE_DETECT
+                and now - _user_mouse_skip_log_t >= 5.0
+            ):
                 _user_mouse_skip_log_t = now
                 log.debug(
                     "[UserMouse] Discarded abort latch (paused=%s function_running=%s)",
@@ -989,12 +1162,27 @@ def _maybe_abort_on_fast_user_mouse():
         runner.abort_current_function(reason="fast user mouse")
 
 
+def _sync_user_mouse_abort_ui_pause_edge():
+    """When UI Is Running goes OFF, drain mouse hook queue and clear trip state once."""
+    global _user_mouse_pause_prev
+    cur = bot_paused["paused"]
+    if _user_mouse_pause_prev is None:
+        _user_mouse_pause_prev = cur
+        if cur:
+            user_mouse_abort.on_ui_paused_edge()
+        return
+    if cur and not _user_mouse_pause_prev:
+        user_mouse_abort.on_ui_paused_edge()
+    _user_mouse_pause_prev = cur
+
+
 def _game_loop():
     global _last_detector_restart, _detector_thread, running, _last_capture_time, _last_invalid_handle_log, last_stopped_key, _show_preview, _was_paused_prev
     now = time.time()
     while running and not exit_requested:
         if exit_requested:
             break
+        _sync_user_mouse_abort_ui_pause_edge()
         with detector_lock:
             if not _detector_thread.is_alive() and now - _last_detector_restart > 5:
                 log.error("[Watchdog] Detector thread died! Restarting...")
@@ -1036,10 +1224,12 @@ def _game_loop():
                     _detector_event_queue.get_nowait()
             except queue.Empty:
                 pass
-            _safe_waitkey(1)
+            time.sleep(0.001)
             continue
 
-        # Just resumed from pause: reset all detectors so they re-evaluate and can trigger again
+        # Just resumed from pause: reset event detectors so they re-evaluate and can trigger again.
+        # connection_detector is intentionally NOT reset here — its 5-min interval timer must not
+        # restart every time the user pauses/resumes the bot.
         if _was_paused_prev:
             _was_paused_prev = False
             logout_detector.reset()
@@ -1047,7 +1237,6 @@ def _game_loop():
             alliance_attack_detector.reset()
             treasure_detector.reset()
             exit_banner_detector.reset()
-            connection_detector.reset()
             log.info("[Detector] Resumed: all detectors reset, will re-check (logged_out, attacked, treasure, etc.).")
 
         now = time.time()
@@ -1061,42 +1250,16 @@ def _game_loop():
                         fn_name, datetime.fromtimestamp(next_run_at[fn_name]).strftime("%Y-%m-%d %H:%M:%S")))
                     _try_start(fn_name, trigger="cron")
 
-        # Throttle to 10 FPS — hotkey/cron above still run every iteration
-        _now = time.time()
-        if _now - _last_capture_time < _CAPTURE_INTERVAL:
-            _safe_waitkey(1)
+        # Read the latest frame from the screenshot thread's cache
+        if wincap is None or screenshot_service is None:
+            time.sleep(0.05)
             continue
-        _last_capture_time = _now
-        # Skip screenshot loop if window not connected yet
-        if wincap is None or screenshot_provider is None:
-            _safe_waitkey(100)
-            continue
-        try:
-            update_vision_scale()
-        except Exception as _e:
-            if getattr(_e, "winerror", None) == 1400:
-                _t = time.time()
-                if _t - _last_invalid_handle_log >= 15.0:
-                    log.warning("[GameLoop] Invalid window handle, skipping (window may be restarting)")
-                    _last_invalid_handle_log = _t
-                _safe_waitkey(100)
-                continue
-            raise
-
-        # Get screenshot and update runner (invalid handle possible if connection_detector just killed LastZ)
-        try:
-            screenshot = screenshot_provider.get_screenshot()
-        except Exception as _e:
-            if getattr(_e, "winerror", None) == 1400:
-                _t = time.time()
-                if _t - _last_invalid_handle_log >= 15.0:
-                    log.warning("[GameLoop] Invalid window handle, skipping (window may be restarting)")
-                    _last_invalid_handle_log = _t
-                _safe_waitkey(100)
-                continue
-            raise
+        screenshot = screenshot_service.get_cached()
         if screenshot is None:
+            time.sleep(0.05)
             continue
+        # Throttle game-loop iterations to capture FPS so runner doesn't spin unnecessarily
+        time.sleep(_CAPTURE_INTERVAL)
 
         # Drain detector events from background thread (zero matchTemplate cost on main thread)
         try:
@@ -1149,14 +1312,12 @@ def _game_loop():
         if was_running and runner.state == "idle":
             _process_queue()
 
-        if _show_preview:
-            cv.imshow("LastZ Capture", screenshot)
-            if _safe_waitkey(1) == ord("q"):
-                break
-            if _highgui_warned:
-                _show_preview = False
-        else:
-            _safe_waitkey(1)
+        # Preview thread polls get_active_capture_service().get_cached() directly —
+        # no queue push needed here.
+
+# Start preview thread if enabled at startup
+if _show_preview:
+    _start_preview_thread()
 
 # Start game loop in background, then run UI on main thread (blocks until window closed)
 game_thread = threading.Thread(target=_game_loop, daemon=True)
@@ -1169,6 +1330,8 @@ except KeyboardInterrupt:
 
 user_mouse_abort.stop()
 listener.stop()
+_screenshot_stop_event.set()
+_stop_preview_thread()
 try:
     cv.destroyAllWindows()
 except Exception:

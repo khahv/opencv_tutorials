@@ -10,6 +10,7 @@ from croniter import croniter
 from fn_settings_schema import SCHEMA as _FN_SETTINGS_SCHEMA, COMMON_FIELDS as _FN_COMMON_FIELDS
 from ui_locale import get_messages, normalize_language_code
 
+import config_manager
 import ocr_openocr
 _log = logging.getLogger("kha_lastz")
 
@@ -73,6 +74,8 @@ class BotUI:
         self._pc_section_toggle = None  # callable() to show/hide PC-only settings rows
         self._start_lastz_callback = start_lastz_callback  # callable() to launch LastZ.exe
         self._btn_start_lastz = None  # header button, visible in PC mode only
+        self._capture_fps_var = None  # IntVar: max screenshot FPS (1–50) in App settings dialog
+        self._show_preview_var = None  # BooleanVar: OpenCV live capture preview window
 
         self._vars       = {}   # fn_name → BooleanVar
         self._row_frames = {}   # fn_name → (row_frame, name_label, toggle_lbl)
@@ -148,6 +151,20 @@ class BotUI:
         if self._status_lbl and self._bot_paused.get("paused") and not self._rebinding:
             self._status_lbl.config(text=self._t("status_paused_all"), fg=YELLOW)
 
+    def _sync_general_settings_from_disk(self) -> None:
+        """Merge general_settings from .env_config into the live dict.
+
+        Disk supplies hand-edited keys (e.g. fast_user_mouse_*); in-memory values win on
+        duplicate keys so runtime stays authoritative for managed settings.
+        """
+        disk_gs = config_manager.load_general_settings()
+        if not disk_gs:
+            return
+        merged = dict(disk_gs)
+        merged.update(self._general_settings)
+        self._general_settings.clear()
+        self._general_settings.update(merged)
+
     def _show_app_settings(self) -> None:
         """Modal window: resolution, language, auto-focus (same behavior as former header)."""
         if self._running_var is not None and self._running_var.get():
@@ -158,6 +175,8 @@ class BotUI:
             self._app_settings_win.focus_force()
             return
 
+        self._sync_general_settings_from_disk()
+
         dlg = tk.Toplevel(self._root)
         self._app_settings_win = dlg
         dlg.title(self._t("dlg_app_settings_title"))
@@ -167,19 +186,9 @@ class BotUI:
         dlg.attributes("-topmost", True)
         dlg.grab_set()
 
+        self._app_settings_loading = True
+
         _emulator_at_open = self._general_settings.get("emulator", "pc")
-
-        def _close():
-            # Apply emulator change only on close, to avoid mid-dialog reconnect side-effects
-            _new_emu = self._emulator_var.get()
-            if _new_emu != _emulator_at_open and self._general_settings_callback:
-                self._general_settings_callback("emulator", _new_emu)
-            self._pc_section_toggle = None
-            dlg.grab_release()
-            dlg.destroy()
-            self._app_settings_win = None
-
-        dlg.protocol("WM_DELETE_WINDOW", _close)
 
         tk.Label(dlg, text=self._t("dlg_app_settings_heading"),
                  font=("Segoe UI", 12, "bold"), bg=BG, fg=ACCENT
@@ -301,6 +310,110 @@ class BotUI:
             relief="flat", bd=0, highlightthickness=0,
         ).pack(anchor="w")
 
+        if self._show_preview_var is None:
+            self._show_preview_var = tk.BooleanVar(
+                value=bool(self._general_settings.get("show_preview", False)))
+        else:
+            self._show_preview_var.set(bool(self._general_settings.get("show_preview", False)))
+
+        rf_pv = tk.Frame(dlg, bg=BG)
+        rf_pv.pack(fill="x", padx=16, pady=(0, 12))
+        tk.Checkbutton(
+            rf_pv,
+            text=self._t("show_preview_window"),
+            variable=self._show_preview_var,
+            command=lambda: (
+                self._general_settings_callback("show_preview", self._show_preview_var.get())
+                if self._general_settings_callback else None
+            ),
+            font=("Segoe UI", 10),
+            bg=BG,
+            activebackground=BG,
+            selectcolor=GRAY2,
+            fg=FG,
+            activeforeground=FG,
+            relief="flat",
+            bd=0,
+            highlightthickness=0,
+        ).pack(anchor="w")
+
+        # Screenshot rate as FPS (1–50); stored as capture_interval_sec = 1/fps in config
+        _iv = float(self._general_settings.get("capture_interval_sec", 0.1) or 0.1)
+        _fps0 = max(1, min(50, int(round(1.0 / _iv)))) if _iv > 0 else 10
+        if self._capture_fps_var is None:
+            self._capture_fps_var = tk.IntVar(value=_fps0)
+        else:
+            self._capture_fps_var.set(_fps0)
+
+        rf_cap = _setting_row("capture_interval")
+
+        def _apply_capture_fps(*_):
+            # Prefer widget text so closing the dialog without FocusOut still saves typed value.
+            if getattr(self, "_app_settings_loading", False):
+                return
+            try:
+                fps = int(str(sp_cap.get()).strip())
+            except (ValueError, TypeError, tk.TclError):
+                try:
+                    fps = int(self._capture_fps_var.get())
+                except (tk.TclError, ValueError, TypeError):
+                    return
+            fps = max(1, min(50, fps))
+            self._capture_fps_var.set(fps)
+            interval = 1.0 / float(fps)
+            prev = self._general_settings.get("capture_interval_sec")
+            if prev is not None and abs(float(interval) - float(prev)) < 1e-5:
+                return
+            self._general_settings["capture_interval_sec"] = interval
+            if self._general_settings_callback:
+                self._general_settings_callback("capture_interval_sec", interval)
+
+        sp_cap = tk.Spinbox(
+            rf_cap,
+            textvariable=self._capture_fps_var,
+            from_=1,
+            to=50,
+            increment=1,
+            width=5,
+            command=_apply_capture_fps,
+            font=("Segoe UI", 10),
+            bg=BG2,
+            fg=FG,
+            insertbackground=FG,
+            buttonbackground=GRAY2,
+            highlightthickness=0,
+            relief="flat",
+        )
+        sp_cap.pack(side="left", padx=(8, 0))
+        sp_cap.bind("<FocusOut>", lambda _e: _apply_capture_fps())
+        sp_cap.bind("<Return>", lambda _e: _apply_capture_fps())
+        tk.Label(rf_cap, text="FPS", font=("Segoe UI", 10, "bold"), bg=BG, fg=FG).pack(
+            side="left", padx=(2, 0)
+        )
+        tk.Label(
+            rf_cap,
+            text=self._t("capture_interval_hint"),
+            font=("Segoe UI", 8),
+            bg=BG,
+            fg=GRAY,
+            wraplength=280,
+            justify="left",
+        ).pack(side="left", padx=(8, 0))
+
+        def _close():
+            # Always flush FPS from spinbox before destroy (Close / X may skip FocusOut).
+            self._app_settings_loading = False  # allow flush if dialog closed before after_idle
+            _apply_capture_fps()
+            _new_emu = self._emulator_var.get()
+            if _new_emu != _emulator_at_open and self._general_settings_callback:
+                self._general_settings_callback("emulator", _new_emu)
+            self._pc_section_toggle = None
+            dlg.grab_release()
+            dlg.destroy()
+            self._app_settings_win = None
+
+        dlg.protocol("WM_DELETE_WINDOW", _close)
+
         btn_cfg = dict(font=("Segoe UI", 9, "bold"), relief="flat",
                        padx=16, pady=6, cursor="hand2")
         tk.Button(dlg, text=self._t("btn_close"), command=_close,
@@ -311,6 +424,11 @@ class BotUI:
         cx = self._root.winfo_x() + self._root.winfo_width()  // 2
         cy = self._root.winfo_y() + self._root.winfo_height() // 2
         dlg.geometry("+{}+{}".format(cx - w // 2, cy - h // 2))
+
+        def _end_app_settings_loading() -> None:
+            self._app_settings_loading = False
+
+        self._root.after_idle(_end_app_settings_loading)
 
     def _format_row_meta(self, fc: dict) -> str:
         """One-line subtitle under each function name (locale-aware)."""
@@ -686,11 +804,15 @@ class BotUI:
             btn.config(state="normal", fg=ACCENT, cursor="hand2")
 
     def _on_focus_toggle(self):
+        if getattr(self, "_app_settings_loading", False):
+            return
         if self._general_settings_callback:
             self._general_settings_callback("auto_focus", self._focus_var.get())
         self._update_badge_states()
 
     def _on_resolution_change(self, value):
+        if getattr(self, "_app_settings_loading", False):
+            return
         if self._general_settings_callback and value:
             self._general_settings_callback("resolution", value)
 

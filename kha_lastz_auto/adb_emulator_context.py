@@ -33,8 +33,9 @@ class AdbEmulatorContext:
     cropped_x = 0
     cropped_y = 0
 
-    def __init__(self, screenshot_provider: Any, enable_mouse_log: bool = True) -> None:
-        self._provider = screenshot_provider
+    def __init__(self, capture_service: Any, enable_mouse_log: bool = True) -> None:
+        """``capture_service`` is ScreenshotCaptureService (shared cache; no direct ADB grab here)."""
+        self._capture_service = capture_service
         self.w = 0
         self.h = 0
         if enable_mouse_log:
@@ -57,7 +58,7 @@ class AdbEmulatorContext:
             if sz:
                 self.w, self.h = int(sz[0]), int(sz[1])
                 return
-        img = self._provider.get_screenshot() if self._provider else None
+        img = self._capture_service.get_cached() if self._capture_service else None
         if img is not None and getattr(img, "shape", None) is not None and len(img.shape) >= 2:
             self.h, self.w = int(img.shape[0]), int(img.shape[1])
 
@@ -66,8 +67,8 @@ class AdbEmulatorContext:
         return (int(pos[0]), int(pos[1]))
 
     def get_screenshot(self):
-        """Capture via the injected ADB screenshot provider."""
-        return self._provider.get_screenshot() if self._provider else None
+        """Last cached frame from ScreenshotCaptureService (no extra screencap)."""
+        return self._capture_service.get_cached() if self._capture_service else None
 
     def focus_window(self, force: bool = False) -> None:
         """No-op: there is no host window to focus in pure ADB mode."""

@@ -9,15 +9,17 @@ high-rate click storm at that position.
 Flow
 ----
 1. Search for template every tick until found (or timeout_sec elapsed).
-2. On first find: install WindowClickGuard, start FastClicker.
+2. On first find: start FastClicker.
 3. While storm is running each subsequent tick:
    - Check timeout_sec → stop storm and advance step (True).
    - If FastClicker stopped due to offset_change_time → wait offset_change_pause_sec, then:
-       * If storm elapsed >= check_template_after: grab fresh screenshot; stop if
+       * If storm elapsed >= check_template_after: match on current tick screenshot (shared cache); stop if
          template gone, otherwise restart FastClicker.
        * Otherwise: restart FastClicker without checking.
    - If check_template_frequence > 0 and storm elapsed >= check_template_after:
-       check template every check_template_frequence seconds; stop if gone.
+       pause FastClicker, wait template_verify_settle_sec, then screenshot and verify every
+       check_template_frequence seconds (first check on the first tick after the threshold);
+       resume storm if still matched, else stop if gone.
    - If position_refresh_sec elapsed → re-detect and reposition.
    - If close_ui_check fires (1 s timer) → dismiss any UI overlay.
 
@@ -32,8 +34,6 @@ timeout_sec : float
     advances with success (True). Default 999.
 offset_x / offset_y : float
     Random click offset as fraction of game window size.
-guard_outside : bool
-    Block clicks that leave the game window (default True).
 position_refresh_sec : float
     Re-detect template every N seconds while storm runs (0 = never).
 offset_change_time : float
@@ -52,16 +52,23 @@ check_template_after : float
 check_template_frequence : float
     After check_template_after has elapsed, take a fresh screenshot and verify the
     template is still visible every this many seconds (0 = disabled).
+template_verify_settle_sec : float
+    After pausing the storm for a periodic template check (or before the offset-change
+    screenshot when check_template_after applies), wait this many seconds so click
+    effects clear before capturing and matching (default 0.25).
 corner : {offset_x, offset_y, every, pause_sec} or {x, y, every, pause_sec}
     Every N clicks: FastClicker stops; after pause_sec (default 0.2) the runner
     sends one isolated corner click (via safe_click), then restarts FastClicker.
     pause_sec : float — wait after storm stop before corner click (seconds).
 close_ui_check : bool
     While storm runs, dismiss UI overlays that obscure the target (default True).
+    FastClicker is fully stopped before each dismiss click and restarted after.
 close_ui_click_x / close_ui_click_y : float
     Ratio coords to click when dismissing UI (default 0.03 / 0.08).
 close_ui_back_button : str
     Template for a back/close button to prefer when dismissing UI.
+close_ui_check_interval_sec : float
+    How often (in seconds) to run the close_ui check while storm runs (default 1.0, min 0.1).
 """
 
 import time
@@ -85,6 +92,24 @@ def _storm_click_interval_sec(step: dict) -> float:
     return 0.1
 
 
+def _clear_storm_periodic_verify(runner) -> None:
+    """Reset periodic template-verify settle state (storm stop or step exit)."""
+    runner._storm_periodic_verify_in_flight = False
+    runner._storm_verify_settle_until = None
+
+
+def _storm_resume_fast_clicker_kwargs(runner) -> dict:
+    """Rebuild FastClicker kwargs after a pause so count, phase epoch, and pixel stay consistent."""
+    _kw = dict(runner._storm_clicker_kwargs)
+    _kw.pop("initial_click_count", None)
+    _kw.pop("fixed_target_xy", None)
+    _lt = runner._fast_clicker.last_target_xy
+    if _lt is not None:
+        _kw["fixed_target_xy"] = (int(_lt[0]), int(_lt[1]))
+    _kw["initial_click_count"] = runner._fast_clicker.click_count
+    return _kw
+
+
 def run(step: dict, screenshot, wincap, runner) -> str:
     """Execute one tick of the ``match_storm_click`` event."""
     now = time.time()
@@ -94,16 +119,17 @@ def run(step: dict, screenshot, wincap, runner) -> str:
     timeout_sec      = float(step.get("timeout_sec") or 15)
     offset_x         = int(wincap.w * float(step.get("offset_x") or 0))
     offset_y         = int(wincap.h * float(step.get("offset_y") or 0))
-    guard_outside    = bool(step.get("guard_outside", True))
     pos_refresh             = float(step.get("position_refresh_sec") or 0)
     offset_change_time      = float(step.get("offset_change_time", 1.0))
     offset_change_pause_sec = max(0.0, float(step.get("offset_change_pause_sec", 0.2)))
     check_template_after    = float(step.get("check_template_after", 0))
     check_template_frequence = float(step.get("check_template_frequence", 0))
-    close_ui_check          = bool(step.get("close_ui_check", True))
-    close_ui_click_x    = float(step.get("close_ui_click_x", 0.03))
-    close_ui_click_y    = float(step.get("close_ui_click_y", 0.08))
-    close_ui_back_btn   = step.get("close_ui_back_button")
+    template_verify_settle_sec = max(0.0, float(step.get("template_verify_settle_sec", 0.25)))
+    close_ui_check              = bool(step.get("close_ui_check", True))
+    close_ui_click_x            = float(step.get("close_ui_click_x", 0.03))
+    close_ui_click_y            = float(step.get("close_ui_click_y", 0.08))
+    close_ui_back_btn           = step.get("close_ui_back_button")
+    close_ui_check_interval_sec = max(0.1, float(step.get("close_ui_check_interval_sec", 1.0)))
 
     _corner_cfg = step.get("corner")
     if _corner_cfg:
@@ -124,18 +150,63 @@ def run(step: dict, screenshot, wincap, runner) -> str:
 
     # ── Storm already running ─────────────────────────────────────────────────
     if runner._storm_clicker_active:
+        _storm_elapsed = now - runner._storm_start_t
+
+        # Countdown until check_template_after (wall clock from storm start); log every 10s
+        if check_template_after > 0:
+            _rem_cta = check_template_after - _storm_elapsed
+            _cta_log_t = getattr(runner, "_storm_cta_log_t", None)
+            if _rem_cta > 0:
+                if _cta_log_t is None or now - _cta_log_t >= 10.0:
+                    runner._storm_cta_log_t = now
+                    log.info("[match_storm_click] {} -> check_template_after: {:.1f}s remaining "
+                             "(threshold {:.1f}s from storm start)".format(
+                                 runner._step_label(step), _rem_cta, check_template_after))
+            elif not getattr(runner, "_storm_cta_armed_logged", False):
+                runner._storm_cta_armed_logged = True
+                log.info("[match_storm_click] {} -> check_template_after: threshold reached — "
+                         "offset-change and periodic template checks apply from now".format(
+                             runner._step_label(step)))
+
         # timeout_sec reached → stop storm, advance step normally
         if elapsed >= timeout_sec:
             _n = runner._fast_clicker.click_count
             _el = max(0.001, now - runner._storm_start_t)
             runner._fast_clicker.stop()
-            runner._window_click_guard.stop()
             runner._storm_clicker_active = False
             runner._storm_offset_restart_t = None
             runner._storm_corner_restart_t = None
+            _clear_storm_periodic_verify(runner)
             log.info("[match_storm_click] {} -> timeout ({:.0f}s), storm stopped ({} clicks in {:.1f}s)".format(
                 runner._step_label(step), timeout_sec, _n, _el))
             runner._advance_step(True, step=step)
+            return "running"
+
+        # Periodic template verify: pause storm, settle UI, then one fresh screenshot + match
+        if getattr(runner, "_storm_periodic_verify_in_flight", False):
+            _su = getattr(runner, "_storm_verify_settle_until", None)
+            if _su is not None and now < _su:
+                return "running"
+            _clear_storm_periodic_verify(runner)
+            _fresh = screenshot
+            _vision_chk = runner._get_vision(template)
+            _still_there = bool(_fresh is not None and _vision_chk
+                                and _vision_chk.find(_fresh, threshold=threshold))
+            if not _still_there:
+                _n = runner._fast_clicker.click_count
+                _el = max(0.001, now - runner._storm_start_t)
+                runner._fast_clicker.stop()
+                runner._storm_clicker_active = False
+                runner._storm_corner_restart_t = None
+                log.info("[match_storm_click] {} -> template gone (periodic check after settle), storm stopped "
+                         "({} clicks in {:.1f}s)".format(runner._step_label(step), _n, _el))
+                runner._advance_step(True, step=step)
+                return "running"
+            _kw = _storm_resume_fast_clicker_kwargs(runner)
+            runner._fast_clicker.start(**_kw)
+            runner._storm_template_check_t = now
+            log.info("[match_storm_click] {} -> periodic template still present, storm resumed".format(
+                runner._step_label(step)))
             return "running"
 
         # FastClicker stopped due to offset_change_time — check template then restart
@@ -146,10 +217,9 @@ def run(step: dict, screenshot, wincap, runner) -> str:
                     runner._step_label(step), offset_change_pause_sec))
             elif now - runner._storm_offset_restart_t >= offset_change_pause_sec:
                 runner._storm_offset_restart_t = None
-                _storm_elapsed = now - runner._storm_start_t
                 if _storm_elapsed >= check_template_after:
-                    # Fresh screenshot check — stop if template gone
-                    _fresh = wincap.get_screenshot()
+                    # Uses cached frame for this tick (main loop capture only; no extra grab)
+                    _fresh = screenshot
                     _vision_chk = runner._get_vision(template)
                     _still_there = bool(_fresh is not None and _vision_chk
                                         and _vision_chk.find(_fresh, threshold=threshold))
@@ -157,9 +227,9 @@ def run(step: dict, screenshot, wincap, runner) -> str:
                         _n = runner._fast_clicker.click_count
                         _el = max(0.001, now - runner._storm_start_t)
                         runner._fast_clicker.stop()
-                        runner._window_click_guard.stop()
                         runner._storm_clicker_active = False
                         runner._storm_corner_restart_t = None
+                        _clear_storm_periodic_verify(runner)
                         log.info("[match_storm_click] {} -> template gone at offset change, storm stopped "
                                  "({} clicks in {:.1f}s)".format(runner._step_label(step), _n, _el))
                         runner._advance_step(True, step=step)
@@ -210,6 +280,7 @@ def run(step: dict, screenshot, wincap, runner) -> str:
             _ref_el = now - getattr(runner, "_storm_pos_refresh_t", runner._storm_start_t)
             if _ref_el >= pos_refresh:
                 runner._storm_pos_refresh_t = now
+                _clear_storm_periodic_verify(runner)
                 vision = runner._get_vision(template)
                 pts = vision.find(screenshot, threshold=threshold) if vision else []
                 if pts:
@@ -240,46 +311,47 @@ def run(step: dict, screenshot, wincap, runner) -> str:
                     _n = runner._fast_clicker.click_count
                     _el = max(0.001, now - runner._storm_start_t)
                     runner._fast_clicker.stop()
-                    runner._window_click_guard.stop()
                     runner._storm_clicker_active = False
                     runner._storm_corner_restart_t = None
+                    _clear_storm_periodic_verify(runner)
                     log.info("[match_storm_click] {} -> template gone, storm stopped ({} clicks in {:.1f}s)".format(
                         runner._step_label(step), _n, _el))
                     runner._advance_step(True, step=step)
 
         # Periodic template check (after check_template_after, every check_template_frequence s)
-        if check_template_frequence > 0:
-            _storm_elapsed = now - runner._storm_start_t
-            if _storm_elapsed >= check_template_after:
-                _last_chk = getattr(runner, "_storm_template_check_t", None)
-                if _last_chk is None:
-                    runner._storm_template_check_t = now
-                elif now - _last_chk >= check_template_frequence:
-                    runner._storm_template_check_t = now
-                    _fresh = wincap.get_screenshot()
-                    _vision_chk = runner._get_vision(template)
-                    _still_there = bool(_fresh is not None and _vision_chk
-                                        and _vision_chk.find(_fresh, threshold=threshold))
-                    if not _still_there:
-                        _n = runner._fast_clicker.click_count
-                        _el = max(0.001, now - runner._storm_start_t)
-                        runner._fast_clicker.stop()
-                        runner._window_click_guard.stop()
-                        runner._storm_clicker_active = False
-                        runner._storm_corner_restart_t = None
-                        log.info("[match_storm_click] {} -> template gone (periodic check), storm stopped "
-                                 "({} clicks in {:.1f}s)".format(runner._step_label(step), _n, _el))
-                        runner._advance_step(True, step=step)
-                        return "running"
+        if check_template_frequence > 0 and _storm_elapsed >= check_template_after:
+            _last_chk = getattr(runner, "_storm_template_check_t", None)
+            _run_periodic = False
+            if _last_chk is None:
+                # First check on the first tick after check_template_after elapses
+                _run_periodic = True
+            elif now - _last_chk >= check_template_frequence:
+                _run_periodic = True
+            if _run_periodic:
+                if runner._fast_clicker.is_running:
+                    runner._fast_clicker.stop()
+                runner._storm_periodic_verify_in_flight = True
+                runner._storm_verify_settle_until = now + template_verify_settle_sec
+                log.info("[match_storm_click] {} -> periodic template verify: storm paused {:.2f}s for UI settle".format(
+                    runner._step_label(step), template_verify_settle_sec))
+                return "running"
 
-        # close_ui_check every 1 s
-        if close_ui_check:
+        # close_ui_check every close_ui_check_interval_sec
+        _in_periodic_settle = bool(getattr(runner, "_storm_periodic_verify_in_flight", False))
+        if close_ui_check and not _in_periodic_settle:
             _cui_el = now - getattr(runner, "_storm_cui_check_t", runner._storm_start_t)
-            if _cui_el >= 1.0:
+            if _cui_el >= close_ui_check_interval_sec:
                 runner._storm_cui_check_t = now
                 _cui_vision  = runner._get_vision(template)
                 _cui_visible = bool(_cui_vision and _cui_vision.find(screenshot, threshold=threshold))
                 if not _cui_visible:
+                    # Stop FastClicker before dismissing UI to avoid interference
+                    _cui_was_running = runner._fast_clicker.is_running
+                    if _cui_was_running:
+                        runner._fast_clicker.stop()
+                        log.debug("[match_storm_click] {} -> close_ui: FastClicker stopped before dismiss".format(
+                            runner._step_label(step)))
+
                     _dismissed = False
                     if close_ui_back_btn:
                         _vback = runner._get_vision(close_ui_back_btn)
@@ -299,6 +371,13 @@ def run(step: dict, screenshot, wincap, runner) -> str:
                         runner._safe_click(_csx, _csy, wincap, "storm close_ui")
                         log.info("[match_storm_click] {} -> close_ui: dismissed at ({},{})".format(
                             runner._step_label(step), _csx, _csy))
+
+                    # Restart FastClicker after dismiss
+                    if _cui_was_running:
+                        _kw_cui = _storm_resume_fast_clicker_kwargs(runner)
+                        runner._fast_clicker.start(**_kw_cui)
+                        log.debug("[match_storm_click] {} -> close_ui: FastClicker restarted after dismiss".format(
+                            runner._step_label(step)))
 
         return "running"
 
@@ -331,15 +410,15 @@ def run(step: dict, screenshot, wincap, runner) -> str:
             runner._step_label(step), sx, sy))
         return "running"
 
-    if guard_outside:
-        runner._window_click_guard.start(_win_left, _win_top, _win_right, _win_bottom)
-
     runner._storm_start_t             = now
     runner._storm_pos_refresh_t       = now
     runner._storm_cui_check_t         = now
     runner._storm_offset_restart_t    = None
     runner._storm_corner_restart_t    = None
     runner._storm_template_check_t    = None
+    runner._storm_cta_log_t           = None
+    runner._storm_cta_armed_logged  = False
+    _clear_storm_periodic_verify(runner)
     runner._storm_clicker_active      = True
     runner._storm_clicker_kwargs = dict(
         sx=sx, sy=sy, rate=0,
@@ -351,6 +430,6 @@ def run(step: dict, screenshot, wincap, runner) -> str:
         click_interval_sec=_storm_click_sleep,
     )
     runner._fast_clicker.start(**runner._storm_clicker_kwargs)
-    log.info("[match_storm_click] {} -> storm started at ({},{}) timeout_sec={} guard={}".format(
-        runner._step_label(step), sx, sy, timeout_sec, guard_outside))
+    log.info("[match_storm_click] {} -> storm started at ({},{}) timeout_sec={}".format(
+        runner._step_label(step), sx, sy, timeout_sec))
     return "running"

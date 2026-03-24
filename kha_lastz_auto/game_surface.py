@@ -94,11 +94,11 @@ class LdplayerAdbSurface:
         """
         Register global ``AdbInput``, build ``AdbScreenshotProvider`` + ``AdbEmulatorContext``.
 
-        Returns ``(wincap, screenshot_provider)`` (wincap is always created; screencap may fail later).
+        Returns ``(wincap, screenshot_service)`` (wincap is always created; screencap may fail later).
         """
         from adb_emulator_context import AdbEmulatorContext
         from adb_input import AdbInput, set_adb_input
-        from screenshot_provider import create_screenshot_provider
+        from screenshot_provider import create_screenshot_capture_service, set_active_capture_service
 
         logger.info("LDPlayer mode: game surface via ADB only (no Win32 window capture).")
         adb_inst = AdbInput(adb_path=adb_path, device_serial=device_serial)
@@ -113,16 +113,17 @@ class LdplayerAdbSurface:
             adb_inst._device_serial or "none (commands will target default device)",
             adb_path or "default",
         )
-        screenshot_provider = create_screenshot_provider(
+        screenshot_service = create_screenshot_capture_service(
             "ldplayer",
             wincap=None,
             adb_path=adb_path,
             device_serial=adb_inst._device_serial,
         )
-        wincap = AdbEmulatorContext(screenshot_provider)
+        set_active_capture_service(screenshot_service)
+        wincap = AdbEmulatorContext(screenshot_service)
         wincap.refresh_geometry()
         try:
-            probe = screenshot_provider.get_screenshot()
+            probe = screenshot_service.capture_frame()
         except Exception as exc:
             logger.warning("[ADB] Initial screencap failed: %s", exc)
             probe = None
@@ -137,10 +138,10 @@ class LdplayerAdbSurface:
                 "[ADB] Initial screencap failed — UI may show disconnected until ADB responds.",
             )
         logger.info(
-            "[Screenshot] Provider: %s (emulator=ldplayer)",
-            type(screenshot_provider).__name__,
+            "[Screenshot] Service: %s (emulator=ldplayer)",
+            type(screenshot_service).__name__,
         )
-        return wincap, screenshot_provider
+        return wincap, screenshot_service
 
     @staticmethod
     def try_reconnect_pair(
@@ -150,36 +151,37 @@ class LdplayerAdbSurface:
         logger: logging.Logger,
     ) -> Optional[Tuple[Any, Any]]:
         """
-        One reconnect attempt. Returns ``(wincap, screenshot_provider)`` or ``None``.
+        One reconnect attempt. Returns ``(wincap, screenshot_service)`` or ``None``.
         """
         from adb_emulator_context import AdbEmulatorContext
         from adb_input import AdbInput, set_adb_input
-        from screenshot_provider import create_screenshot_provider
+        from screenshot_provider import create_screenshot_capture_service, set_active_capture_service
 
         try:
             adb_w = AdbInput(adb_path=adb_path, device_serial=device_serial)
             if not device_serial:
                 adb_w.detect_and_connect()
             set_adb_input(adb_w)
-            new_sp = create_screenshot_provider(
+            new_svc = create_screenshot_capture_service(
                 "ldplayer",
                 wincap=None,
                 adb_path=adb_path,
                 device_serial=adb_w._device_serial,
             )
-            if new_sp.get_screenshot() is None:
+            set_active_capture_service(new_svc)
+            if new_svc.capture_frame() is None:
                 return None
-            new_wincap = AdbEmulatorContext(new_sp)
+            new_wincap = AdbEmulatorContext(new_svc)
             new_wincap.refresh_geometry()
             logger.info("[WindowWatcher] ADB emulator connected (%dx%d).", new_wincap.w, new_wincap.h)
-            return new_wincap, new_sp
+            return new_wincap, new_svc
         except Exception:
             return None
 
     @staticmethod
     def watcher_step(
         wincap: Any,
-        screenshot_provider: Any,
+        screenshot_service: Any,
         *,
         adb_path: Optional[str],
         device_serial: Optional[str],
@@ -188,7 +190,7 @@ class LdplayerAdbSurface:
     ) -> Tuple[Any, Any]:
         """One 3s-tick: keep pair if valid, else try ADB reconnect."""
         if wincap is not None and is_game_surface_valid(wincap):
-            return wincap, screenshot_provider
+            return wincap, screenshot_service
         pair = LdplayerAdbSurface.try_reconnect_pair(
             adb_path=adb_path,
             device_serial=device_serial,
@@ -197,7 +199,7 @@ class LdplayerAdbSurface:
         if pair is not None:
             update_vision_scale()
             return pair[0], pair[1]
-        return wincap, screenshot_provider
+        return wincap, screenshot_service
 
 
 class PcWin32Surface:
@@ -214,9 +216,9 @@ class PcWin32Surface:
         """
         First ``WindowCapture`` attempt in a side thread (avoids FindWindow freeze on Ctrl+C).
 
-        Returns ``(wincap, screenshot_provider)``; either may be ``None`` if the window is missing.
+        Returns ``(wincap, screenshot_service)``; either may be ``None`` if the window is missing.
         """
-        from screenshot_provider import create_screenshot_provider
+        from screenshot_provider import create_screenshot_capture_service, set_active_capture_service
         from windowcapture import WindowCapture
 
         import adb_input as adb_mod
@@ -255,9 +257,10 @@ class PcWin32Surface:
             )
             return None, None
 
-        sp = create_screenshot_provider("pc", wincap=wincap, adb_path=adb_path)
-        logger.info("[Screenshot] Provider: %s (emulator=pc)", type(sp).__name__)
-        return wincap, sp
+        screenshot_service = create_screenshot_capture_service("pc", wincap=wincap, adb_path=adb_path)
+        set_active_capture_service(screenshot_service)
+        logger.info("[Screenshot] Service: %s (emulator=pc)", type(screenshot_service).__name__)
+        return wincap, screenshot_service
 
     @staticmethod
     def try_attach_once(
@@ -271,7 +274,7 @@ class PcWin32Surface:
         logger: logging.Logger,
     ) -> Optional[Tuple[Any, Any]]:
         """Single successful window attach, or ``None``."""
-        from screenshot_provider import create_screenshot_provider
+        from screenshot_provider import create_screenshot_capture_service, set_active_capture_service
         from windowcapture import WindowCapture
 
         try:
@@ -279,7 +282,8 @@ class PcWin32Surface:
             new_wincap.auto_focus = auto_focus
             if win_w and win_h:
                 new_wincap.resize_to_client(win_w, win_h)
-            new_sp = create_screenshot_provider("pc", wincap=new_wincap, adb_path=adb_path)
+            new_sp = create_screenshot_capture_service("pc", wincap=new_wincap, adb_path=adb_path)
+            set_active_capture_service(new_sp)
             try:
                 import win32process
 
@@ -329,7 +333,7 @@ class PcWin32Surface:
     @staticmethod
     def watcher_step(
         wincap: Any,
-        screenshot_provider: Any,
+        screenshot_service: Any,
         *,
         window_name: str,
         adb_path: Optional[str],
@@ -349,7 +353,7 @@ class PcWin32Surface:
             if not is_game_surface_valid(wincap):
                 logger.warning("[WindowWatcher] Window handle became invalid — disconnecting.")
                 return None, None
-            return wincap, screenshot_provider
+            return wincap, screenshot_service
 
         if auto_start_lastz:
             PcWin32Surface.maybe_autostart_lastz(
@@ -372,7 +376,7 @@ class PcWin32Surface:
         if pair is not None:
             update_vision_scale()
             return pair[0], pair[1]
-        return wincap, screenshot_provider
+        return wincap, screenshot_service
 
 
 def initial_pc_connect_or_none(

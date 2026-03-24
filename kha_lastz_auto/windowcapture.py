@@ -29,6 +29,9 @@ class WindowCapture:
     offset_y = 0
     auto_focus = False  # Flag to control automatic window focus
 
+    # Callable() -> bool: when returns True, MOUSE-LOG is suppressed (e.g. during fast-click)
+    mouse_log_suppress: "callable | None" = None
+
     # constructor
     def __init__(self, window_name=None):
         # find the handle for the window we want to capture.
@@ -75,6 +78,8 @@ class WindowCapture:
                 rel_x = local_x / self.w
                 rel_y = local_y / self.h
                 if 0 <= rel_x <= 1 and 0 <= rel_y <= 1:
+                    if self.mouse_log_suppress is not None and self.mouse_log_suppress():
+                        return
                     print(f"\n[MOUSE-LOG] Inside Game Window:")
                     print(f"  - Local Pixel: ({local_x}, {local_y})")
                     print(f"  - Ratio:       x={rel_x:.4f}, y={rel_y:.4f}")
@@ -176,6 +181,13 @@ class WindowCapture:
             pass
 
     def get_screenshot(self):
+        """Prefer shared ScreenshotCaptureService cache; else legacy mss grab (no main loop)."""
+        from screenshot_provider import get_active_capture_service
+
+        svc = get_active_capture_service()
+        if svc is not None:
+            return svc.get_cached()
+
         if not self._is_desktop:
             self.refresh_geometry()
         if self.w <= 0 or self.h <= 0:
