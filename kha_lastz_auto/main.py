@@ -14,6 +14,30 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 from ui_locale import normalize_language_code as _norm_lang
 
+def _require_admin_win():
+    """If not running as admin on Windows, trigger UAC and re-launch elevated; then exit."""
+    if sys.platform != "win32":
+        return
+    try:
+        if ctypes.windll.shell32.IsUserAnAdmin() != 0:
+            return
+    except Exception:
+        pass
+    # Not admin: run self with "runas" to show UAC prompt
+    script = os.path.abspath(sys.argv[0])
+    quoted = '"' + script + '"' if " " in script else script
+    params = quoted + (" " + " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "")
+    ret = ctypes.windll.shell32.ShellExecuteW(
+        None, "runas", sys.executable, params, os.getcwd(), 1  # 1 = SW_SHOWNORMAL
+    )
+    if ret > 32:  # success
+        sys.exit(0)
+    # UAC cancelled or error: exit anyway so user sees no duplicate window
+    sys.exit(1)
+
+
+_require_admin_win()
+
 from dotenv import load_dotenv
 
 def _load_dotenv(path=".env"):
@@ -1136,6 +1160,7 @@ _screenshot_thread.start()
 
 
 _user_mouse_skip_log_t = 0.0
+_user_mouse_abort_stop_event = threading.Event()
 
 
 def _maybe_abort_on_fast_user_mouse():
@@ -1160,6 +1185,30 @@ def _maybe_abort_on_fast_user_mouse():
         return
     if user_mouse_abort.consume_abort_request():
         runner.abort_current_function(reason="fast user mouse")
+
+
+def _user_mouse_abort_loop():
+    """Consume mouse-shake abort latch with low latency, independent from game-loop FPS."""
+    while not _user_mouse_abort_stop_event.is_set():
+        if not user_mouse_abort.is_enabled():
+            time.sleep(0.05)
+            continue
+        if bot_paused["paused"]:
+            if user_mouse_abort.consume_abort_request():
+                user_mouse_abort.on_ui_paused_edge()
+            time.sleep(0.01)
+            continue
+        if runner.state == "running" and user_mouse_abort.consume_abort_request():
+            runner.abort_current_function(reason="fast user mouse")
+        time.sleep(0.01)
+
+
+_user_mouse_abort_thread = threading.Thread(
+    target=_user_mouse_abort_loop,
+    daemon=True,
+    name="UserMouseAbortThread",
+)
+_user_mouse_abort_thread.start()
 
 
 def _sync_user_mouse_abort_ui_pause_edge():
@@ -1329,6 +1378,7 @@ except KeyboardInterrupt:
     sys.exit(0)
 
 user_mouse_abort.stop()
+_user_mouse_abort_stop_event.set()
 listener.stop()
 _screenshot_stop_event.set()
 _stop_preview_thread()
