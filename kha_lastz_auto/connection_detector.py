@@ -177,7 +177,7 @@ class ConnectionDetector:
         lastz_exe_path: str,
         lastz_pid_ref: dict,
         lastz_window_name: str = "LastZ",
-        interval_sec: float = 300.0,
+        interval_sec: float = 1800.0,
         buff_icon_threshold: float = 0.75,
         autostart_state_ref: dict | None = None,
     ):

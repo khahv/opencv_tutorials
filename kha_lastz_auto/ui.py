@@ -35,6 +35,7 @@ class BotUI:
     - [KEY] badge is clickable to rebind hotkey (only when Is Running = off)
     - Status bar shows current running function / next cron
     - Stop button above the status bar aborts only the current function (Is Running stays on)
+    - Turning Is Running OFF clears the scheduler FIFO queue (see clear_pending_queue_callback)
     """
 
     def __init__(self, fn_enabled: dict, fn_configs: list, runner_ref,
@@ -51,7 +52,8 @@ class BotUI:
                  general_settings: dict = None,
                  general_settings_callback=None,
                  connection_status=None,
-                 start_lastz_callback=None):
+                 start_lastz_callback=None,
+                 clear_pending_queue_callback=None):
         self._fn_enabled    = fn_enabled
         self._fn_configs    = [fc for fc in fn_configs if fc.get("name")]
         self._runner        = runner_ref
@@ -73,6 +75,7 @@ class BotUI:
         self._auto_start_var = None  # BooleanVar for auto-start checkbox
         self._pc_section_toggle = None  # callable() to show/hide PC-only settings rows
         self._start_lastz_callback = start_lastz_callback  # callable() to launch LastZ.exe
+        self._clear_pending_queue_callback = clear_pending_queue_callback  # callable() when Is Running → OFF
         self._btn_start_lastz = None  # header button, visible in PC mode only
         self._capture_fps_var = None  # IntVar: max screenshot FPS (1–50) in App settings dialog
         self._show_preview_var = None  # BooleanVar: OpenCV live capture preview window
@@ -749,6 +752,11 @@ class BotUI:
             if getattr(self._runner, "state", "idle") == "running":
                 cancelled = getattr(self._runner, "function_name", None)
                 self._runner.stop()
+            if self._clear_pending_queue_callback:
+                try:
+                    self._clear_pending_queue_callback()
+                except Exception as e:
+                    _log.warning("[UI] clear_pending_queue_callback failed: %s", e)
             _log.info("[UI] Is Running → OFF (paused)")
             if cancelled:
                 _log.info("[UI] Cancelled running function: {}".format(cancelled))

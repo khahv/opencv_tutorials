@@ -3,10 +3,7 @@
 description: "Treasure detected: send Zalo, then click lien tuc vao Treasure Helicopter"
 steps:
   # send_zalo: toggle on/off in function settings (gear) via "Send Zalo notification" / send_zalo
-  - event_type: send_zalo
-    receiver_name: "Nhóm HLSE"
-    message: "@All Có kho báo!"
-    repeat_interval_sec: 60
+  
 
   - event_type: match_click
     template_array:
@@ -19,19 +16,24 @@ steps:
     roi_center_y: 0.89
     roi_padding: 2
 
+
+  - event_type: send_zalo
+    receiver_name: "Nhóm HLSE"
+    message: "@All Có kho báo!"
+    repeat_interval_sec: 60
   
   - event_type: sleep
-    duration_sec: 2
+    duration_sec: 3
 
   - event_type: match_click
     template: buttons_template/Treasure2.png
     threshold: 0.6
     one_shot: true
-    timeout_sec: 2
+    timeout_sec: 10
     debug_log: true
 
   - event_type: sleep
-    duration_sec: 2
+    duration_sec: 3
 
 
   - event_type: match_storm_click
@@ -49,8 +51,10 @@ steps:
     offset_y: 0.03       # ±3% of window height (~58px on 1920px window)
     close_ui_check: true                # mặc định true, tắt thì set false
     close_ui_check_interval_sec: 5.0   # tần suất check close_ui (giây); default 1.0
+    debug_log: false                   # true: log best_match_score on periodic / offset-change verify
     close_ui_click_x: 0.03             # vị trí click để dismiss UI (default)
     close_ui_click_y: 0.5
+    
     close_ui_back_button: buttons_template/BackButton.png  # optional
 
 

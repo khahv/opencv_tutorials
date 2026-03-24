@@ -69,6 +69,9 @@ close_ui_back_button : str
     Template for a back/close button to prefer when dismissing UI.
 close_ui_check_interval_sec : float
     How often (in seconds) to run the close_ui check while storm runs (default 1.0, min 0.1).
+debug_log : bool
+    When True, log the best template match score (and threshold) for each periodic template verify
+    and for the offset-change template check (after ``check_template_after``).
 """
 
 import time
@@ -130,6 +133,7 @@ def run(step: dict, screenshot, wincap, runner) -> str:
     close_ui_click_y            = float(step.get("close_ui_click_y", 0.08))
     close_ui_back_btn           = step.get("close_ui_back_button")
     close_ui_check_interval_sec = max(0.1, float(step.get("close_ui_check_interval_sec", 1.0)))
+    debug_log                   = bool(step.get("debug_log", False))
 
     _corner_cfg = step.get("corner")
     if _corner_cfg:
@@ -192,6 +196,12 @@ def run(step: dict, screenshot, wincap, runner) -> str:
             _vision_chk = runner._get_vision(template)
             _still_there = bool(_fresh is not None and _vision_chk
                                 and _vision_chk.find(_fresh, threshold=threshold))
+            if debug_log and _vision_chk is not None and _fresh is not None:
+                _sc = _vision_chk.match_score(_fresh)
+                log.info(
+                    "[match_storm_click] {} -> periodic template verify: best_match_score={:.3f} "
+                    "threshold={:.3f} found={}".format(
+                        runner._step_label(step), _sc, threshold, _still_there))
             if not _still_there:
                 _n = runner._fast_clicker.click_count
                 _el = max(0.001, now - runner._storm_start_t)
@@ -223,6 +233,12 @@ def run(step: dict, screenshot, wincap, runner) -> str:
                     _vision_chk = runner._get_vision(template)
                     _still_there = bool(_fresh is not None and _vision_chk
                                         and _vision_chk.find(_fresh, threshold=threshold))
+                    if debug_log and _vision_chk is not None and _fresh is not None:
+                        _sc = _vision_chk.match_score(_fresh)
+                        log.info(
+                            "[match_storm_click] {} -> offset-change template verify: best_match_score={:.3f} "
+                            "threshold={:.3f} found={}".format(
+                                runner._step_label(step), _sc, threshold, _still_there))
                     if not _still_there:
                         _n = runner._fast_clicker.click_count
                         _el = max(0.001, now - runner._storm_start_t)

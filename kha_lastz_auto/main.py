@@ -392,8 +392,9 @@ for item in schedules:
     next_run_at[fn_name] = it.get_next(float)
 
 # ── FIFO queue (functions waiting to run) ─────────────────────────────────────
-# Each item: (fn_name, trigger_event, trigger_active_cb) so dequeued trigger-based functions keep repeat (e.g. send_zalo).
-pending_queue = []   # list of (fn_name, trigger_event, trigger_active_cb)
+# Each item: (fn_name, trigger_event, trigger_active_cb, queue_reason) so dequeued
+# trigger-based functions keep repeat (e.g. send_zalo) and logs show why it was queued.
+pending_queue = []   # list of 4-tuples; legacy 3-tuples still supported when popping
 last_triggered_at = {}   # fn_name -> time.time() when last triggered by a detector (for cooldown)
 
 def _queue_add(fn_name, reason="cron", trigger_event=None, trigger_active_cb=None):
@@ -401,7 +402,7 @@ def _queue_add(fn_name, reason="cron", trigger_event=None, trigger_active_cb=Non
     if any(item[0] == fn_name for item in pending_queue):
         log.info("[Scheduler] {} already in queue, skip duplicate ({})".format(fn_name, reason))
         return
-    pending_queue.append((fn_name, trigger_event, trigger_active_cb))
+    pending_queue.append((fn_name, trigger_event, trigger_active_cb, reason))
     log.info("[Scheduler] {} queued (reason={})".format(fn_name, reason))
 
 def _try_start(fn_name, trigger="hotkey", trigger_event=None, trigger_active_cb=None):
@@ -430,7 +431,22 @@ def _try_start(fn_name, trigger="hotkey", trigger_event=None, trigger_active_cb=
             log.info("[Scheduler] {} blocked by {} [{}] -> queued".format(fn_name, cur_name, trigger))
             _queue_add(fn_name, reason=trigger, trigger_event=trigger_event, trigger_active_cb=trigger_active_cb)
     else:
-        runner.start(fn_name, wincap, trigger_event=trigger_event, trigger_active_cb=trigger_active_cb)
+        runner.start(
+            fn_name,
+            wincap,
+            trigger_event=trigger_event,
+            trigger_active_cb=trigger_active_cb,
+            start_reason=trigger,
+        )
+
+def _clear_pending_queue_on_pause():
+    """Drop all queued functions when the user turns Is Running OFF (UI pause)."""
+    if not pending_queue:
+        return
+    names = [item[0] for item in pending_queue]
+    pending_queue.clear()
+    log.info("[Scheduler] Pending queue cleared (Is Running OFF): {}".format(names))
+
 
 def _process_queue():
     """Pop next FIFO item from queue and start it. Pass trigger_* so detector-triggered send_zalo can repeat."""
@@ -439,13 +455,22 @@ def _process_queue():
         fn_name = item[0]
         trigger_event = item[1] if len(item) > 1 else None
         trigger_active_cb = item[2] if len(item) > 2 else None
+        queue_reason = item[3] if len(item) > 3 else None
         if not fn_enabled.get(fn_name, True):
             log.info("[Scheduler] {} dequeued but disabled, skipping".format(fn_name))
             continue
         if fn_name not in functions:
             continue
-        log.info("[Scheduler] {} dequeued and starting".format(fn_name))
-        runner.start(fn_name, wincap, trigger_event=trigger_event, trigger_active_cb=trigger_active_cb)
+        _was = queue_reason if queue_reason is not None else "unknown"
+        _start_reason = "dequeued:{}".format(_was)
+        log.info("[Scheduler] {} dequeued and starting (was queued as: {})".format(fn_name, _was))
+        runner.start(
+            fn_name,
+            wincap,
+            trigger_event=trigger_event,
+            trigger_active_cb=trigger_active_cb,
+            start_reason=_start_reason,
+        )
         return
 
 def _trigger_cooldown_ok(fn_name):
@@ -477,13 +502,13 @@ def _start_urgent(fn_name, trigger="logged_out"):
         runner.stop()
         # Re-insert interrupted function at the front of the queue (skip duplicates)
         if interrupted and interrupted != fn_name and not any(x[0] == interrupted for x in pending_queue):
-            pending_queue.insert(0, (interrupted, None, None))
+            pending_queue.insert(0, (interrupted, None, None, "preempted"))
             log.info("[Scheduler] {} interrupted by {} [{}], re-queued at front".format(
                 interrupted, fn_name, trigger))
 
     log.info("[Scheduler] {} starting urgently [{}]".format(fn_name, trigger))
     last_triggered_at[fn_name] = time.time()
-    runner.start(fn_name, wincap)
+    runner.start(fn_name, wincap, start_reason="urgent:{}".format(trigger))
 
 # ── Startup log ───────────────────────────────────────────────────────────────
 log.info("Global hotkey: {} | Press same key to stop | Ctrl+Esc = quit".format(key_bindings))
@@ -725,6 +750,7 @@ _ui = BotUI(fn_enabled, fn_configs, runner, next_run_at,
             key_bindings=key_bindings,
             save_callback=lambda: config_manager.save(fn_configs, fn_enabled, general_settings=_general_settings),
             bot_paused=bot_paused,
+            clear_pending_queue_callback=_clear_pending_queue_on_pause,
             cron_callback=_on_cron_change,
             fn_settings=fn_settings,
             settings_save_callback=config_manager.save_fn_settings,
@@ -986,7 +1012,7 @@ connection_detector = ConnectionDetector(
     lastz_exe_path=LASTZ_EXE_PATH,
     lastz_pid_ref=lastz_pid,
     lastz_window_name=_GAME_WINDOW_NAME,
-    interval_sec=300.0,   # 5 minutes
+    interval_sec=1800.0,   # 30 minutes
     buff_icon_threshold=0.75,
     autostart_state_ref=_pc_autostart_watch_state,
 )

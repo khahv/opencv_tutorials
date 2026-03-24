@@ -259,6 +259,7 @@ class FunctionRunner:
         self.functions = {}
         self.state = "idle"  # idle | running
         self.function_name = None
+        self.start_reason = None  # last start source (scheduler reason string); set in start(), cleared in stop()
         self.steps = []
         self.step_index = 0
         self.step_start_time = None
@@ -293,7 +294,7 @@ class FunctionRunner:
     def load(self, functions_dict):
         self.functions = functions_dict
 
-    def start(self, function_name, wincap, trigger_event=None, trigger_active_cb=None):
+    def start(self, function_name, wincap, trigger_event=None, trigger_active_cb=None, start_reason=None):
         # Reload all functions from disk to pick up any YAML changes immediately
         try:
             new_functions = load_functions()
@@ -358,7 +359,10 @@ class FunctionRunner:
         except (ValueError, TypeError):
             run_count = 1
         self._run_count_remaining = max(1, run_count) - 1
-        log.info("[Runner] Started function: {} (run_count={})".format(function_name, max(1, run_count)))
+        self.start_reason = start_reason
+        _reason = start_reason if start_reason else "unspecified"
+        log.info("[Runner] Started function: {} (run_count={}, reason={})".format(
+            function_name, max(1, run_count), _reason))
         return True
 
     def _get_vision(self, template):
@@ -391,6 +395,7 @@ class FunctionRunner:
             pass
         self.state = "idle"
         self.function_name = None
+        self.start_reason = None
 
     def abort_current_function(self, reason: str = "user stop") -> bool:
         """Stop the active YAML function only. Does not change global pause (bot_paused).
@@ -403,6 +408,14 @@ class FunctionRunner:
         log.info("[Runner] Aborted function: {} ({})".format(name, reason))
         self.stop()
         return True
+
+    def _runner_still_active(self) -> bool:
+        """True only while this function run is active.
+
+        ``UserMouseAbortThread`` can call ``stop()`` while the game loop is still inside
+        ``update()``; long step bodies (e.g. ``close_ui``) must poll this and bail out.
+        """
+        return self.state == "running"
 
     def update(self, screenshot, wincap):
         """Tra ve 'running' | 'done' | 'idle'. Neu running thi xu ly step hien tai."""
@@ -420,8 +433,9 @@ class FunctionRunner:
                 log.info("[Runner] Finished function: {}{}".format(self.function_name, suffix))
                 if self._run_count_remaining > 0:
                     self._run_count_remaining -= 1
-                    log.info("[Runner] Repeating function: {} ({} run(s) remaining)".format(
-                        self.function_name, self._run_count_remaining))
+                    _sr = self.start_reason if self.start_reason else "unspecified"
+                    log.info("[Runner] Repeating function: {} ({} run(s) remaining, reason={})".format(
+                        self.function_name, self._run_count_remaining, _sr))
                     self.step_index = 0
                     self.step_start_time = time.time()
                     self.step_click_count = 0
@@ -729,6 +743,8 @@ class FunctionRunner:
                     if debug_log:
                         log.info("[Runner] close_ui → aborted (bot paused)")
                     return "running"
+                if not self._runner_still_active():
+                    return "idle"
 
                 _search = _close_ui_search_img(scr)
                 _phq = vision.find(_search, threshold=threshold, debug_mode=dbg_mode, debug_log=debug_log,
@@ -801,6 +817,8 @@ class FunctionRunner:
                     if _fresh is not None:
                         scr = _fresh
                     time.sleep(0.3)
+            if not self._runner_still_active():
+                return "idle"
             log.info("[Runner] close_ui → true")
             self._advance_step(True)
             return "running"
