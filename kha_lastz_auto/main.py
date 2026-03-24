@@ -805,6 +805,7 @@ def _preview_thread_fn():
     """
     from screenshot_provider import get_active_capture_service
     window_open = False
+    last_preview_size = (None, None)
     while not _preview_stop_event.is_set():
         time.sleep(_CAPTURE_INTERVAL)
         svc = get_active_capture_service()
@@ -816,11 +817,18 @@ def _preview_thread_fn():
         if not window_open:
             try:
                 cv.namedWindow(_PREVIEW_WINDOW, cv.WINDOW_NORMAL)
+                if _win_w and _win_h:
+                    cv.resizeWindow(_PREVIEW_WINDOW, int(_win_w), int(_win_h))
+                    last_preview_size = (int(_win_w), int(_win_h))
                 window_open = True
             except Exception as e:
                 log.warning("[Preview] Could not create window: %s", e)
                 continue
         try:
+            cur_size = (int(_win_w or 0), int(_win_h or 0))
+            if cur_size != last_preview_size and cur_size != (0, 0):
+                cv.resizeWindow(_PREVIEW_WINDOW, cur_size[0], cur_size[1])
+                last_preview_size = cur_size
             cv.imshow(_PREVIEW_WINDOW, frame)
             cv.waitKey(1)
         except Exception as e:
