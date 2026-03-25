@@ -115,6 +115,15 @@ class WindowCapture:
         except Exception:
             pass
 
+    def is_iconic(self) -> bool:
+        """True if the window is minimized (taskbar). Used to avoid resize/focus fights."""
+        if self._is_desktop or not self.hwnd or not win32gui.IsWindow(self.hwnd):
+            return False
+        try:
+            return bool(win32gui.IsIconic(self.hwnd))
+        except Exception:
+            return False
+
     def resize_to_client(self, target_w, target_h):
         """
         Resize cua so sao cho CLIENT AREA (phan game, khong tinh title bar / border)
@@ -125,9 +134,16 @@ class WindowCapture:
         if self._is_desktop or not self.hwnd or not win32gui.IsWindow(self.hwnd):
             return False
         try:
+            # Never SetWindowPos while minimized — causes broken state / 0x0 churn with focus_loop.
+            if win32gui.IsIconic(self.hwnd):
+                return False
             # Tinh kich thuoc border tu window_rect - client_rect
             window_rect = win32gui.GetWindowRect(self.hwnd)
             client_rect = win32gui.GetClientRect(self.hwnd)
+            cw = client_rect[2] - client_rect[0]
+            ch = client_rect[3] - client_rect[1]
+            if cw <= 0 or ch <= 0:
+                return False
             border_w = (window_rect[2] - window_rect[0]) - client_rect[2]
             border_h = (window_rect[3] - window_rect[1]) - client_rect[3]
 

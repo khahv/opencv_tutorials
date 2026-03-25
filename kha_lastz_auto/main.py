@@ -232,9 +232,24 @@ treasure_detected_triggers = []   # fn_names triggered when treasure is detected
 logged_out_triggers        = []   # fn_names triggered when logged out
 alliance_attacked_triggers = []   # fn_names triggered when alliance is attacked
 
+def _normalize_function_hotkey(raw_key):
+    """Return a valid single-character function hotkey, or None if invalid/reserved.
+
+    Reserved:
+    - Esc / escape: reserved for Ctrl+Esc (stop current function)
+    """
+    if raw_key is None:
+        return None
+    s = str(raw_key).strip().lower()
+    if s in ("esc", "escape"):
+        return None
+    if len(s) == 1 and s.isalnum():
+        return s
+    return None
+
 for fc in fn_configs:
     name    = fc.get("name")
-    key     = fc.get("key")
+    key     = _normalize_function_hotkey(fc.get("key"))
     cron    = fc.get("cron")
     trigger = fc.get("trigger")
     enabled = fc.get("enabled", True)
@@ -334,6 +349,16 @@ bot_paused = {"paused": True}
 runner = FunctionRunner(vision_cache, fn_settings=fn_settings, bot_paused=bot_paused)
 runner.load(functions)
 
+_game_frame_overlay = None
+if sys.platform == "win32":
+    try:
+        from game_client_frame_overlay import GameClientFrameOverlay
+
+        _game_frame_overlay = GameClientFrameOverlay()
+    except Exception as _gfe:
+        log.warning("Game client frame overlay unavailable: {}".format(_gfe))
+
+
 if wincap is not None:
     wincap.mouse_log_suppress = lambda: runner.state == "running"
 
@@ -350,18 +375,37 @@ signal.signal(signal.SIGINT, _on_sigint)
 key_queue_msg = queue.Queue()
 pressed_keys  = set()
 
+def _ctrl_pressed() -> bool:
+    return keyboard.Key.ctrl_l in pressed_keys or keyboard.Key.ctrl_r in pressed_keys
+
+def _key_to_binding_char(key):
+    """Normalize a keyboard event to a key_bindings character (a-z, 0-9), else None.
+
+    With Ctrl held, pynput may emit control chars in ``key.char`` (e.g. ``\x08`` for Ctrl+H),
+    so we also fall back to virtual-key code when available.
+    """
+    ch = getattr(key, "char", None)
+    if ch and len(ch) == 1 and ch.isalnum():
+        return ch.lower()
+    vk = getattr(key, "vk", None)
+    if isinstance(vk, int):
+        if 65 <= vk <= 90 or 48 <= vk <= 57:  # A-Z / 0-9
+            return chr(vk).lower()
+    return None
+
 def on_press(key):
     try:
-        if hasattr(key, "char") and key.char:
-            pressed_keys.add(key.char)
-            if key.char in key_bindings:
-                key_queue_msg.put(("hotkey", key.char))
+        char = _key_to_binding_char(key)
+        if char:
+            pressed_keys.add(char)
+            if _ctrl_pressed() and char in key_bindings:
+                key_queue_msg.put(("hotkey", char))
         else:
             pressed_keys.add(key)
-            if key == keyboard.Key.esc and (keyboard.Key.ctrl_l in pressed_keys or keyboard.Key.ctrl_r in pressed_keys):
-                key_queue_msg.put("quit")
+            if key == keyboard.Key.esc and _ctrl_pressed():
+                key_queue_msg.put("stop_current_function")
             elif key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r) and keyboard.Key.esc in pressed_keys:
-                key_queue_msg.put("quit")
+                key_queue_msg.put("stop_current_function")
     except Exception:
         pass
 
@@ -511,7 +555,11 @@ def _start_urgent(fn_name, trigger="logged_out"):
     runner.start(fn_name, wincap, start_reason="urgent:{}".format(trigger))
 
 # ── Startup log ───────────────────────────────────────────────────────────────
-log.info("Global hotkey: {} | Press same key to stop | Ctrl+Esc = quit".format(key_bindings))
+log.info(
+    "Global hotkey (Ctrl+key): {} | Press Ctrl+same key to stop | Ctrl+Esc = stop current function".format(
+        key_bindings
+    )
+)
 log.info("Function enabled: {}".format({n: fn_enabled[n] for n in fn_enabled}))
 if schedules:
     log.info("Auto cron: {}".format([(s["function"], s["cron"]) for s in schedules]))
@@ -591,7 +639,7 @@ def _rebuild_schedules():
     key_bindings.clear()
     for fc in fn_configs:
         name = fc.get("name")
-        key  = fc.get("key")
+        key  = _normalize_function_hotkey(fc.get("key"))
         if name and key and fn_enabled.get(name, True):
             key_bindings[key] = name
 
@@ -888,11 +936,25 @@ def focus_loop():
         if should_skip_focus_loop(wincap):
             time.sleep(0.2)
             continue
-        if not bot_paused["paused"]:
+        if not bot_paused["paused"] and wincap is not None:
+            wincap.refresh_geometry()
+            # While minimized: do not call focus_window (SW_RESTORE) or resize — fights the user
+            # and SetWindowPos on an iconic HWND can leave LastZ un-restorable.
+            if wincap.is_iconic():
+                time.sleep(0.2)
+                continue
             wincap.focus_window()
-            if _win_w and _win_h and (wincap.w != _win_w or wincap.h != _win_h):
-                wincap.resize_to_client(_win_w, _win_h)
-                log.info("[focus_loop] Window resized back to {}x{}".format(wincap.w, wincap.h))
+            if (
+                _win_w
+                and _win_h
+                and wincap.w > 0
+                and wincap.h > 0
+                and (wincap.w != _win_w or wincap.h != _win_h)
+            ):
+                if wincap.resize_to_client(_win_w, _win_h):
+                    log.info(
+                        "[focus_loop] Window resized back to {}x{}".format(wincap.w, wincap.h)
+                    )
         time.sleep(0.2)
 
 focus_thread = threading.Thread(target=focus_loop, daemon=True)
@@ -1279,6 +1341,10 @@ def _game_loop():
                 if msg == "quit":
                     running = False
                     break
+                if msg == "stop_current_function":
+                    if getattr(runner, "state", "idle") == "running":
+                        runner.abort_current_function(reason="hotkey ctrl+esc")
+                    continue
                 if bot_paused["paused"]:
                     continue
                 if isinstance(msg, tuple) and msg[0] == "hotkey":
@@ -1301,6 +1367,8 @@ def _game_loop():
 
         if bot_paused["paused"]:
             _was_paused_prev = True
+            if _game_frame_overlay is not None:
+                _game_frame_overlay.hide()
             # Drain detector queue so we don't process stale events on resume
             try:
                 while True:
@@ -1309,6 +1377,15 @@ def _game_loop():
                 pass
             time.sleep(0.001)
             continue
+
+        # Border around LastZ client area (PC only) while Is Running is ON (logic in game_client_frame_overlay)
+        if _emulator == "pc" and _game_frame_overlay is not None and wincap is not None:
+            try:
+                _game_frame_overlay.update_from_wincap(wincap)
+            except Exception:
+                pass
+        elif _game_frame_overlay is not None:
+            _game_frame_overlay.hide()
 
         # Just resumed from pause: reset event detectors so they re-evaluate and can trigger again.
         # connection_detector is intentionally NOT reset here — its 5-min interval timer must not
@@ -1413,6 +1490,11 @@ except KeyboardInterrupt:
 
 user_mouse_abort.stop()
 _user_mouse_abort_stop_event.set()
+if _game_frame_overlay is not None:
+    try:
+        _game_frame_overlay.destroy()
+    except Exception:
+        pass
 listener.stop()
 _screenshot_stop_event.set()
 _stop_preview_thread()

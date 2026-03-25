@@ -32,7 +32,7 @@ class BotUI:
     """
     Tkinter UI running in a daemon thread.
     - Checkbox to enable/disable each function (persisted to .env_config)
-    - [KEY] badge is clickable to rebind hotkey (only when Is Running = off)
+    - [Ctrl+KEY] badge is clickable to rebind hotkey (only when Is Running = off)
     - Status bar shows current running function / next cron
     - Stop button above the status bar aborts only the current function (Is Running stays on)
     - Turning Is Running OFF clears the scheduler FIFO queue (see clear_pending_queue_callback)
@@ -445,6 +445,10 @@ class BotUI:
         if key:
             return self._t("meta_hotkey")
         return self._t("meta_manual")
+
+    def _hotkey_label(self, key: str) -> str:
+        """Display label for function hotkeys."""
+        return "Ctrl+{}".format(key.upper()) if key else ""
 
     def _refresh_all_row_meta(self) -> None:
         for fc in self._fn_configs:
@@ -919,7 +923,7 @@ class BotUI:
         self._meta_lbls[name] = _meta_lbl
 
         # Key badge — greyed out when Is Running; clickable only when paused
-        badge_text = " {} ".format(key.upper()) if key else " + "
+        badge_text = " {} ".format(self._hotkey_label(key)) if key else " + "
         badge_fg   = GRAY  # greyed out by default (Is Running = true on start)
         badge_lbl  = tk.Label(row, text=badge_text,
                               font=("Consolas", 9, "bold"),
@@ -1518,7 +1522,7 @@ class BotUI:
 
         key = fc.get("key", "")
         if key:
-            ku = key.upper()
+            ku = self._hotkey_label(key)
             if fn_disabled:
                 lines.append(self._t("tt_hotkey_disabled", hotkey=ku))
             else:
@@ -1707,7 +1711,7 @@ class BotUI:
             self._key_bindings[char] = name
 
         if self._rebind_lbl:
-            self._rebind_lbl.config(text=" {} ".format(char.upper()),
+            self._rebind_lbl.config(text=" {} ".format(self._hotkey_label(char)),
                                     bg=GRAY2, fg=ACCENT)
         if self._save_callback:
             self._save_callback()
@@ -1721,7 +1725,7 @@ class BotUI:
                      if fc.get("name") == name), "")
         if self._rebind_lbl:
             self._rebind_lbl.config(
-                text=" {} ".format(key.upper()) if key else " + ",
+                text=" {} ".format(self._hotkey_label(key)) if key else " + ",
                 bg=GRAY2, fg=ACCENT if key else GRAY)
         self._finish_rebind()
 

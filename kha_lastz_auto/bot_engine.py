@@ -295,23 +295,8 @@ class FunctionRunner:
         self.functions = functions_dict
 
     def start(self, function_name, wincap, trigger_event=None, trigger_active_cb=None, start_reason=None):
-        # Reload all functions from disk to pick up any YAML changes immediately
-        try:
-            new_functions = load_functions()
-            if new_functions:
-                self.functions = new_functions
-        except Exception as e:
-            log.warning("[Runner] Failed to reload functions from disk: {}".format(e))
-
-        # Reload fn_settings from .env_config so UI-saved and manually-edited values are always fresh
-        try:
-            from config_manager import load_fn_settings
-            fresh = load_fn_settings()
-            self.fn_settings.clear()
-            self.fn_settings.update(fresh)
-            log.debug("[Runner] fn_settings reloaded: {}".format(self.fn_settings))
-        except Exception as e:
-            log.warning("[Runner] Failed to reload fn_settings: {}".format(e))
+        # Intentionally no hot-reload on start().
+        # Functions and fn_settings are loaded at app startup and updated in-memory by UI actions.
 
         if function_name not in self.functions:
             log.info("[Runner] Function not found: {}".format(function_name))
