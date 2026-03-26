@@ -16,7 +16,7 @@ class AttackDetector:
     """
 
     def __init__(self, warning_template_path: str,
-                 threshold: float = 0.6, clear_sec: float = 10.0):
+                 threshold: float = 0.7, clear_sec: float = 10.0):
         self._vision = Vision(warning_template_path)
         self._threshold = threshold
         self._clear_sec = clear_sec

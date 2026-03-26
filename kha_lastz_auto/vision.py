@@ -23,7 +23,12 @@ def timeit(func):
             # Summarize return value to make logs actionable.
             summary = ""
             if isinstance(result, bool):
-                summary = " -> {}".format("true" if result else "false")
+                # Vision.exists sets _timeit_last_match_score (best matchTemplate value).
+                score = getattr(args[0], "_timeit_last_match_score", None) if args else None
+                if score is not None:
+                    summary = " -> {} score={:.4f}".format("true" if result else "false", float(score))
+                else:
+                    summary = " -> {}".format("true" if result else "false")
             elif isinstance(result, (list, tuple)):
                 n = len(result)
                 if n == 0:
@@ -165,10 +170,12 @@ class Vision:
         """Fast existence check — matchTemplate on grayscale only."""
         norm, scale = self._norm_haystack(haystack_img)
         if self.needle_w > norm.shape[1] or self.needle_h > norm.shape[0]:
+            self._timeit_last_match_score = -1.0
             return False
         norm_gray = _get_gray(norm)
         result = cv.matchTemplate(norm_gray, self.needle_gray, self.method)
         _, max_val, _, _ = cv.minMaxLoc(result)
+        self._timeit_last_match_score = float(max_val)
         return max_val >= threshold
 
     @timeit

@@ -1,0 +1,4 @@
+# Add directories or file patterns to ignore during indexing (e.g. foo/ or *.csv)
+kha_lastz_auto/__pycache__/
+kha_lastz_auto/.venv312
+kha_lastz_auto/playwright_zalo_data/
